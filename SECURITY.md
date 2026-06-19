@@ -51,7 +51,7 @@ PasswordCertificado = "mi_password_en_texto_plano"
 ### 🔒 Validación TLS / SSL
 
 - La propiedad `OmitirValidacionSsl` **jamás debe activarse en Producción**; está pensada únicamente para el ambiente de Homologación cuando la CA del servidor no es de confianza local.
-- En producción el SDK valida el certificado TLS del servidor DGI por defecto.
+- En producción UruFactura valida el certificado TLS del servidor DGI por defecto.
 
 ### 📄 XML y firma digital
 
@@ -62,7 +62,7 @@ PasswordCertificado = "mi_password_en_texto_plano"
 ### 🌐 Comunicación con la DGI
 
 - Todas las comunicaciones usan **HTTPS**. Las URLs de producción y homologación están definidas en `UruFacturaConfig.DgiSoapBaseUrl` y no son modificables en tiempo de ejecución (solo dependen del `Ambiente` configurado).
-- Si usás un proxy corporativo, configurá el `HttpClient` correspondiente en tu infraestructura; el SDK no expone configuración de proxy directamente.
+- Si usás un proxy corporativo, configurá el `HttpClient` correspondiente en tu infraestructura; UruFactura no expone configuración de proxy directamente.
 
 ### 🗝️ CAE (Constancia de Autorización de Emisión)
 
@@ -78,11 +78,11 @@ PasswordCertificado = "mi_password_en_texto_plano"
 
 ## Dependencias de seguridad relevantes
 
-| Paquete | Uso en el SDK |
+| Paquete | Uso en UruFactura |
 |---------|--------------|
 | `System.Security.Cryptography.Xml` | Firma XML (XAdES-BES) |
 | `System.Security.Cryptography.Pkcs` | Manejo de certificados PKCS#12 |
 | `QuestPDF` | Generación de PDFs |
 | `ZXing.Net` | Generación de código QR en el PDF |
 
-Mantené estas dependencias actualizadas; el SDK sigue las actualizaciones de parches de seguridad de .NET 10.
+Mantené estas dependencias actualizadas; UruFactura sigue las actualizaciones de parches de seguridad de .NET 10.

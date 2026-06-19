@@ -288,7 +288,7 @@ using var client = UruFacturaClientBuilder.WithDefaults(config)
 > 🏭 **APIs de alto tráfico:** usá `.WithHttpClient(httpClient)` para inyectar un `HttpClient`
 > gestionado por `IHttpClientFactory` y evitar el agotamiento de sockets (*socket exhaustion*)
 > que ocurre cuando se crean y descartan instancias de `HttpClient` por cada request.
-> Al hacerlo, el SDK no configura el handler interno (certificado de cliente ni `OmitirValidacionSsl`),
+> Al hacerlo, UruFactura no configura el handler interno (certificado de cliente ni `OmitirValidacionSsl`),
 > así que es responsabilidad del caller configurarlos en el handler del `HttpClient` inyectado.
 >
 > ```csharp
