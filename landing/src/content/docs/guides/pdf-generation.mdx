@@ -5,7 +5,7 @@ description: Cómo generar representaciones impresas de CFEs en A4 y formato té
 
 import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
-UruFactura SDK incluye un generador de PDFs que produce representaciones impresas de CFEs según la normativa DGI, incluyendo código QR y sellos de seguridad.
+UruFactura incluye un generador de PDFs que produce representaciones impresas de CFEs según la normativa DGI, incluyendo código QR y sellos de seguridad.
 
 <Aside type="note">
   La generación de PDF está disponible en el paquete **`UruFactura`** (completo). Si usás **`UruFactura.Lite`**, podés inyectar tu propia implementación de `ICfePdfGenerator` via `UruFacturaClientBuilder.WithDefaults(config).WithPdfGenerator(miGenerador).Build()`. Sin generador configurado, los métodos `GenerarPdfA4` y `GenerarPdfTermico` lanzarán `InvalidOperationException`.

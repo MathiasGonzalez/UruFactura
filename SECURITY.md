@@ -20,7 +20,7 @@ Usá el canal de **[Private Vulnerability Reporting](https://github.com/MathiasG
 ### Qué información incluir
 
 - Descripción clara del problema y su impacto potencial.
-- Pasos reproducibles (código de ejemplo, versión del SDK afectada).
+- Pasos reproducibles (código de ejemplo, versión de UruFactura afectada).
 - Entorno (sistema operativo, versión de .NET).
 - Si encontraste una mitigación o workaround, incluilos.
 
@@ -32,12 +32,12 @@ Usá el canal de **[Private Vulnerability Reporting](https://github.com/MathiasG
 
 ---
 
-## Consideraciones de seguridad del SDK
+## Consideraciones de seguridad de UruFactura
 
 ### 🔑 Certificados digitales y claves privadas
 
 - **Nunca hardcodees** `PasswordCertificado` en el código fuente. Usá variables de entorno o un gestor de secretos (Azure Key Vault, AWS Secrets Manager, .NET User Secrets, etc.).
-- El SDK carga el certificado con `X509KeyStorageFlags.EphemeralKeySet` para evitar persistir la clave privada en el almacén del sistema operativo — recomendado para contenedores y Linux.
+- UruFactura carga el certificado con `X509KeyStorageFlags.EphemeralKeySet` para evitar persistir la clave privada en el almacén del sistema operativo — recomendado para contenedores y Linux.
 - El objeto `UruFacturaClient` implementa `IDisposable`; asegurate de usar `using` para liberar el certificado de memoria cuando ya no lo necesitás.
 
 ```csharp
@@ -55,7 +55,7 @@ PasswordCertificado = "mi_password_en_texto_plano"
 
 ### 📄 XML y firma digital
 
-- El SDK firma los CFE con **XAdES-BES usando RSA-SHA256**, en línea con los requisitos de la DGI.
+- UruFactura firma los CFE con **XAdES-BES usando RSA-SHA256**, en línea con los requisitos de la DGI.
 - Los XML firmados contienen el certificado público del emisor embebido en `<KeyInfo>`; no incluyen la clave privada.
 - Los archivos XML firmados deben conservarse según el Código Tributario (mínimo 5 años). Asegurate de que el almacenamiento tenga controles de acceso adecuados.
 
@@ -71,7 +71,7 @@ PasswordCertificado = "mi_password_en_texto_plano"
 
 ### 🧪 Ambiente de homologación vs. producción
 
-- El SDK por defecto apunta a **Homologación**. Verificá que `Ambiente = Ambiente.Produccion` esté correctamente configurado antes del despliegue en producción.
+- UruFactura por defecto apunta a **Homologación**. Verificá que `Ambiente = Ambiente.Produccion` esté correctamente configurado antes del despliegue en producción.
 - Los CFE enviados en Homologación no tienen validez fiscal.
 
 ---

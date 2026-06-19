@@ -4,7 +4,7 @@ using UruFactura.Models;
 namespace UruFactura;
 
 /// <summary>
-/// Contrato principal del SDK de UruFactura.
+/// Contrato principal de UruFactura.
 /// Implementar esta interfaz (o usar <see cref="UruFacturaClient"/>) permite
 /// mockear el cliente en tests de aplicaciones consumidoras.
 /// </summary>

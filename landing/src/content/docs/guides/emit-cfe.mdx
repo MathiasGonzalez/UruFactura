@@ -1,13 +1,13 @@
 ---
 title: Emitir CFEs
-description: Cómo crear y enviar comprobantes fiscales electrónicos con UruFactura SDK
+description: Cómo crear y enviar comprobantes fiscales electrónicos con UruFactura
 ---
 
 import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
 ## Tipos de comprobantes disponibles
 
-El SDK provee métodos de fábrica en `UruFacturaClient` para crear cada tipo de CFE:
+UruFactura provee métodos de fábrica en `UruFacturaClient` para crear cada tipo de CFE:
 
 | Método | CFE generado | Código DGI |
 |--------|-------------|------------|
@@ -180,7 +180,7 @@ catch (DgiCommunicationException ex)
 }
 catch (UruFacturaException ex)
 {
-    Console.Error.WriteLine($"Error del SDK: {ex.Message}");
+    Console.Error.WriteLine($"Error de UruFactura: {ex.Message}");
 }
 ```
 

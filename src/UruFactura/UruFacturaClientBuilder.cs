@@ -47,7 +47,7 @@ public sealed partial class UruFacturaClientBuilder
     /// <summary>
     /// Crea un builder con todas las dependencias en sus implementaciones predeterminadas.
     /// </summary>
-    /// <param name="config">Configuración del SDK.</param>
+    /// <param name="config">Configuración de UruFactura.</param>
     public static UruFacturaClientBuilder WithDefaults(UruFacturaConfig config) => new(config);
 
     /// <summary>Reemplaza el generador de XML predeterminado.</summary>

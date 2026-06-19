@@ -48,7 +48,7 @@ export default defineConfig({
       components: {
         Head: './src/components/MermaidHead.astro',
       },
-      title: 'UruFactura SDK',
+      title: 'UruFactura',
       description: 'La vía rápida hacia la Facturación Electrónica en Uruguay. SDK .NET open-source para integración con DGI.',
       logo: {
         light: './src/assets/logo-light.svg',

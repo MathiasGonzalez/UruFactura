@@ -14,7 +14,7 @@
 
 > 📖 **Documentación completa:** [mathiasgonzalez.github.io/UruFactura](https://mathiasgonzalez.github.io/UruFactura/)
 
-UruFactura SDK es una librería open-source **.NET 10 C#** de alto nivel diseñada para simplificar la integración de sistemas locales con el ecosistema de la DGI. Olvídate de lidiar con la complejidad manual de los sobres SOAP o la estructura rígida de los esquemas XML; esta herramienta actúa como un puente amigable entre tu lógica de negocio y los requisitos impositivos uruguayos.
+UruFactura es una librería open-source **.NET 10 C#** de alto nivel diseñada para simplificar la integración de sistemas locales con el ecosistema de la DGI. Olvídate de lidiar con la complejidad manual de los sobres SOAP o la estructura rígida de los esquemas XML; esta herramienta actúa como un puente amigable entre tu lógica de negocio y los requisitos impositivos uruguayos.
 
 ---
 
@@ -51,7 +51,7 @@ UruFactura/
 │   │   ├── Pdf/                        # CfePdfGenerator / ICfePdfGenerator (PDF A4 y térmico)
 │   │   │                               # CfeQrGenerator / ICfeQrGenerator (código QR)
 │   │   ├── IUruFacturaClient.cs        # Interfaz pública (para mocking en tests)
-│   │   ├── UruFacturaClient.cs         # Fachada principal del SDK
+│   │   ├── UruFacturaClient.cs         # Fachada principal
 │   │   ├── UruFacturaClientBuilder.cs  # Builder fluido con WithDefaults()
 │   │   └── UruFacturaClientBuilderPdf.cs # Extensión del builder para PDF (solo paquete completo)
 │   └── UruFactura.Lite/             # Paquete Lite (sin FluentReport/SkiaSharp/ZXing)
@@ -239,7 +239,7 @@ Console.WriteLine(client.Cae.ResumenEstado());
 
 ## 🧩 Interfaz `IUruFacturaClient`
 
-El SDK expone la interfaz `IUruFacturaClient` para facilitar el **mocking en tests** de aplicaciones consumidoras:
+UruFactura expone la interfaz `IUruFacturaClient` para facilitar el **mocking en tests** de aplicaciones consumidoras:
 
 ```csharp
 // En tu aplicación
@@ -309,7 +309,7 @@ En producción, el estado de los CAEs —especialmente `UltimoNroUsado`— debe 
 de la aplicación. Si la app arranca con el contador en cero, volvería a emitir números ya usados,
 lo que la DGI rechazaría por duplicado.
 
-El SDK separa la gestión en memoria (`ICaeManager`) de la persistencia (`ICaeRepository`):
+UruFactura separa la gestión en memoria (`ICaeManager`) de la persistencia (`ICaeRepository`):
 
 ```
 Al iniciar la app:   repo.CargarTodosAsync() → manager.RegistrarCaes()
@@ -377,7 +377,7 @@ public class MiCaeRepository : ICaeRepository
 
 | Excepción | Cuándo se lanza |
 |-----------|----------------|
-| `UruFacturaException` | Base de todas las excepciones del SDK |
+| `UruFacturaException` | Base de todas las excepciones |
 | `CaeException` | CAE vencido, sin rango disponible o no registrado |
 | `CfeValidationException` | CFE inválido según reglas de negocio |
 | `DgiCommunicationException` | Error de comunicación con el servicio SOAP de la DGI |

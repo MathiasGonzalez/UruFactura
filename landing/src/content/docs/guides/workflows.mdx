@@ -1,13 +1,13 @@
 ---
 title: Flujos de trabajo
-description: Diagramas de los flujos principales del SDK — emisión de CFE, firma digital, gestión de CAE, certificación DGI y reporte diario.
+description: Diagramas de los flujos principales — emisión de CFE, firma digital, gestión de CAE, certificación DGI y reporte diario.
 sidebar:
   order: 0
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-Esta página reúne los flujos de trabajo principales del SDK en formato de diagrama para facilitar la comprensión del ciclo de vida completo de un comprobante fiscal electrónico.
+Esta página reúne los flujos de trabajo principales en formato de diagrama para facilitar la comprensión del ciclo de vida completo de un comprobante fiscal electrónico.
 
 ---
 
@@ -40,7 +40,7 @@ flowchart TD
 
 ## Pipeline interno de EnviarCfeAsync
 
-Lo que ocurre dentro del SDK al llamar a `EnviarCfeAsync`.
+Lo que ocurre dentro de UruFactura al llamar a `EnviarCfeAsync`.
 
 ```mermaid
 sequenceDiagram
@@ -167,7 +167,7 @@ flowchart TD
 
 ---
 
-## Arquitectura de componentes del SDK
+## Arquitectura de componentes
 
 Relación entre las principales interfaces y quién las implementa por defecto.
 

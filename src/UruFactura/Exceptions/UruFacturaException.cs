@@ -1,7 +1,7 @@
 namespace UruFactura.Exceptions;
 
 /// <summary>
-/// Excepción base del SDK de UruFactura.
+/// Excepción base de UruFactura.
 /// </summary>
 public class UruFacturaException : Exception
 {

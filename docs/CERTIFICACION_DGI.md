@@ -114,7 +114,7 @@ La DGI exige un proceso de **homologación** antes de habilitar la emisión en p
 
 ### Configurar el ambiente de homologación
 
-El SDK apunta automáticamente a:
+UruFactura apunta automáticamente a:
 ```
 https://efacturahomologacion.dgi.gub.uy/ePresentacionSoap/service
 ```
@@ -173,7 +173,7 @@ Una vez que la DGI aprueba la homologación:
 Ambiente = Ambiente.Produccion
 ```
 
-El SDK usará automáticamente:
+UruFactura usará automáticamente:
 ```
 https://efactura.dgi.gub.uy/ePresentacionSoap/service
 ```
