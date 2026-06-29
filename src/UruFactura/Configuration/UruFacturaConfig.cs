@@ -3,7 +3,7 @@ using UruFactura.Enums;
 namespace UruFactura.Configuration;
 
 /// <summary>
-/// Configuración principal del SDK de UruFactura.
+/// Configuración principal de UruFactura.
 /// </summary>
 public record UruFacturaConfig
 {

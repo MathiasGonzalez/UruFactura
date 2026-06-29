@@ -15,7 +15,7 @@ public partial class UruFacturaClient
     /// <see cref="UruFacturaClient.GenerarPdfTermico"/> lanzarán
     /// <see cref="InvalidOperationException"/> a menos que se pase un generador personalizado.
     /// </summary>
-    /// <param name="config">Configuración del SDK.</param>
+    /// <param name="config">Configuración de UruFactura.</param>
     public UruFacturaClient(UruFacturaConfig config)
         : this(config, (ICfePdfGenerator?)null)
     {
@@ -24,7 +24,7 @@ public partial class UruFacturaClient
     /// <summary>
     /// Inicializa el cliente con un generador de PDF personalizado.
     /// </summary>
-    /// <param name="config">Configuración del SDK.</param>
+    /// <param name="config">Configuración de UruFactura.</param>
     /// <param name="pdfGenerator">Implementación de <see cref="ICfePdfGenerator"/> a utilizar.</param>
     public UruFacturaClient(UruFacturaConfig config, ICfePdfGenerator? pdfGenerator)
         : this(config,

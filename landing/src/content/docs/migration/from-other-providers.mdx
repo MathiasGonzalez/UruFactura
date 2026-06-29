@@ -1,15 +1,15 @@
 ---
 title: Migrar desde otro proveedor
-description: Guía para migrar desde soluciones propietarias, SOAP directo o librerías de terceros a UruFactura SDK
+description: Guía para migrar desde soluciones propietarias, SOAP directo o librerías de terceros a UruFactura
 ---
 
 import { Tabs, TabItem, Aside, Steps, Card, CardGrid } from '@astrojs/starlight/components';
 
-Esta guía te ayuda a migrar a UruFactura SDK desde diferentes puntos de partida, ya sea que estés usando una solución propietaria, integrando SOAP directamente, o usando otra librería.
+Esta guía te ayuda a migrar a UruFactura desde diferentes puntos de partida, ya sea que estés usando una solución propietaria, integrando SOAP directamente, o usando otra librería.
 
 ---
 
-## ¿Por qué migrar a UruFactura SDK?
+## ¿Por qué migrar a UruFactura?
 
 <CardGrid>
   <Card title="Sin dependencias de vendors" icon="approve-check-circle">
@@ -58,7 +58,7 @@ var response = await httpClient.PostAsync(dgiEndpoint, soapContent);
 // Parsear respuesta SOAP manualmente...
 ```
 
-### Después (UruFactura SDK)
+### Después (UruFactura)
 
 ```csharp
 // ✅ Después: API de alto nivel
@@ -84,7 +84,7 @@ Si estás migrando desde un módulo de facturación electrónica de un ERP (Bisc
 
 ### Conceptos equivalentes
 
-| Tu sistema actual | UruFactura SDK |
+| Tu sistema actual | UruFactura |
 |------------------|----------------|
 | Comprobante / Documento | `Cfe` (base) + `ETicket`, `EFactura`, etc. |
 | Línea de artículo / ítem | `LineaDetalle` |
@@ -118,7 +118,7 @@ Si estás migrando desde un módulo de facturación electrónica de un ERP (Bisc
 3. **Adaptar la estructura de datos**
 
    ```csharp
-   // Convertir entidad de tu sistema a LineaDetalle del SDK
+   // Convertir entidad de tu sistema a LineaDetalle
    static LineaDetalle ConvertirLinea(MiLineaFactura linea, int nroLinea) =>
        new LineaDetalle
        {
@@ -207,7 +207,7 @@ Si estás usando otra librería .NET de facturación electrónica uruguaya:
 <Tabs>
   <TabItem label="Equivalencia de métodos">
 
-  | Operación | Librería genérica | UruFactura SDK |
+  | Operación | Librería genérica | UruFactura |
   |-----------|-----------------|----------------|
   | Crear comprobante | `new Comprobante(tipo)` | `client.CrearETicket()` |
   | Agregar ítem | `comprobante.AddItem(...)` | `cfe.Detalle.Add(new LineaDetalle {...})` |
@@ -220,7 +220,7 @@ Si estás usando otra librería .NET de facturación electrónica uruguaya:
   <TabItem label="Manejo de respuestas">
 
   ```csharp
-  // UruFactura SDK — respuesta tipada
+  // UruFactura — respuesta tipada
   var respuesta = await client.EnviarCfeAsync(cfe);
 
   // respuesta.Exitoso: bool
@@ -266,5 +266,5 @@ Antes de ir a producción, verificá:
 - 🔍 [API Reference](../reference/api/)
 
 <Aside type="tip">
-  Si encontrás una operación que hacías en tu sistema anterior y no sabés cómo replicarla en UruFactura SDK, abrí un issue en GitHub con el caso de uso — lo documentamos y, si es necesario, lo incorporamos al SDK.
+  Si encontrás una operación que hacías en tu sistema anterior y no sabés cómo replicarla en UruFactura, abrí un issue en GitHub con el caso de uso — lo documentamos y, si es necesario, lo incorporamos al proyecto.
 </Aside>

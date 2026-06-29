@@ -43,7 +43,7 @@ La DGI exige que cada CFE esté **firmado digitalmente** con un certificado de e
 - Proveedores habilitados: [ABITAB](https://www.abitab.com.uy/), [Correo Uruguayo](https://www.correo.com.uy/), [CertiSur](https://www.certisur.com/) u otras CA reconocidas.
 - El certificado debe estar vinculado al **RUT del emisor**.
 
-### Configurar el certificado en el SDK
+### Configurar el certificado en UruFactura
 
 ```csharp
 var config = new UruFacturaConfig
@@ -75,7 +75,7 @@ El **CAE (Constancia de Autorización de Emisión)** es el rango de números de 
 3. Indicar la cantidad de comprobantes que se necesitan (ej: del 1 al 1000).
 4. La DGI devuelve el CAE con número de serie, rango y fecha de vencimiento.
 
-### Registrar el CAE en el SDK
+### Registrar el CAE en UruFactura
 
 ```csharp
 client.Cae.RegistrarCae(new Cae
@@ -114,7 +114,7 @@ La DGI exige un proceso de **homologación** antes de habilitar la emisión en p
 
 ### Configurar el ambiente de homologación
 
-El SDK apunta automáticamente a:
+UruFactura apunta automáticamente a:
 ```
 https://efacturahomologacion.dgi.gub.uy/ePresentacionSoap/service
 ```
@@ -173,7 +173,7 @@ Una vez que la DGI aprueba la homologación:
 Ambiente = Ambiente.Produccion
 ```
 
-El SDK usará automáticamente:
+UruFactura usará automáticamente:
 ```
 https://efactura.dgi.gub.uy/ePresentacionSoap/service
 ```
@@ -261,7 +261,7 @@ await File.WriteAllBytesAsync("eticket_001.pdf", pdf);
 | AGESIC (autoridades certificantes) | [https://www.agesic.gub.uy/](https://www.agesic.gub.uy/) |
 | Soporte DGI | [https://www.dgi.gub.uy/wdgi/page?2,contacto,index,O,es,0,](https://www.dgi.gub.uy/wdgi/page?2,contacto,index,O,es,0,) |
 
-> 📋 Para mantener el SDK actualizado ante nuevas versiones del formato CFE, ver [NORMATIVA_DGI_UPDATE.md](NORMATIVA_DGI_UPDATE.md).
+> 📋 Para mantener UruFactura actualizado ante nuevas versiones del formato CFE, ver [NORMATIVA_DGI_UPDATE.md](NORMATIVA_DGI_UPDATE.md).
 
 ---
 

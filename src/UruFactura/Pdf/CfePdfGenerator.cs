@@ -26,7 +26,7 @@ public class CfePdfGenerator : ICfePdfGenerator
     /// <summary>
     /// Inicializa el generador usando el generador de QR predeterminado.
     /// </summary>
-    /// <param name="config">Configuración del SDK.</param>
+    /// <param name="config">Configuración de UruFactura.</param>
     public CfePdfGenerator(UruFacturaConfig config)
         : this(config, new CfeQrGenerator())
     {
@@ -35,7 +35,7 @@ public class CfePdfGenerator : ICfePdfGenerator
     /// <summary>
     /// Inicializa el generador con un generador de QR personalizado.
     /// </summary>
-    /// <param name="config">Configuración del SDK.</param>
+    /// <param name="config">Configuración de UruFactura.</param>
     /// <param name="qrGenerator">Implementación de <see cref="ICfeQrGenerator"/> a utilizar.</param>
     public CfePdfGenerator(UruFacturaConfig config, ICfeQrGenerator qrGenerator)
     {

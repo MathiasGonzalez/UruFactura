@@ -10,7 +10,7 @@ using UruFactura.Xml;
 namespace UruFactura;
 
 /// <summary>
-/// Cliente principal del SDK de UruFactura.
+/// Cliente principal de UruFactura.
 /// Orquesta la creación de CFE, generación/firma de XML, comunicación con DGI
 /// y, opcionalmente, la generación de representaciones impresas (PDF).
 /// <para>

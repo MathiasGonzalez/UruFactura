@@ -1,13 +1,13 @@
 ---
 title: API Reference
-description: Documentación completa de clases, métodos y modelos de UruFactura SDK
+description: Documentación completa de clases, métodos y modelos de UruFactura
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
 ## `UruFacturaClient`
 
-La fachada principal del SDK. Punto de entrada para todas las operaciones.
+La fachada principal de UruFactura. Punto de entrada para todas las operaciones.
 
 ### Constructores
 
@@ -354,7 +354,7 @@ Gestiona los CAEs registrados en el cliente. Accedido a través de `client.Cae`.
 
 | Excepción | Descripción |
 |-----------|-------------|
-| `UruFacturaException` | Excepción base del SDK |
+| `UruFacturaException` | Excepción base
 | `CaeException` | Error relacionado con el CAE (vencido, agotado, no encontrado) |
 | `FirmaDigitalException` | Error al firmar el XML (certificado inválido o inaccesible) |
 | `DgiCommunicationException` | Error en la comunicación con DGI |

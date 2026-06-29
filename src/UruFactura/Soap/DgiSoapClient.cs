@@ -24,7 +24,7 @@ public class DgiSoapClient : IDgiSoapClient
     private const string SoapNs = "http://schemas.xmlsoap.org/soap/envelope/";
 
     /// <summary>
-    /// Inicializa el cliente SOAP con la configuración del SDK.
+    /// Inicializa el cliente SOAP con la configuración de UruFactura.
     /// </summary>
     public DgiSoapClient(UruFacturaConfig config, HttpClient? httpClient = null)
     {

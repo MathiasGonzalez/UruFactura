@@ -1,6 +1,6 @@
 ---
 title: Firma Digital
-description: Cómo funciona la firma XAdES-BES en UruFactura SDK
+description: Cómo funciona la firma XAdES-BES en UruFactura
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -9,13 +9,13 @@ import { Aside } from '@astrojs/starlight/components';
 
 DGI exige que cada comprobante fiscal electrónico esté firmado digitalmente usando el estándar **XAdES-BES** (XML Advanced Electronic Signatures - Basic Electronic Signature). Esta firma garantiza la autenticidad e integridad del documento XML.
 
-El SDK maneja **toda la complejidad de la firma de forma automática**. Solo necesitás configurar la ruta y contraseña del certificado.
+UruFactura maneja **toda la complejidad de la firma de forma automática**. Solo necesitás configurar la ruta y contraseña del certificado.
 
 ---
 
 ## Certificados soportados
 
-El SDK acepta certificados digitales en formato:
+UruFactura acepta certificados digitales en formato:
 
 - **`.p12`** (PKCS#12)
 - **`.pfx`** (Personal Information Exchange — equivalente a `.p12` en Windows)

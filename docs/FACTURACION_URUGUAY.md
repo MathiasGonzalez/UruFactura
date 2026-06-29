@@ -257,7 +257,7 @@ Console.WriteLine(resultado.Respuesta.Exitoso
 |---|---|
 | **Monotributistas** | No están obligados a emitir CFE; pueden emitir factura papel o adherirse voluntariamente. |
 | **IRAE vs IRPF** | Las empresas que tributan IRAE son las principales obligadas; los profesionales independientes (IRPF Cat. II) también deben emitir CFE según su facturación. |
-| **IVA incluido** | Los precios al público suelen publicarse con IVA incluido. El SDK trabaja con precios **sin IVA**; el sistema calcula el monto del impuesto automáticamente. |
+| **IVA incluido** | Los precios al público suelen publicarse con IVA incluido. UruFactura trabaja con precios **sin IVA**; el sistema calcula el monto del impuesto automáticamente. |
 | **Moneda extranjera** | Los CFE pueden emitirse en USD u otras monedas; el tipo de cambio del BCU debe registrarse en el comprobante. |
 | **Conservación** | Los XML firmados deben conservarse **mínimo 5 años** según el Código Tributario. |
 | **Anulación** | Los CFE no se anulan; se corrigen emitiendo una **Nota de Crédito** que referencia el comprobante original. |
