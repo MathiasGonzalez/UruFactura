@@ -27,8 +27,8 @@
 
   <!-- Only .NET built-in security packages; no QuestPDF, SkiaSharp or ZXing -->
   <ItemGroup>
-    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.6" />
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.6" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.10" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
   </ItemGroup>
 
   <!-- Share source files from the main project, excluding the Pdf folder -->
