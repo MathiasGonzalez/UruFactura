@@ -101,6 +101,7 @@ Cuando se detecta un cambio que requiere actualización:
 
 | Fecha | Versión CFE | Cambios implementados |
 |-------|-------------|----------------------|
+| 2026-07-27 | v25.2 | Sin cambios detectados — normativa vigente al día. Versión en producción: v25.2 (desde 30/06/2026). 180 tests passing. |
 | 2026-06-08 | v25.2 | Versión XML 25.01→25.2 tras revisión normativa DGI de junio 2026 |
 | 2026-05-21 | v25.01 | Versión XML 23.01→25.01; campos F-C8 (MntCFERef), F-C9 (MonedaCFERef), F-C10 (TpoCambioCFERef) en RefCfe; validación de Ciudad y Departamento del emisor; validación de MontoCfeRef/MonedaCfeRef en notas correctivas |
 | — | v23.01 | Versión base inicial |
