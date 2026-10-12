@@ -163,7 +163,7 @@ public class Cfe
     /// Calcula los totales del CFE a partir del detalle.
     /// Tasas: IVA mínimo 10%, IVA básico 22%.
     /// </summary>
-    public void CalcularTotales()
+    public virtual void CalcularTotales()
     {
         MontoNetoExento = 0;
         MontoNetoSuspendido = 0;
@@ -244,7 +244,7 @@ public class Cfe
     /// <summary>
     /// Valida el CFE y retorna la lista de errores encontrados.
     /// </summary>
-    public IReadOnlyList<string> Validar()
+    public virtual IReadOnlyList<string> Validar()
     {
         var errors = new List<string>();
 

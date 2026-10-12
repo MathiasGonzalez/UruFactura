@@ -77,7 +77,7 @@ public class Cae
     /// Este método es thread-safe.
     /// </summary>
     /// <exception cref="Exceptions.CaeException">Si no hay números disponibles o el CAE está vencido.</exception>
-    public long ObtenerProximoNumero()
+    public virtual long ObtenerProximoNumero()
     {
         lock (_lock)
         {
@@ -97,7 +97,7 @@ public class Cae
     /// <summary>
     /// Devuelve una advertencia si el CAE está por vencer o por agotar su rango.
     /// </summary>
-    public string? ObtenerAdvertencia(int diasAlertaVencimiento = 7, decimal porcentajeAlertaUso = 80m)
+    public virtual string? ObtenerAdvertencia(int diasAlertaVencimiento = 7, decimal porcentajeAlertaUso = 80m)
     {
         if (!EsVigente)
             return $"⚠️ CAE {NroSerie} VENCIDO el {FechaVencimiento:dd/MM/yyyy}.";

@@ -18,7 +18,7 @@ public class InMemoryCaeRepository : ICaeRepository
     private readonly Lock _lock = new();
 
     /// <inheritdoc/>
-    public ValueTask<IEnumerable<Models.Cae>> CargarTodosAsync()
+    public virtual ValueTask<IEnumerable<Models.Cae>> CargarTodosAsync()
     {
         lock (_lock)
         {
@@ -28,7 +28,7 @@ public class InMemoryCaeRepository : ICaeRepository
     }
 
     /// <inheritdoc/>
-    public ValueTask GuardarCaeAsync(Models.Cae cae)
+    public virtual ValueTask GuardarCaeAsync(Models.Cae cae)
     {
         ArgumentNullException.ThrowIfNull(cae);
 
@@ -41,7 +41,7 @@ public class InMemoryCaeRepository : ICaeRepository
     }
 
     /// <inheritdoc/>
-    public ValueTask ActualizarUltimoNroUsadoAsync(string nroSerie, long ultimoNroUsado)
+    public virtual ValueTask ActualizarUltimoNroUsadoAsync(string nroSerie, long ultimoNroUsado)
     {
         ArgumentNullException.ThrowIfNull(nroSerie);
 

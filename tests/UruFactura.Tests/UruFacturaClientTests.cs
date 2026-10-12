@@ -551,6 +551,43 @@ public class UruFacturaClientTests
     }
 
     // -----------------------------------------------------------------------
+    // Extensibilidad: métodos virtuales
+    // -----------------------------------------------------------------------
+
+    private sealed class ClientePersonalizado(
+        UruFacturaConfig config, ICfeXmlBuilder xml, ICfeFirmante firmante, ICaeManager cae, IDgiSoapClient soap)
+        : UruFacturaClient(config, xml, firmante, cae, soap, null)
+    {
+        public int Generados { get; private set; }
+
+        public override string GenerarXml(Cfe cfe)
+        {
+            Generados++;
+            return base.GenerarXml(cfe);
+        }
+
+        protected override Cfe CrearCfe(TipoCfe tipo)
+        {
+            var cfe = base.CrearCfe(tipo);
+            cfe.CodigoSucursal = 9; // valor por defecto propio
+            return cfe;
+        }
+    }
+
+    [Fact]
+    public void Cliente_PermiteSobreescribirMetodosYValoresPorDefecto()
+    {
+        using var client = new ClientePersonalizado(
+            ConfigValida(), new XmlBuilderStub(), new FirmanteStub(), new CaeManager(), new SoapClientStub());
+
+        var cfe = client.CrearETicket();
+        client.GenerarYFirmar(cfe);
+
+        Assert.Equal(9, cfe.CodigoSucursal);
+        Assert.Equal(1, client.Generados);
+    }
+
+    // -----------------------------------------------------------------------
     // GenerarPdfA4 / GenerarPdfTermico
     // -----------------------------------------------------------------------
 

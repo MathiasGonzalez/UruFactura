@@ -56,7 +56,7 @@ public class DgiSoapClient : IDgiSoapClient
         }
     }
 
-    public IDgiSoapClient WithHttpClient(HttpClient httpClient)
+    public virtual IDgiSoapClient WithHttpClient(HttpClient httpClient)
     {
         ValidarHttpClientExterno(httpClient);
         if (_ownsHttpClient)
@@ -77,7 +77,7 @@ public class DgiSoapClient : IDgiSoapClient
     }
 
     /// <inheritdoc />
-    public Task<RespuestaDgi> EnviarSobreAsync(string sobreXml, CancellationToken cancellationToken = default)
+    public virtual Task<RespuestaDgi> EnviarSobreAsync(string sobreXml, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sobreXml);
         return InvocarAsync(
@@ -87,7 +87,7 @@ public class DgiSoapClient : IDgiSoapClient
     }
 
     /// <inheritdoc />
-    public Task<RespuestaDgi> ConsultarEstadoEnvioAsync(
+    public virtual Task<RespuestaDgi> ConsultarEstadoEnvioAsync(
         string idReceptor, string token, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(idReceptor);
@@ -106,7 +106,7 @@ public class DgiSoapClient : IDgiSoapClient
     }
 
     /// <inheritdoc />
-    public Task<RespuestaDgi> ConsultarEstadoCfeAsync(
+    public virtual Task<RespuestaDgi> ConsultarEstadoCfeAsync(
         int tipoCfe, string serie, long numero, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serie);
@@ -126,7 +126,7 @@ public class DgiSoapClient : IDgiSoapClient
     }
 
     /// <inheritdoc />
-    public Task<RespuestaDgi> EnviarReporteDiarioAsync(
+    public virtual Task<RespuestaDgi> EnviarReporteDiarioAsync(
         string reporteFirmadoXml, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reporteFirmadoXml);
@@ -248,7 +248,7 @@ public class DgiSoapClient : IDgiSoapClient
         };
     }
 
-    public void Dispose()
+    public virtual void Dispose()
     {
         if (_disposed) return;
         if (_ownsHttpClient)

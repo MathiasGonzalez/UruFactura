@@ -320,6 +320,34 @@ cualquier componente sin subclasear `UruFacturaClient`:
 | `ICfeXmlBuilder` | `CfeXmlBuilder` | Serialización XML DGI |
 | `IDgiSoapClient` | `DgiSoapClient` | Transporte SOAP hacia DGI |
 
+### Personalizar el comportamiento
+
+Las clases principales (`UruFacturaClient`, `CfeXmlBuilder`, `CfeFirmante`, `DgiSoapClient`, `CaeManager`,
+`InMemoryCaeRepository`, `CfePdfGenerator`, `CfeQrGenerator` y los modelos `Cfe` y `Cae`) exponen sus
+métodos públicos como `virtual`, así que podés heredar y sobreescribir solo lo que necesites:
+
+```csharp
+public class MiCliente(UruFacturaConfig config, ICfeXmlBuilder xml, ICfeFirmante firma,
+                       ICaeManager cae, IDgiSoapClient soap)
+    : UruFacturaClient(config, xml, firma, cae, soap, pdfGenerator: null)
+{
+    public override async Task<RespuestaDgi> EnviarCfeAsync(Cfe cfe, CancellationToken ct = default)
+    {
+        Auditoria.Registrar(cfe);                 // lógica propia antes/después del envío
+        return await base.EnviarCfeAsync(cfe, ct);
+    }
+
+    protected override Cfe CrearCfe(TipoCfe tipo)  // valores por defecto propios
+    {
+        var cfe = base.CrearCfe(tipo);
+        cfe.CodigoSucursal = 3;
+        return cfe;
+    }
+}
+```
+
+También podés reemplazar componentes completos con el builder (`WithXmlBuilder`, `WithSigner`, `WithSoapClient`, …).
+
 ### `UruFacturaClientBuilder`
 
 El builder fluido es la forma recomendada de construir el cliente, especialmente cuando se necesita

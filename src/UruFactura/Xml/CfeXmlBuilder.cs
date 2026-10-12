@@ -23,7 +23,7 @@ public class CfeXmlBuilder : ICfeXmlBuilder
     /// con <see cref="Signature.ICfeFirmante"/>.
     /// </summary>
     /// <exception cref="CfeValidationException">Si el CFE tiene errores de validación.</exception>
-    public string Generar(Cfe cfe)
+    public virtual string Generar(Cfe cfe)
     {
         // Los totales se derivan siempre del detalle (el cálculo es idempotente).
         cfe.CalcularTotales();

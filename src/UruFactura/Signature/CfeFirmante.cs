@@ -54,11 +54,11 @@ public class CfeFirmante : ICfeFirmante
     }
 
     /// <inheritdoc />
-    public byte[] ObtenerCertificadoDer() => _certificado.RawData;
+    public virtual byte[] ObtenerCertificadoDer() => _certificado.RawData;
 
     /// <inheritdoc />
     /// <exception cref="FirmaDigitalException">Si ocurre algún error durante la firma.</exception>
-    public string Firmar(string xmlSinFirmar)
+    public virtual string Firmar(string xmlSinFirmar)
     {
         try
         {
@@ -146,7 +146,7 @@ public class CfeFirmante : ICfeFirmante
     }
 
     /// <inheritdoc />
-    public void Dispose()
+    public virtual void Dispose()
     {
         if (_disposed) return;
         _certificado.Dispose();

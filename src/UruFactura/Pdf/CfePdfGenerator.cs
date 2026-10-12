@@ -45,7 +45,7 @@ public class CfePdfGenerator : ICfePdfGenerator
     }
 
     /// <inheritdoc />
-    public byte[] GenerarA4(Cfe cfe)
+    public virtual byte[] GenerarA4(Cfe cfe)
     {
         try
         {
@@ -59,7 +59,7 @@ public class CfePdfGenerator : ICfePdfGenerator
     }
 
     /// <inheritdoc />
-    public byte[] GenerarTermico(Cfe cfe)
+    public virtual byte[] GenerarTermico(Cfe cfe)
     {
         try
         {

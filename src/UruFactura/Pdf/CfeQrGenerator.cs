@@ -10,10 +10,10 @@ namespace UruFactura.Pdf;
 public class CfeQrGenerator : ICfeQrGenerator
 {
     /// <inheritdoc />
-    public byte[] GenerarQrCode(Cfe cfe) =>
+    public virtual byte[] GenerarQrCode(Cfe cfe) =>
         CfePdfGenerator.GenerarQrCode(cfe);
 
     /// <inheritdoc />
-    public byte[] GenerarQrCode(Cfe cfe, Ambiente ambiente) =>
+    public virtual byte[] GenerarQrCode(Cfe cfe, Ambiente ambiente) =>
         CfePdfGenerator.GenerarQrCode(cfe, ambiente);
 }

@@ -63,45 +63,46 @@ public partial class UruFacturaClient : IUruFacturaClient
     // -----------------------------------------------------------------------
 
     /// <summary>Crea un nuevo e-Ticket pre-configurado con los datos del emisor.</summary>
-    public Cfe CrearETicket() => CrearCfe(TipoCfe.ETicket);
+    public virtual Cfe CrearETicket() => CrearCfe(TipoCfe.ETicket);
 
     /// <summary>Crea una nueva e-Factura pre-configurada con los datos del emisor.</summary>
-    public Cfe CrearEFactura() => CrearCfe(TipoCfe.EFactura);
+    public virtual Cfe CrearEFactura() => CrearCfe(TipoCfe.EFactura);
 
     /// <summary>Crea un nuevo e-Remito pre-configurado con los datos del emisor.</summary>
-    public Cfe CrearERemito() => CrearCfe(TipoCfe.ERemito);
+    public virtual Cfe CrearERemito() => CrearCfe(TipoCfe.ERemito);
 
     /// <summary>Crea una nota de crédito de e-Ticket.</summary>
-    public Cfe CrearNotaCreditoETicket() => CrearCfe(TipoCfe.NotaCreditoETicket);
+    public virtual Cfe CrearNotaCreditoETicket() => CrearCfe(TipoCfe.NotaCreditoETicket);
 
     /// <summary>Crea una nota de débito de e-Ticket.</summary>
-    public Cfe CrearNotaDebitoETicket() => CrearCfe(TipoCfe.NotaDebitoETicket);
+    public virtual Cfe CrearNotaDebitoETicket() => CrearCfe(TipoCfe.NotaDebitoETicket);
 
     /// <summary>Crea una nota de crédito de e-Factura.</summary>
-    public Cfe CrearNotaCreditoEFactura() => CrearCfe(TipoCfe.NotaCreditoEFactura);
+    public virtual Cfe CrearNotaCreditoEFactura() => CrearCfe(TipoCfe.NotaCreditoEFactura);
 
     /// <summary>Crea una nota de débito de e-Factura.</summary>
-    public Cfe CrearNotaDebitoEFactura() => CrearCfe(TipoCfe.NotaDebitoEFactura);
+    public virtual Cfe CrearNotaDebitoEFactura() => CrearCfe(TipoCfe.NotaDebitoEFactura);
 
     /// <summary>Crea una e-Factura de exportación.</summary>
-    public Cfe CrearEFacturaExportacion() => CrearCfe(TipoCfe.EFacturaExportacion);
+    public virtual Cfe CrearEFacturaExportacion() => CrearCfe(TipoCfe.EFacturaExportacion);
 
     /// <summary>Crea una nota de crédito de e-Factura de exportación.</summary>
-    public Cfe CrearNotaCreditoEFacturaExportacion() => CrearCfe(TipoCfe.NotaCreditoEFacturaExportacion);
+    public virtual Cfe CrearNotaCreditoEFacturaExportacion() => CrearCfe(TipoCfe.NotaCreditoEFacturaExportacion);
 
     /// <summary>Crea una nota de débito de e-Factura de exportación.</summary>
-    public Cfe CrearNotaDebitoEFacturaExportacion() => CrearCfe(TipoCfe.NotaDebitoEFacturaExportacion);
+    public virtual Cfe CrearNotaDebitoEFacturaExportacion() => CrearCfe(TipoCfe.NotaDebitoEFacturaExportacion);
 
     /// <summary>Crea un e-Remito de exportación (124).</summary>
-    public Cfe CrearERemitoExportacion() => CrearCfe(TipoCfe.ERemitoExportacion);
+    public virtual Cfe CrearERemitoExportacion() => CrearCfe(TipoCfe.ERemitoExportacion);
 
     /// <summary>
     /// Crea un e-Resguardo (182). El modelo actual no incluye retenciones/percepciones, por lo
     /// que <see cref="Cfe.Validar"/> lo rechaza hasta que se agregue ese soporte.
     /// </summary>
-    public Cfe CrearEResguardo() => CrearCfe(TipoCfe.EResguardo);
+    public virtual Cfe CrearEResguardo() => CrearCfe(TipoCfe.EResguardo);
 
-    private Cfe CrearCfe(TipoCfe tipo) => new()
+    /// <summary>Crea el CFE base de un tipo con los datos del emisor; sobreescribible para ajustar los valores por defecto.</summary>
+    protected virtual Cfe CrearCfe(TipoCfe tipo) => new()
     {
         Tipo = tipo,
         RutEmisor = _config.RutEmisor,
@@ -126,7 +127,7 @@ public partial class UruFacturaClient : IUruFacturaClient
     /// con un <see cref="ICaeRepository"/>.
     /// </summary>
     /// <exception cref="Exceptions.CaeException">Si no hay un CAE vigente con números disponibles.</exception>
-    public void AsignarCae(Cfe cfe)
+    public virtual void AsignarCae(Cfe cfe)
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(cfe);
@@ -137,7 +138,7 @@ public partial class UruFacturaClient : IUruFacturaClient
     /// Como <see cref="AsignarCae"/>, y además guarda el último número usado en el
     /// <see cref="ICaeRepository"/> configurado (si lo hay) para que sobreviva a reinicios.
     /// </summary>
-    public async Task AsignarCaeAsync(Cfe cfe)
+    public virtual async Task AsignarCaeAsync(Cfe cfe)
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(cfe);
@@ -164,7 +165,7 @@ public partial class UruFacturaClient : IUruFacturaClient
     /// </summary>
     /// <param name="cfe">El CFE a serializar.</param>
     /// <returns>XML sin firmar.</returns>
-    public string GenerarXml(Cfe cfe)
+    public virtual string GenerarXml(Cfe cfe)
     {
         ThrowIfDisposed();
         cfe.CalcularTotales();
@@ -178,7 +179,7 @@ public partial class UruFacturaClient : IUruFacturaClient
     /// </summary>
     /// <param name="cfe">El CFE (debe haberse generado el XML previamente).</param>
     /// <returns>XML firmado.</returns>
-    public string FirmarCfe(Cfe cfe)
+    public virtual string FirmarCfe(Cfe cfe)
     {
         ThrowIfDisposed();
         if (string.IsNullOrWhiteSpace(cfe.XmlSinFirmar))
@@ -194,7 +195,7 @@ public partial class UruFacturaClient : IUruFacturaClient
     /// </summary>
     /// <param name="cfe">El CFE a procesar.</param>
     /// <returns>XML firmado.</returns>
-    public string GenerarYFirmar(Cfe cfe)
+    public virtual string GenerarYFirmar(Cfe cfe)
     {
         ThrowIfDisposed();
         GenerarXml(cfe);
@@ -214,7 +215,7 @@ public partial class UruFacturaClient : IUruFacturaClient
     /// <param name="cfe">El CFE a enviar.</param>
     /// <param name="cancellationToken">Token de cancelación.</param>
     /// <returns>Respuesta de la DGI (<c>ACKSobre</c>).</returns>
-    public Task<RespuestaDgi> EnviarCfeAsync(
+    public virtual Task<RespuestaDgi> EnviarCfeAsync(
         Cfe cfe,
         CancellationToken cancellationToken = default) =>
         EnviarCfesAsync([cfe], cancellationToken);
@@ -222,7 +223,7 @@ public partial class UruFacturaClient : IUruFacturaClient
     /// <summary>
     /// Envía varios CFE (1 a 250) en un único sobre.
     /// </summary>
-    public async Task<RespuestaDgi> EnviarCfesAsync(
+    public virtual async Task<RespuestaDgi> EnviarCfesAsync(
         IEnumerable<Cfe> cfes,
         CancellationToken cancellationToken = default)
     {
@@ -264,7 +265,7 @@ public partial class UruFacturaClient : IUruFacturaClient
     /// </summary>
     /// <param name="envio">Respuesta devuelta por <see cref="EnviarCfeAsync"/> / <see cref="EnviarCfesAsync"/>.</param>
     /// <param name="cfes">CFE del sobre cuyo estado se actualiza (opcional).</param>
-    public async Task<RespuestaDgi> ConsultarEstadoEnvioAsync(
+    public virtual async Task<RespuestaDgi> ConsultarEstadoEnvioAsync(
         RespuestaDgi envio,
         IEnumerable<Cfe>? cfes = null,
         CancellationToken cancellationToken = default)
@@ -300,7 +301,7 @@ public partial class UruFacturaClient : IUruFacturaClient
     /// <summary>
     /// Consulta el estado de un CFE por tipo, serie y número (<c>EFACCONSULTARESTADOCFE</c>).
     /// </summary>
-    public async Task<RespuestaDgi> ConsultarEstadoCfeAsync(
+    public virtual async Task<RespuestaDgi> ConsultarEstadoCfeAsync(
         Cfe cfe,
         CancellationToken cancellationToken = default)
     {
@@ -322,7 +323,7 @@ public partial class UruFacturaClient : IUruFacturaClient
     /// cantidades y rangos de los CFE emitidos en <paramref name="fecha"/>. Los CFE con otra
     /// fecha de emisión se ignoran.
     /// </summary>
-    public Task<RespuestaReporteDiario> EnviarReporteDiarioAsync(
+    public virtual Task<RespuestaReporteDiario> EnviarReporteDiarioAsync(
         DateTime fecha,
         IEnumerable<Cfe> cfes,
         CancellationToken cancellationToken = default) =>
@@ -332,7 +333,7 @@ public partial class UruFacturaClient : IUruFacturaClient
     /// Igual que <see cref="EnviarReporteDiarioAsync(DateTime, IEnumerable{Cfe}, CancellationToken)"/>
     /// indicando la secuencia del envío del día (0 el primero, 1 el siguiente, ...).
     /// </summary>
-    public async Task<RespuestaReporteDiario> EnviarReporteDiarioAsync(
+    public virtual async Task<RespuestaReporteDiario> EnviarReporteDiarioAsync(
         DateTime fecha,
         IEnumerable<Cfe> cfes,
         int secEnvio,
@@ -363,7 +364,7 @@ public partial class UruFacturaClient : IUruFacturaClient
     /// Número de envío asignado por el emisor (<c>Idemisor</c>, hasta 10 dígitos): estrictamente
     /// creciente dentro del proceso y basado en la hora para no repetirse entre reinicios.
     /// </summary>
-    private long SiguienteIdEnvio()
+    protected virtual long SiguienteIdEnvio()
     {
         lock (_idEnvioLock)
         {
@@ -385,7 +386,7 @@ public partial class UruFacturaClient : IUruFacturaClient
     /// Si el cliente fue construido sin un generador de PDF.
     /// Use <see cref="UruFacturaClientBuilder.WithPdfGenerator"/> o el constructor con <see cref="ICfePdfGenerator"/>.
     /// </exception>
-    public byte[] GenerarPdfA4(Cfe cfe)
+    public virtual byte[] GenerarPdfA4(Cfe cfe)
     {
         ThrowIfDisposed();
         ThrowIfNoPdfGenerator();
@@ -401,7 +402,7 @@ public partial class UruFacturaClient : IUruFacturaClient
     /// Si el cliente fue construido sin un generador de PDF.
     /// Use <see cref="UruFacturaClientBuilder.WithPdfGenerator"/> o el constructor con <see cref="ICfePdfGenerator"/>.
     /// </exception>
-    public byte[] GenerarPdfTermico(Cfe cfe)
+    public virtual byte[] GenerarPdfTermico(Cfe cfe)
     {
         ThrowIfDisposed();
         ThrowIfNoPdfGenerator();
@@ -425,7 +426,7 @@ public partial class UruFacturaClient : IUruFacturaClient
     }
 
     /// <inheritdoc />
-    public void Dispose()
+    public virtual void Dispose()
     {
         if (_disposed) return;
         _soapClient.Dispose();

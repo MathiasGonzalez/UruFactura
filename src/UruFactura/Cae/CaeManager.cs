@@ -19,7 +19,7 @@ public class CaeManager : ICaeManager
     /// Registra un CAE en el gestor.
     /// </summary>
     /// <param name="cae">CAE a registrar.</param>
-    public void RegistrarCae(Models.Cae cae)
+    public virtual void RegistrarCae(Models.Cae cae)
     {
         ArgumentNullException.ThrowIfNull(cae);
 
@@ -31,7 +31,7 @@ public class CaeManager : ICaeManager
     /// Registra múltiples CAEs a la vez usando un solo lock para el lote completo.
     /// Valida que ningún elemento sea null antes de modificar el estado interno.
     /// </summary>
-    public void RegistrarCaes(IEnumerable<Models.Cae> caes)
+    public virtual void RegistrarCaes(IEnumerable<Models.Cae> caes)
     {
         ArgumentNullException.ThrowIfNull(caes);
 
@@ -67,7 +67,7 @@ public class CaeManager : ICaeManager
     /// <param name="tipoCfe">Tipo de CFE para el que se necesita un número.</param>
     /// <returns>Tupla (cae, número).</returns>
     /// <exception cref="CaeException">Si no hay CAE vigente o disponible.</exception>
-    public (Models.Cae Cae, long Numero) ObtenerProximoNumero(TipoCfe tipoCfe)
+    public virtual (Models.Cae Cae, long Numero) ObtenerProximoNumero(TipoCfe tipoCfe)
     {
         lock (_lock)
         {
@@ -87,7 +87,7 @@ public class CaeManager : ICaeManager
     /// </summary>
     /// <param name="tipoCfe">Tipo de CFE.</param>
     /// <returns>CAE activo, o null si no existe.</returns>
-    public Models.Cae? ObtenerCaeActivo(TipoCfe tipoCfe)
+    public virtual Models.Cae? ObtenerCaeActivo(TipoCfe tipoCfe)
     {
         lock (_lock)
         {
@@ -100,7 +100,7 @@ public class CaeManager : ICaeManager
     /// </summary>
     /// <param name="diasAlertaVencimiento">Días de anticipación para alertar vencimiento.</param>
     /// <param name="porcentajeAlertaUso">Porcentaje de uso a partir del cual alertar.</param>
-    public IReadOnlyList<string> ObtenerAdvertencias(
+    public virtual IReadOnlyList<string> ObtenerAdvertencias(
         int diasAlertaVencimiento = 7,
         decimal porcentajeAlertaUso = 80m)
     {
@@ -124,7 +124,7 @@ public class CaeManager : ICaeManager
     /// <summary>
     /// Retorna todos los CAEs registrados.
     /// </summary>
-    public IReadOnlyList<Models.Cae> ObtenerTodosLosCaes()
+    public virtual IReadOnlyList<Models.Cae> ObtenerTodosLosCaes()
     {
         lock (_lock)
         {
@@ -135,7 +135,7 @@ public class CaeManager : ICaeManager
     /// <summary>
     /// Retorna todos los CAEs vigentes con números disponibles.
     /// </summary>
-    public IReadOnlyList<Models.Cae> ObtenerCaesActivos()
+    public virtual IReadOnlyList<Models.Cae> ObtenerCaesActivos()
     {
         lock (_lock)
         {
@@ -149,7 +149,7 @@ public class CaeManager : ICaeManager
     /// <summary>
     /// Retorna un resumen de estado de los CAEs.
     /// </summary>
-    public string ResumenEstado()
+    public virtual string ResumenEstado()
     {
         Dictionary<TipoCfe, List<Models.Cae>> snapshot;
         lock (_lock)
