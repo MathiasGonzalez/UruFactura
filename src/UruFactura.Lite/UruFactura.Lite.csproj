@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>UruFactura</RootNamespace>
     <AssemblyName>UruFactura.Lite</AssemblyName>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Authors>MathiasGonzalez</Authors>
     <Description>SDK .Net C# para facturación electrónica DGI Uruguay (e-Factura / CFE) — versión Lite sin dependencias de terceros para generación de PDF.</Description>
     <PackageTags>dgi;uruguay;efactura;cfe;facturacion-electronica;lite</PackageTags>
