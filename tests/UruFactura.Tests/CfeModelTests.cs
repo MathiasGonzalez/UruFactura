@@ -7,29 +7,7 @@ namespace UruFactura.Tests;
 
 public class CfeModelTests
 {
-    private static Cfe CrearCfeValido() =>
-        new()
-        {
-            Tipo = TipoCfe.ETicket,
-            Numero = 1,
-            FechaEmision = DateOnly.FromDateTime(DateTime.Today),
-            RutEmisor = "210000000012",
-            RazonSocialEmisor = "Empresa Test S.A.",
-            DomicilioFiscalEmisor = "Av. 18 de Julio 1234",
-            CiudadEmisor = "Montevideo",
-            DepartamentoEmisor = "Montevideo",
-            Detalle =
-            {
-                new LineaDetalle
-                {
-                    NroLinea = 1,
-                    NombreItem = "Producto A",
-                    Cantidad = 2,
-                    PrecioUnitario = 100m,
-                    IndFactIva = TipoIva.Basico,
-                }
-            }
-        };
+    private static Cfe CrearCfeValido() => TestData.CfeValido();
 
     [Fact]
     public void Validar_CfeValido_NoRetornaErrores()
@@ -287,10 +265,9 @@ public class CfeModelTests
     }
 
     [Fact]
-    public void Validar_ERemitoDespachante_SinIndTraslado_RetornaError()
+    public void Validar_ERemitoExportacion_SinIndTraslado_RetornaError()
     {
-        var cfe = CrearCfeValido();
-        cfe.Tipo = TipoCfe.ERemitoDespachante;
+        var cfe = TestData.CfeValido(TipoCfe.ERemitoExportacion);
         cfe.IndTraslado = null;
         var errores = cfe.Validar();
         Assert.Contains(errores, e => e.Contains("traslado") || e.Contains("IndTraslado"));

@@ -1,0 +1,593 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<schema xmlns="http://www.w3.org/2001/XMLSchema" xmlns:SOAP-ENC="http://schemas.xmlsoap.org/soap/encoding/" xmlns:wsdlns="http://dgi.gub.uy" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:tns="http://dgi.gub.uy" targetNamespace="http://dgi.gub.uy" elementFormDefault="qualified">
+			
+<complexType name="CFEId">
+				
+<all>
+					
+<element name="TipoCFE" type="xsd:short">
+					</element>
+					
+<element name="Serie" type="xsd:string">
+					</element>
+					
+<element name="Nro" type="xsd:int">
+					</element>
+				</all>
+			</complexType>
+			
+<complexType name="ACKConsultaEstadoCFE">
+				
+<all>
+					
+<element name="EstadoCFE" type="xsd:string">
+					</element>
+					
+<element name="IdEmisor" type="xsd:long">
+					</element>
+					
+<element name="IdReceptor" type="xsd:long">
+					</element>
+					
+<element name="ParamConsulta" type="tns:eFacParamConsulta">
+					</element>
+				</all>
+			</complexType>
+			
+<complexType name="eFacParamConsulta">
+				
+<all>
+					
+<element name="Token" type="xsd:string">
+					</element>
+					
+<element name="Fechahora" type="xsd:dateTime">
+					</element>
+				</all>
+			</complexType>
+			
+<complexType name="ACKConsultaEnviosCFE">
+				
+<all>
+					
+<element name="ColeccionDatosSobres" type="tns:ArrayOfDatosSobre">
+					</element>
+				</all>
+			</complexType>
+			
+<complexType name="ArrayOfDatosSobre">
+				
+<sequence>
+					
+<element minOccurs="0" maxOccurs="unbounded" name="DatosSobre" type="tns:DatosSobre">
+					</element>
+				</sequence>
+			</complexType>
+			
+<complexType name="DatosSobre">
+				
+<all>
+					
+<element name="EstadoSobre" type="xsd:string">
+					</element>
+					
+<element name="FechaHoraSobre" type="xsd:dateTime">
+					</element>
+					
+<element name="IdEmisor" type="xsd:long">
+					</element>
+					
+<element name="IdReceptor" type="xsd:long">
+					</element>
+					
+<element name="ParamConsulta" type="tns:eFacParamConsulta">
+					</element>
+				</all>
+			</complexType>
+			
+<complexType name="ConsultaEnviosSobre">
+				
+<all>
+					
+<element name="IdEmisor" type="xsd:long">
+					</element>
+					
+<element name="IdReceptor" type="xsd:long">
+					</element>
+					
+<element name="FechaDesde" type="xsd:dateTime">
+					</element>
+					
+<element name="FechaHasta" type="xsd:dateTime">
+					</element>
+				</all>
+			</complexType>
+			
+<complexType name="ACKConsultaEnviosSobre">
+				
+<all>
+					
+<element name="ColeccionDatosSobre" type="tns:ArrayOfDatosSobre">
+					</element>
+				</all>
+			</complexType>
+			
+<complexType name="ConsultaCFERecibidos">
+				
+<all>
+					
+<element name="RUCEmisor" type="xsd:string">
+					</element>
+					
+<element name="TipoCFE" type="xsd:short">
+					</element>
+					
+<element name="Serie" type="xsd:string">
+					</element>
+					
+<element name="Nro" type="xsd:int">
+					</element>
+					
+<element name="FechaDesde" type="xsd:dateTime">
+					</element>
+					
+<element name="FechaHasta" type="xsd:dateTime">
+					</element>
+				</all>
+			</complexType>
+			
+<complexType name="ACKConsultaCFERecibidos">
+				
+<all>
+					
+<element name="ColeccionDatosCFE" type="tns:ArrayOfDatosCFE">
+					</element>
+				</all>
+			</complexType>
+			
+<complexType name="ArrayOfDatosCFE">
+				
+<sequence>
+					
+<element minOccurs="0" maxOccurs="unbounded" name="DatosCFE" type="tns:DatosCFE">
+					</element>
+				</sequence>
+			</complexType>
+			
+<complexType name="DatosCFE">
+				
+<all>
+					
+<element name="TipoCFE" type="xsd:short">
+					</element>
+					
+<element name="Serie" type="xsd:string">
+					</element>
+					
+<element name="Nro" type="xsd:int">
+					</element>
+					
+<element name="Estado" type="xsd:string">
+					</element>
+					
+<element name="FechaHora" type="xsd:dateTime">
+					</element>
+					
+<element name="RucEmisor" type="xsd:string">
+					</element>
+					
+<element name="Moneda" type="xsd:string">
+					</element>
+					
+<element name="TotalNeto" type="xsd:double">
+					</element>
+					
+<element name="TotalIVA" type="xsd:double">
+					</element>
+					
+<element name="MontoTotal" type="xsd:double">
+					</element>
+					
+<element name="TotalRetenido" type="xsd:double">
+					</element>
+				</all>
+			</complexType>
+			
+<complexType name="ConsultaEnviosReporte">
+				
+<all>
+					
+<element name="FechaResumen" type="xsd:date">
+					</element>
+					
+<element minOccurs="0" name="Secuencia" type="xsd:byte" default="0">
+					</element>
+					
+<element minOccurs="0" name="IdEmisor" type="xsd:long" default="0">
+					</element>
+				</all>
+			</complexType>
+			
+<complexType name="ACKConsultaEnviosReporte">
+				
+<all>
+					
+<element name="ColeccionDatosReporte" type="tns:ArrayOfDatosReporte">
+					</element>
+				</all>
+			</complexType>
+			
+<complexType name="ArrayOfDatosReporte">
+				
+<sequence>
+					
+<element minOccurs="0" maxOccurs="unbounded" name="DatosReporte" type="tns:DatosReporte">
+					</element>
+				</sequence>
+			</complexType>
+			
+<complexType name="DatosReporte">
+				
+<all>
+					
+<element name="IdEmisor" type="xsd:long">
+					</element>
+					
+<element name="IdReceptor" type="xsd:long">
+					</element>
+					
+<element name="Estado" type="xsd:string">
+					</element>
+					
+<element name="FechaHoraRecepcion" type="xsd:dateTime">
+					</element>
+				</all>
+			</complexType>
+			
+<complexType name="ConsultaRespuestaReporte">
+				
+<all>
+					
+<element name="IdReceptor" type="xsd:long">
+					</element>
+				</all>
+			</complexType>
+			
+<complexType name="ConsultaRUCEmisores">
+				
+<all>
+					
+<element name="Filtro_eFacDocNro" type="xsd:string">
+					</element>
+					
+<element name="Filtro_eFacDenominacion" type="xsd:string">
+					</element>
+					
+<element name="Filtro_eFacRUCEmisorAudFchHora" type="xsd:dateTime">
+					</element>
+				</all>
+			</complexType>
+			
+<complexType name="RucEmisoresMail">
+				
+<sequence>
+					
+<element minOccurs="0" maxOccurs="unbounded" name="RucEmisoresMail.RucEmisoresMailItem" type="tns:RucEmisoresMail.RucEmisoresMailItem">
+					</element>
+				</sequence>
+			</complexType>
+			
+<complexType name="RucEmisoresMail.RucEmisoresMailItem">
+				
+<all>
+					
+<element name="RUC" type="xsd:string">
+					</element>
+					
+<element name="DENOMINACION" type="xsd:string">
+					</element>
+					
+<element name="FECHA_INICIO" type="xsd:date">
+					</element>
+					
+<element name="FECHA_FIN" type="xsd:date">
+					</element>
+					
+<element name="MAIL" type="xsd:string">
+					</element>
+				</all>
+			</complexType>
+			
+<complexType name="RucEmisoresTransicionMail">
+				
+<sequence>
+					
+<element minOccurs="0" maxOccurs="unbounded" name="RucEmisoresTransicionMail.RucEmisoresTransicionMailItem" type="tns:RucEmisoresTransicionMail.RucEmisoresTransicionMailItem">
+					</element>
+				</sequence>
+			</complexType>
+			
+<complexType name="RucEmisoresTransicionMail.RucEmisoresTransicionMailItem">
+				
+<all>
+					
+<element name="RUC" type="xsd:string">
+					</element>
+					
+<element name="DENOMINACION" type="xsd:string">
+					</element>
+					
+<element name="FECHA_INICIO" type="xsd:date">
+					</element>
+					
+<element name="FECHA_FIN_TRANSICION" type="xsd:date">
+					</element>
+					
+<element name="FECHA_FIN" type="xsd:date">
+					</element>
+					
+<element name="MAIL" type="xsd:string">
+					</element>
+				</all>
+			</complexType>			
+			
+<complexType name="RucEmisoresTransicionMailProv">
+				
+<sequence>
+					
+<element minOccurs="0" maxOccurs="unbounded" name="RucEmisoresTransicionMailProv.RucEmisoresTransicionMailProvItem" type="tns:RucEmisoresTransicionMailProv.RucEmisoresTransicionMailProvItem">
+					</element>
+				</sequence>
+			</complexType>
+			
+<complexType name="RucEmisoresTransicionMailProv.RucEmisoresTransicionMailProvItem">
+				
+<all>
+					
+<element name="RUC" type="xsd:string">
+					</element>
+					
+<element name="DENOMINACION" type="xsd:string">
+					</element>
+					
+<element name="FECHA_INICIO" type="xsd:date">
+					</element>
+					
+<element name="FECHA_FIN_TRANSICION" type="xsd:date">
+					</element>
+					
+<element name="FECHA_FIN" type="xsd:date">
+					</element>
+					
+<element name="MAIL" type="xsd:string">
+					</element>
+					
+<element name="URL_WEBSERVICE" type="xsd:string">
+					</element>
+					
+<element name="MAIL_CONTACTO_TECNICO" type="xsd:string">
+					</element>					
+				</all>
+			</complexType>			
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARESTADOCFE">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Cfeid" type="tns:CFEId"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARESTADOCFEResponse">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Ackconsultaestadocfe" type="tns:ACKConsultaEstadoCFE"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARENVIOSCFE">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Cfeid" type="tns:CFEId"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARENVIOSCFEResponse">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Ackconsultaenvioscfe" type="tns:ACKConsultaEnviosCFE"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARENVIOSSOBRE">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Consultaenviossobre" type="tns:ConsultaEnviosSobre"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARENVIOSSOBREResponse">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Ackconsultaenviossobre" type="tns:ACKConsultaEnviosSobre"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARCFERECIBIDOS">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Consultacferecibidos" type="tns:ConsultaCFERecibidos"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARCFERECIBIDOSResponse">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Ackconsultacferecibidos" type="tns:ACKConsultaCFERecibidos"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARENVIOSREPORTE">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Consultaenviosreporte" type="tns:ConsultaEnviosReporte"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARENVIOSREPORTEResponse">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Ackconsultaenviosreporte" type="tns:ACKConsultaEnviosReporte"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARRESPUESTAREPORTE">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Consultarespuestareporte" type="tns:ConsultaRespuestaReporte"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARRESPUESTAREPORTEResponse">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Ackrepdiario" type="xsd:string"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARRUCEMISORES">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Consultarucemisores" type="tns:ConsultaRUCEmisores"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESResponse">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Rucemisoresmail" type="tns:RucEmisoresMail"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICION">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Consultarucemisores" type="tns:ConsultaRUCEmisores"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONResponse">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Rucemisoresmail" type="tns:RucEmisoresMail"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDO">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Consultarucemisores" type="tns:ConsultaRUCEmisores"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOResponse">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Rucemisorestransicionmailcomprimido" type="xsd:string"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROV">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Consultarucemisores" type="tns:ConsultaRUCEmisores"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROVResponse">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Rucemisorestransicionmailcomprimidoprov" type="xsd:string"/>
+					</sequence>
+				</complexType>
+			</element>			
+		</schema>

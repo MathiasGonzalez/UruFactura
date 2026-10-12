@@ -63,7 +63,7 @@ var response = await httpClient.PostAsync(dgiEndpoint, soapContent);
 ```csharp
 // ✅ Después: API de alto nivel
 var eticket = client.CrearETicket();
-eticket.Numero = 1;
+client.AsignarCae(eticket);   // toma el próximo número del CAE
 eticket.Detalle.Add(new LineaDetalle
 {
     NroLinea       = 1,
@@ -148,7 +148,7 @@ Si estás migrando desde un módulo de facturación electrónica de un ERP (Bisc
                _         => throw new ArgumentException($"Tipo no soportado: {dto.Tipo}")
            };
 
-           cfe.Numero = dto.Numero;
+           client.AsignarCae(cfe);   // toma el próximo número del CAE
 
             if (dto.Receptor != null)
             {

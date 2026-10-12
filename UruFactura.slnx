@@ -2,8 +2,6 @@
   <Folder Name="/src/">
     <Project Path="src/UruFactura/UruFactura.csproj" />
     <Project Path="src/UruFactura.Lite/UruFactura.Lite.csproj" />
-    <Project Path="src/UruFactura.CloudflareApi/UruFactura.CloudflareApi.csproj" />
-    <Project Path="src/UruFactura.TestApi/UruFactura.TestApi.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/UruFactura.Tests/UruFactura.Tests.csproj" />

@@ -55,6 +55,8 @@ El CAE define el rango de numeración autorizado por DGI para cada tipo de CFE.
 client.Cae.RegistrarCae(new Cae
 {
     NroSerie         = "CAE2025001",
+    NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
+    Serie            = "A",
     TipoCfe          = TipoCfe.ETicket,
     RangoDesde       = 1,
     RangoHasta       = 1000,
@@ -70,7 +72,7 @@ client.Cae.RegistrarCae(new Cae
   <TabItem label="e-Ticket simple">
   ```csharp
   var eticket = client.CrearETicket();
-  eticket.Numero = 1;
+  client.AsignarCae(eticket);   // toma el próximo número del CAE
 
   eticket.Detalle.Add(new LineaDetalle
   {
@@ -85,7 +87,7 @@ client.Cae.RegistrarCae(new Cae
   <TabItem label="e-Factura con receptor">
   ```csharp
   var efactura = client.CrearEFactura();
-  efactura.Numero = 1;
+  client.AsignarCae(efactura);   // toma el próximo número del CAE
 
   efactura.Receptor = new Receptor
   {
@@ -118,7 +120,7 @@ client.Cae.RegistrarCae(new Cae
   <TabItem label="Nota de Crédito">
   ```csharp
   var nc = client.CrearNotaCreditoETicket();
-  nc.Numero = 1;
+  client.AsignarCae(nc);   // toma el próximo número del CAE
 
   // Referenciar el comprobante original
   nc.Referencias.Add(new RefCfe
@@ -147,20 +149,24 @@ client.Cae.RegistrarCae(new Cae
 ## Paso 4: Enviar a DGI
 
 ```csharp
+// 1) Envío: la DGI acusa recibo del sobre (AS = recibido, BS/BA = rechazado)
 var respuesta = await client.EnviarCfeAsync(eticket);
 
-if (respuesta.Exitoso)
+if (!respuesta.Exitoso)
 {
-    Console.WriteLine($"✅ Aceptado: {respuesta.Mensaje}");
+    Console.WriteLine($"❌ Sobre rechazado [{respuesta.Codigo}]: {respuesta.Mensaje}");
+    return;
 }
-else
-{
-    Console.WriteLine($"❌ Rechazado [{respuesta.Codigo}]: {respuesta.Mensaje}");
-}
+
+// 2) Resultado del comprobante (AE = aceptado, BE = rechazado, CE = observado)
+var estado = await client.ConsultarEstadoEnvioAsync(respuesta, [eticket]);
+Console.WriteLine(estado.Exitoso
+    ? "✅ Aceptado"
+    : $"❌ [{estado.Codigo}]: {estado.Mensaje}");
 ```
 
 <Aside type="tip">
-  El código `00` significa aceptado. El código `01` es aceptado con observaciones (también válido). Ver [Códigos DGI](../reference/dgi-codes/) para la lista completa.
+  Recibir el sobre (`AS`) no significa que el CFE fue aceptado: la DGI procesa el sobre y luego informa el estado de cada comprobante (`AE`, `BE`, `CE`). Consultalo con `ConsultarEstadoEnvioAsync`, pasando la respuesta del envío (puede requerir esperar a `respuesta.ConsultarDesde`).
 </Aside>
 
 ---
@@ -233,6 +239,8 @@ using var client = new UruFacturaClient(config);
 client.Cae.RegistrarCae(new Cae
 {
     NroSerie         = "CAE2025001",
+    NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
+    Serie            = "A",
     TipoCfe          = TipoCfe.ETicket,
     RangoDesde       = 1,
     RangoHasta       = 1000,
@@ -241,7 +249,7 @@ client.Cae.RegistrarCae(new Cae
 
 // Crear e-Ticket
 var eticket = client.CrearETicket();
-eticket.Numero = 1;
+client.AsignarCae(eticket);   // toma el próximo número del CAE
 eticket.Detalle.Add(new LineaDetalle
 {
     NroLinea       = 1,

@@ -51,7 +51,10 @@ using var client = new UruFacturaClient(config);
 | Propiedad | Tipo | Valor por defecto | Descripción |
 |-----------|------|-------------------|-------------|
 | `Ambiente` | `Ambiente` | `Ambiente.Homologacion` | Define el endpoint DGI a usar |
-| `DgiSoapBaseUrl` | `string` | *(derivado)* | URL SOAP DGI calculada automáticamente según `Ambiente` |
+| `UrlEnvio` | `string?` | *(Homologación: servicio de prueba)* | URL del servicio `ws_efactura` (sobres, reporte diario, estado del envío). **Obligatoria en Producción** |
+| `UrlConsultas` | `string?` | *(Homologación: servicio de prueba)* | URL del servicio `ws_consultas` (estado de un CFE). **Obligatoria en Producción** |
+| `CodigoSucursal` | `int` | `1` | Código de sucursal asignado por la DGI (`CdgDGISucur`, 1-9999) |
+| `AlgoritmoFirma` | `AlgoritmoFirma` | `Sha256` | Algoritmo de la firma del CFE y de WS-Security (`Sha1` si la DGI rechaza SHA-256) |
 | `SoapTimeoutSegundos` | `int` | `30` | Timeout en segundos para las llamadas SOAP a DGI |
 | `OmitirValidacionSsl` | `bool` | `false` | Deshabilita la validación TLS del servidor. Activar solo cuando el ambiente de Homologación tenga una CA no reconocida por el sistema. **Nunca activar en Producción.** |
 
@@ -59,8 +62,8 @@ Valores del enum `Ambiente`:
 
 | Valor | Endpoint DGI |
 |-------|-------------|
-| `Ambiente.Homologacion` | `https://efacturahomologacion.dgi.gub.uy/ePresentacionSoap/service` |
-| `Ambiente.Produccion` | `https://efactura.dgi.gub.uy/ePresentacionSoap/service` |
+| `Ambiente.Homologacion` | Envío: `https://efactura.dgi.gub.uy:6443/ePrueba/ws_eprueba` · Consultas: `https://efactura.dgi.gub.uy:6460/ePrueba/ws_consultasPrueba` |
+| `Ambiente.Produccion` | Se debe configurar `UrlEnvio` y `UrlConsultas` con las URL que entrega la DGI al habilitar el ambiente |
 
 ---
 

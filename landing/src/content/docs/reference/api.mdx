@@ -34,21 +34,23 @@ La fachada principal de UruFactura. Punto de entrada para todas las operaciones.
 | `CrearEFacturaExportacion()` | `Cfe` | e-Factura Exportación (121) |
 | `CrearNotaCreditoEFacturaExportacion()` | `Cfe` | NC e-Factura Exportación (122) |
 | `CrearNotaDebitoEFacturaExportacion()` | `Cfe` | ND e-Factura Exportación (123) |
-| `CrearERemitoDespachante()` | `Cfe` | e-Remito Despachante (131) |
-| `CrearEResguardo()` | `Cfe` | e-Resguardo (151) |
+| `CrearERemitoExportacion()` | `Cfe` | e-Remito de Exportación (124) |
 | `CrearERemito()` | `Cfe` | e-Remito (181) |
-| `CrearNotaCreditoERemito()` | `Cfe` | NC e-Remito (182) |
+| `CrearEResguardo()` | `Cfe` | e-Resguardo (182) — aún no emitible (falta soporte de retenciones) |
 
 ### Métodos de operación
 
 | Método | Firma | Descripción |
 |--------|-------|-------------|
 | `GenerarXml` | `string GenerarXml(Cfe cfe)` | Genera el XML sin firmar y lo guarda en `cfe.XmlSinFirmar`. |
-| `FirmarCfe` | `string FirmarCfe(Cfe cfe)` | Firma el CFE con XAdES-BES y guarda el resultado en `cfe.XmlFirmado`. |
-| `GenerarYFirmar` | `string GenerarYFirmar(Cfe cfe)` | Genera XML y lo firma con XAdES-BES. Retorna el XML firmado. |
-| `EnviarCfeAsync` | `Task<RespuestaDgi> EnviarCfeAsync(Cfe cfe, CancellationToken cancellationToken = default)` | Genera, firma y envía el CFE a DGI. |
-| `ConsultarEstadoCfeAsync` | `Task<RespuestaDgi> ConsultarEstadoCfeAsync(Cfe cfe, CancellationToken cancellationToken = default)` | Consulta el estado de un CFE ya enviado. |
-| `EnviarReporteDiarioAsync` | `Task<RespuestaReporteDiario> EnviarReporteDiarioAsync(DateTime fecha, IEnumerable<Cfe> cfes, CancellationToken cancellationToken = default)` | Envía el reporte diario a DGI. |
+| `AsignarCae` / `AsignarCaeAsync` | `void AsignarCae(Cfe cfe)` / `Task AsignarCaeAsync(Cfe cfe)` | Toma el próximo número del CAE vigente y completa `Numero`, `Serie` y `CaeData`. La variante async además persiste el último número usado en el `ICaeRepository` configurado. |
+| `FirmarCfe` | `string FirmarCfe(Cfe cfe)` | Firma el CFE (XML Signature enveloped) y guarda el resultado en `cfe.XmlFirmado`. |
+| `GenerarYFirmar` | `string GenerarYFirmar(Cfe cfe)` | Genera XML y lo firma. Retorna el XML firmado. |
+| `EnviarCfeAsync` | `Task<RespuestaDgi> EnviarCfeAsync(Cfe cfe, CancellationToken cancellationToken = default)` | Genera, firma y envía el CFE a DGI dentro de un sobre `EnvioCFE`. Devuelve el acuse del sobre (`AS`/`BS`). |
+| `EnviarCfesAsync` | `Task<RespuestaDgi> EnviarCfesAsync(IEnumerable<Cfe> cfes, CancellationToken cancellationToken = default)` | Igual que el anterior para 1 a 250 CFE en un solo sobre. |
+| `ConsultarEstadoEnvioAsync` | `Task<RespuestaDgi> ConsultarEstadoEnvioAsync(RespuestaDgi envio, IEnumerable<Cfe>? cfes = null, CancellationToken cancellationToken = default)` | Consulta el resultado de un sobre enviado (`AE`/`BE`/`CE` por comprobante) y actualiza `AceptadoPorDgi` de los CFE indicados. |
+| `ConsultarEstadoCfeAsync` | `Task<RespuestaDgi> ConsultarEstadoCfeAsync(Cfe cfe, CancellationToken cancellationToken = default)` | Consulta el estado de un CFE por tipo, serie y número. |
+| `EnviarReporteDiarioAsync` | `Task<RespuestaReporteDiario> EnviarReporteDiarioAsync(DateTime fecha, IEnumerable<Cfe> cfes, CancellationToken cancellationToken = default)` | Envía el reporte diario (resumen firmado: montos, cantidades y rangos por tipo) de los CFE emitidos en la fecha. Hay una sobrecarga con `secEnvio`. |
 | `GenerarPdfA4` | `byte[] GenerarPdfA4(Cfe cfe)` | Genera representación impresa A4 en PDF. Requiere `ICfePdfGenerator` configurado. |
 | `GenerarPdfTermico` | `byte[] GenerarPdfTermico(Cfe cfe)` | Genera representación térmica 80mm en PDF. Requiere `ICfePdfGenerator` configurado. |
 
@@ -117,7 +119,12 @@ public record UruFacturaConfig
     public Ambiente Ambiente { get; init; }
     public int SoapTimeoutSegundos { get; init; }  // default: 30
     public bool OmitirValidacionSsl { get; init; } // default: false
-    public string DgiSoapBaseUrl { get; }         // según Ambiente
+    public int CodigoSucursal { get; init; }       // default: 1 (CdgDGISucur)
+    public AlgoritmoFirma AlgoritmoFirma { get; init; } // default: Sha256
+    public string? UrlEnvio { get; init; }         // obligatoria en Producción
+    public string? UrlConsultas { get; init; }     // obligatoria en Producción
+    public string DgiEnvioUrl { get; }             // efectiva (según Ambiente / UrlEnvio)
+    public string DgiConsultasUrl { get; }         // efectiva (según Ambiente / UrlConsultas)
 }
 ```
 
@@ -134,7 +141,7 @@ Todas las dependencias internas del cliente tienen interfaces para facilitar el 
 | `ICaeManager` | `CaeManager` | Gestión de CAEs — thread-safe |
 | `ICfePdfGenerator` | `CfePdfGenerator` | Generación de PDF A4 y térmico (solo paquete completo) |
 | `ICfeQrGenerator` | `CfeQrGenerator` | Generación del código QR DGI |
-| `ICfeFirmante` | `CfeFirmante` | Firma XAdES-BES del XML |
+| `ICfeFirmante` | `CfeFirmante` | Firma XML Signature enveloped (CFE y reporte) |
 | `ICfeXmlBuilder` | `CfeXmlBuilder` | Serialización del XML según esquema DGI |
 | `IDgiSoapClient` | `DgiSoapClient` | Transporte SOAP hacia DGI |
 
@@ -189,7 +196,9 @@ Constancia de Autorización de Emisión.
 
 | Propiedad | Tipo | Requerido | Descripción |
 |-----------|------|-----------|-------------|
-| `NroSerie` | `string` | ✅ | Número de serie del CAE |
+| `NroSerie` | `string` | ✅ | Identificador interno del CAE (clave en el repositorio) |
+| `NumeroAutorizacion` | `string` | ✅ | Número de autorización (`CAE_ID`, hasta 11 dígitos); va en `CAEData` de cada CFE |
+| `Serie` | `string` | ✅ | Serie de los comprobantes que autoriza (`A`, `AB` o `1A`) |
 | `TipoCfe` | `TipoCfe` | ✅ | Tipo de CFE al que aplica |
 | `RangoDesde` | `long` | ✅ | Primer número autorizado |
 | `RangoHasta` | `long` | ✅ | Último número autorizado |
@@ -261,10 +270,9 @@ public enum TipoCfe
     EFacturaExportacion       = 121,
     NotaCreditoEFacturaExportacion = 122,
     NotaDebitoEFacturaExportacion  = 123,
-    ERemitoDespachante        = 131,
-    EResguardo                = 151,
+    ERemitoExportacion        = 124,
     ERemito                   = 181,
-    NotaCreditoERemito        = 182,
+    EResguardo                = 182,
 }
 ```
 
@@ -315,7 +323,7 @@ public enum FormaPago
 
 ### `IndTraslado`
 
-Obligatorio para e-Remito (181) y e-Remito Despachante (131).
+Obligatorio para e-Remito (181) y e-Remito de Exportación (124). La DGI solo distingue venta (1) y traslado interno (2): `TrasladoPorVenta` se informa como 1 y el resto como 2.
 
 ```csharp
 public enum IndTraslado

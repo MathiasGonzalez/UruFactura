@@ -62,6 +62,8 @@ public class InMemoryCaeRepository : ICaeRepository
     private sealed class CaeSnapshot
     {
         public string NroSerie { get; set; } = string.Empty;
+        public string NumeroAutorizacion { get; set; } = string.Empty;
+        public string Serie { get; set; } = string.Empty;
         public TipoCfe TipoCfe { get; set; }
         public long RangoDesde { get; set; }
         public long RangoHasta { get; set; }
@@ -71,6 +73,8 @@ public class InMemoryCaeRepository : ICaeRepository
         public static CaeSnapshot FromCae(Models.Cae cae) => new()
         {
             NroSerie         = cae.NroSerie,
+            NumeroAutorizacion = cae.NumeroAutorizacion,
+            Serie            = cae.Serie,
             TipoCfe          = cae.TipoCfe,
             RangoDesde       = cae.RangoDesde,
             RangoHasta       = cae.RangoHasta,
@@ -81,6 +85,8 @@ public class InMemoryCaeRepository : ICaeRepository
         public Models.Cae ToCae() => new()
         {
             NroSerie         = NroSerie,
+            NumeroAutorizacion = NumeroAutorizacion,
+            Serie            = Serie,
             TipoCfe          = TipoCfe,
             RangoDesde       = RangoDesde,
             RangoHasta       = RangoHasta,

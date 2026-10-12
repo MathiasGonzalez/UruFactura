@@ -12,7 +12,7 @@ Referencia rápida sobre el sistema de Comprobantes Fiscales Electrónicos (CFE)
 | Resolución DGI 2548/023 | Universalización — todos los contribuyentes IVA desde enero 2025 |
 | Decreto 36/020 | Ampliación de obligados a emitir CFE |
 | Decreto 230/021 | Calendario de adhesión obligatoria por facturación |
-| e-CFE v25.2 | Esquema XML vigente |
+| e-CFE v25.2 | Documento de formato vigente (el XML usa `version="1.0"` y los XSD 1.44.2) |
 
 La **adhesión es obligatoria** para todos los contribuyentes de IVA (incluido IVA mínimo) desde enero 2025 (Resolución 2548/023).
 
@@ -31,10 +31,9 @@ La **adhesión es obligatoria** para todos los contribuyentes de IVA (incluido I
 | **121** | e-Factura de Exportación | Operaciones de exportación de bienes/servicios |
 | **122** | Nota de Crédito e-Factura Exportación | Anulación / devolución de e-Factura de Exportación |
 | **123** | Nota de Débito e-Factura Exportación | Ajuste en más sobre e-Factura de Exportación |
-| **131** | e-Remito Despachante | Traslado de mercadería a cargo de un despachante |
-| **151** | e-Resguardo | Retención de impuestos |
+| **124** | e-Remito de Exportación | Traslado de mercadería para exportación |
 | **181** | e-Remito | Traslado de mercadería sin transferencia de dominio |
-| **182** | Nota de Crédito e-Remito | Corrección de e-Remito |
+| **182** | e-Resguardo | Retención de impuestos (aún no emitible con el SDK: falta soporte de retenciones) |
 
 > La diferencia principal entre **e-Ticket** y **e-Factura** es si el receptor tiene o no RUT. Las empresas siempre deben exigir e-Factura para poder descontar el IVA compras.
 
@@ -60,7 +59,7 @@ La **adhesión es obligatoria** para todos los contribuyentes de IVA (incluido I
 ```csharp
 // e-Ticket → consumidor final, sin datos del receptor
 var eticket = client.CrearETicket();
-eticket.Numero = 125;
+client.AsignarCae(eticket);   // toma el próximo número del CAE
 eticket.Detalle.Add(new LineaDetalle
 {
     NroLinea       = 1,
@@ -90,7 +89,7 @@ var respuesta = await client.EnviarCfeAsync(eticket);
 ```csharp
 // e-Factura → receptor con RUT, puede deducir IVA
 var efactura = client.CrearEFactura();
-efactura.Numero = 42;
+client.AsignarCae(efactura);   // toma el próximo número del CAE
 efactura.Receptor = new Receptor
 {
     Documento       = "210012345678",
@@ -118,7 +117,7 @@ var respuesta = await client.EnviarCfeAsync(efactura);
 
 ```csharp
 var eticket = client.CrearETicket();
-eticket.Numero = 501;
+client.AsignarCae(eticket);   // toma el próximo número del CAE
 
 // Producto con IVA básico (22 %)
 eticket.Detalle.Add(new LineaDetalle
@@ -160,12 +159,19 @@ eticket.Detalle.Add(new LineaDetalle
 ```csharp
 // e-Factura de Exportación → IVA 0 %, requiere datos del receptor extranjero
 var exportacion = client.CrearEFacturaExportacion();
-exportacion.Numero = 8;
+client.AsignarCae(exportacion);   // toma el próximo número del CAE
+exportacion.Moneda         = Moneda.DolarAmericano;
+exportacion.TipoCambio     = 40.5m;
+exportacion.ClausulaVenta  = "N/A";  // Incoterm de 1-3 letras, o "N/A" para servicios
+exportacion.ModalidadVenta = 90;     // Régimen general - exportación de servicios
+exportacion.ViaTransporte  = 9;      // Otro
 exportacion.Receptor = new Receptor
 {
-    RazonSocial = "TechCorp LLC",
-    Direccion   = "500 Main St, Austin TX, USA",
-    // Sin RUT (receptor extranjero)
+    RazonSocial   = "TechCorp LLC",
+    Pais          = "Estados Unidos",
+    CodigoPais    = "US",
+    Documento     = "TX-123456",                       // documento extranjero (opcional)
+    TipoDocumento = TipoDocumentoReceptor.DocumentoExterior,
 };
 exportacion.Detalle.Add(new LineaDetalle
 {
@@ -173,7 +179,7 @@ exportacion.Detalle.Add(new LineaDetalle
     NombreItem     = "Desarrollo de software — Sprint 12",
     Cantidad       = 1,
     PrecioUnitario = 8000m,          // USD, moneda configurada aparte
-    IndFactIva     = TipoIva.Exento, // exportación → 0 %
+    // En exportación el IVA no aplica: el SDK informa IndFact 10 (exportación y asimiladas)
 });
 ```
 
@@ -187,7 +193,7 @@ exportacion.Detalle.Add(new LineaDetalle
 
 ```csharp
 var nc = client.CrearNotaCreditoETicket();
-nc.Numero = 15;
+client.AsignarCae(nc);   // toma el próximo número del CAE
 nc.Referencias.Add(new RefCfe
 {
     TipoCfe      = TipoCfe.ETicket,
@@ -218,8 +224,9 @@ var respuesta = await client.EnviarCfeAsync(nc);
 
 ```csharp
 var remito = client.CrearERemito();
-remito.Numero = 33;
-remito.IndTraslado = IndTraslado.TrasladoPropio; // Motivo del traslado — obligatorio
+client.AsignarCae(remito);   // toma el próximo número del CAE
+remito.IndTraslado = IndTraslado.TrasladoPropio; // obligatorio; se informa como TipoTraslado 2 (traslado interno)
+                                                 // (TrasladoPorVenta se informa como 1 = venta)
 // El e-Remito no incluye precios; describe el traslado físico
 remito.Detalle.Add(new LineaDetalle
 {
@@ -234,17 +241,18 @@ remito.Detalle.Add(new LineaDetalle
 
 ## Reporte Diario
 
-La DGI exige enviar un **Reporte Diario** al finalizar cada jornada con todos los CFE emitidos, aunque sea uno solo.
+La DGI exige enviar un **Reporte Diario** al finalizar cada jornada con el resumen de los CFE emitidos, aunque sea uno solo.
 
 ```csharp
+// Envía un resumen firmado (montos, cantidades y rangos por tipo) de los CFE emitidos ese día.
 var resultado = await client.EnviarReporteDiarioAsync(
     DateTime.Today,
     new[] { eticket1, eticket2, efactura1 }
 );
 
-Console.WriteLine(resultado.Respuesta.Exitoso
+Console.WriteLine(resultado.Respuesta.Exitoso     // estado AR = reporte recibido
     ? "✅ Reporte diario enviado"
-    : $"❌ Error: {resultado.Respuesta.Mensaje}");
+    : $"❌ {resultado.Respuesta.Codigo}: {resultado.Respuesta.Mensaje}");
 ```
 
 > Automatizá este envío con un job nocturno (ej: Hangfire, un Worker Service de .NET, o una GitHub Action programada).

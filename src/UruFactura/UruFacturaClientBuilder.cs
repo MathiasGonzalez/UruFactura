@@ -32,6 +32,7 @@ public sealed partial class UruFacturaClientBuilder
     private ICaeManager _caeManager;
     private IDgiSoapClient _soapClient;
     private ICfePdfGenerator? _pdfGenerator;
+    private ICaeRepository? _caeRepository;
     private HttpClient? _httpClient;
 
     private UruFacturaClientBuilder(UruFacturaConfig config)
@@ -39,7 +40,7 @@ public sealed partial class UruFacturaClientBuilder
         config.Validate();
         _config = config;
         _xmlBuilder = new CfeXmlBuilder();
-        _firmante   = new CfeFirmante(config.RutaCertificado, config.PasswordCertificado);
+        _firmante   = new CfeFirmante(config.RutaCertificado, config.PasswordCertificado, config.AlgoritmoFirma);
         _caeManager = new CaeManager();
         _soapClient = new DgiSoapClient(config);
     }
@@ -110,6 +111,16 @@ public sealed partial class UruFacturaClientBuilder
     /// </code>
     /// </example>
     /// </summary>
+    /// <summary>
+    /// Configura el repositorio donde <see cref="UruFacturaClient.AsignarCaeAsync"/> persiste el
+    /// último número usado de cada CAE.
+    /// </summary>
+    public UruFacturaClientBuilder WithCaeRepository(ICaeRepository? caeRepository)
+    {
+        _caeRepository = caeRepository;
+        return this;
+    }
+
     public UruFacturaClientBuilder WithHttpClient(HttpClient httpClient)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
@@ -132,6 +143,6 @@ public sealed partial class UruFacturaClientBuilder
         if (_httpClient is not null)
             _soapClient = _soapClient.WithHttpClient(_httpClient);
 
-        return new(_config, _xmlBuilder, _firmante, _caeManager, _soapClient, _pdfGenerator);
+        return new(_config, _xmlBuilder, _firmante, _caeManager, _soapClient, _pdfGenerator, _caeRepository);
     }
 }

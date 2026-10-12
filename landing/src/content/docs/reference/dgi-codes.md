@@ -1,90 +1,70 @@
 ---
 title: Códigos DGI
-description: Referencia de códigos de respuesta de la DGI
+description: Estados de respuesta de los servicios web de la DGI y cómo manejarlos en el SDK
 ---
 
-## Códigos de respuesta DGI
+## Cómo responde la DGI
 
-Cuando enviás un CFE, DGI responde con un código numérico y un mensaje. Estos son los códigos más comunes:
+El envío de comprobantes es **asíncrono** y en dos pasos. Los estados provienen de los esquemas
+oficiales (`ACKSobre`, `ACKCFE`, `ACKRepDiario`):
 
-| Código | Estado | Descripción |
-|--------|--------|-------------|
-| `00` | ✅ Aceptado | El comprobante fue aceptado sin observaciones |
-| `01` | ⚠️ Aceptado con obs. | Aceptado pero con observaciones informativas — el CFE es válido |
-| `05` | ❌ Rechazado | El comprobante fue rechazado — revisar el campo `Mensaje` |
-| `06` | ❌ Sin habilitación | RUT emisor no habilitado como emisor electrónico en DGI |
-| `09` | ❌ CAE inválido | CAE inválido, vencido, o número de comprobante fuera del rango |
-| `11` | ❌ Error de firma | La firma digital es inválida o el certificado no está reconocido |
-| `12` | ❌ XML inválido | El XML del CFE no cumple el esquema DGI |
-| `99` | ❌ Error servidor | Error interno del servidor DGI — reintentar después |
+1. **Envío del sobre** (`EnviarCfeAsync` / `EnviarCfesAsync`): la DGI responde con un acuse del sobre.
+2. **Consulta del resultado** (`ConsultarEstadoEnvioAsync`): con el `IdReceptor` y el `Token` del acuse, la
+   DGI informa el estado de cada comprobante.
+
+| Estado | Mensaje DGI | Significado |
+|--------|-------------|-------------|
+| `AS` | `ACKSobre` | Sobre recibido (aún no implica que los CFE hayan sido aceptados) |
+| `BS` | `ACKSobre` | Sobre rechazado — los motivos (`S01`…`S20`) vienen en `respuesta.Mensaje` |
+| `BA` | `ACKSobre` / `ACKRepDiario` | Archivo rechazado |
+| `AR` | `ACKRepDiario` | Reporte diario recibido |
+| `BR` | `ACKRepDiario` | Reporte diario rechazado |
+| `AE` | `ACKCFE` | Comprobante aceptado |
+| `BE` | `ACKCFE` | Comprobante rechazado (CFE) |
+| `CE` | `ACKCFE` | Comprobante observado (CFC) |
+| `FE` | `ACKCFE` | Comprobante reliquidado |
+
+Además, el SDK usa estos valores en `RespuestaDgi.Codigo` cuando no hay un acuse:
+
+| Código | Significado |
+|--------|-------------|
+| `SOAP_FAULT` | La DGI respondió con un SOAP Fault (por ejemplo, firma WS-Security inválida) |
+| `4xx` / `5xx` | Error HTTP sin cuerpo SOAP (proxy, servicio caído) |
+
+`RespuestaDgi.Exitoso` es `true` para `AS` y `AR`, y para la consulta del envío cuando **todos** los
+comprobantes están en `AE`.
 
 ---
 
-## Cómo manejar los códigos en el SDK
+## Cómo manejarlos en el SDK
 
 ```csharp
-var respuesta = await client.EnviarCfeAsync(cfe);
+var envio = await client.EnviarCfeAsync(cfe);
 
-// Verificación simple
-if (respuesta.Exitoso) // true si código es "00" (aceptado) o "01" (aceptado con observaciones)
+if (!envio.Exitoso)
 {
-    Console.WriteLine("CFE aceptado ✅");
+    // BS / BA / SOAP_FAULT / HTTP: el mensaje incluye los motivos informados por la DGI
+    logger.LogError("Sobre rechazado [{Codigo}]: {Mensaje}", envio.Codigo, envio.Mensaje);
+    return;
 }
 
-// Manejo detallado por código
-switch (respuesta.Codigo)
-{
-    case "00":
-        // Aceptado limpio — continuar normalmente
-        break;
+// La DGI indica desde cuándo se puede consultar el resultado
+if (envio.ConsultarDesde is { } desde && desde > DateTimeOffset.Now)
+    await Task.Delay(desde - DateTimeOffset.Now);
 
-    case "01":
-        // Aceptado con observaciones — el CFE es válido pero loguear
-        logger.LogWarning("CFE aceptado con obs: {Mensaje}", respuesta.Mensaje);
-        break;
+var estado = await client.ConsultarEstadoEnvioAsync(envio, [cfe]);
 
-    case "05":
-        // Rechazado — investigar el motivo en respuesta.Mensaje
-        throw new DgiRechazoException(respuesta.Mensaje);
+foreach (var c in estado.Comprobantes)
+    Console.WriteLine($"{c.TipoCfe} {c.Serie}-{c.Numero}: {c.Estado} {string.Join("; ", c.Motivos)}");
 
-    case "09":
-        // CAE inválido — verificar CAE y numeración
-        throw new CaeInvalidoException($"CAE inválido: {respuesta.Mensaje}");
-
-    case "11":
-        // Error de firma — verificar certificado
-        throw new FirmaException($"Firma inválida: {respuesta.Mensaje}");
-
-    case "99":
-        // Error servidor DGI — reintentar con backoff
-        await Task.Delay(TimeSpan.FromSeconds(30));
-        respuesta = await client.EnviarCfeAsync(cfe);
-        break;
-
-    default:
-        logger.LogError("Código DGI desconocido [{Codigo}]: {Mensaje}",
-            respuesta.Codigo, respuesta.Mensaje);
-        break;
-}
+if (cfe.AceptadoPorDgi)
+    Console.WriteLine("CFE aceptado ✅");   // estado AE
 ```
 
 ---
 
-## Códigos de estado de consulta
+## Consulta del estado de un comprobante
 
-Al consultar el estado de un CFE previamente enviado:
-
-| Código | Significado |
-|--------|-------------|
-| `00` | CFE aceptado y registrado |
-| `01` | CFE aceptado con observaciones |
-| `05` | CFE rechazado |
-| `10` | CFE no encontrado en los sistemas DGI |
-
----
-
-## Recursos oficiales
-
-Para la lista completa y actualizada de códigos de error, consultar:
-- [Portal DGI — Gestión CFE](https://www.dgi.gub.uy/)
-- Instructivo técnico de integración (disponible en el portal DGI en línea)
+`ConsultarEstadoCfeAsync(cfe)` consulta por tipo, serie y número (servicio `ws_consultas`) y devuelve el
+estado del comprobante (`AE`, `BE`, `CE`, `FE`) más el `IdReceptor` y el `Token` del primer sobre que lo
+contenía.

@@ -1,3 +1,4 @@
+using System.Xml;
 using UruFactura.Enums;
 using UruFactura.Exceptions;
 using UruFactura.Models;
@@ -6,443 +7,372 @@ using Xunit;
 
 namespace UruFactura.Tests;
 
+/// <summary>
+/// Tests del XML de CFE. La verificación principal es contra los XSD oficiales de la DGI
+/// (carpeta Schemas/dgi, versión 1.44.2): el CFE se coloca dentro de un sobre EnvioCFE y se valida.
+/// </summary>
 public class CfeXmlBuilderTests
 {
+    private const string Ns = "http://cfe.dgi.gub.uy";
     private readonly CfeXmlBuilder _builder = new();
 
-    private static Cfe CrearCfeCompleto() =>
-        new()
-        {
-            Tipo = TipoCfe.ETicket,
-            Serie = "A",
-            Numero = 42,
-            FechaEmision = new DateOnly(2025, 6, 15),
-            RutEmisor = "210000000012",
-            RazonSocialEmisor = "Empresa Test S.A.",
-            DomicilioFiscalEmisor = "Av. 18 de Julio 1234",
-            CiudadEmisor = "Montevideo",
-            DepartamentoEmisor = "Montevideo",
-            FormaPago = FormaPago.Contado,
-            Moneda = Moneda.PesoUruguayo,
-            Detalle =
-            {
-                new LineaDetalle
-                {
-                    NroLinea = 1,
-                    NombreItem = "Servicio de consultoría",
-                    Cantidad = 1,
-                    PrecioUnitario = 1000m,
-                    IndFactIva = TipoIva.Basico,
-                }
-            }
-        };
-
-    [Fact]
-    public void Generar_CfeValido_RetornaXmlNoVacio()
+    private static XmlDocument Cargar(string xml)
     {
-        var cfe = CrearCfeCompleto();
-        var xml = _builder.Generar(cfe);
-
-        Assert.NotNull(xml);
-        Assert.NotEmpty(xml);
+        var doc = new XmlDocument();
+        doc.LoadXml(xml);
+        return doc;
     }
 
-    [Fact]
-    public void Generar_CfeValido_XmlContieneNodoCfe()
+    private static string Texto(XmlDocument doc, string xpath)
     {
-        var cfe = CrearCfeCompleto();
-        var xml = _builder.Generar(cfe);
-
-        Assert.Contains("<CFE", xml);
-        Assert.Contains("</CFE>", xml);
+        var nsm = new XmlNamespaceManager(doc.NameTable);
+        nsm.AddNamespace("c", Ns);
+        return doc.SelectSingleNode(xpath, nsm)?.InnerText ?? throw new InvalidOperationException($"No existe {xpath}");
     }
 
-    [Fact]
-    public void Generar_CfeValido_XmlContieneEncabezado()
+    /// <summary>
+    /// Firma el CFE con un certificado de prueba y lo envuelve en un sobre para validarlo
+    /// contra EnvioCFE.xsd (que exige la firma y la carátula).
+    /// </summary>
+    internal static string EnSobreFirmado(Cfe cfe, AlgoritmoFirma algoritmo = AlgoritmoFirma.Sha256)
     {
-        var cfe = CrearCfeCompleto();
-        var xml = _builder.Generar(cfe);
-
-        Assert.Contains("<Encabezado", xml);
-        Assert.Contains("<IdDoc", xml);
-        Assert.Contains("<Emisor", xml);
-        Assert.Contains("<Totales", xml);
-    }
-
-    [Fact]
-    public void Generar_CfeValido_XmlContieneTipoCorrecto()
-    {
-        var cfe = CrearCfeCompleto();
-        var xml = _builder.Generar(cfe);
-
-        Assert.Contains("<TipoCFE>101</TipoCFE>", xml);
-    }
-
-    [Fact]
-    public void Generar_CfeValido_XmlContieneNumero()
-    {
-        var cfe = CrearCfeCompleto();
-        var xml = _builder.Generar(cfe);
-
-        Assert.Contains("<Nro>42</Nro>", xml);
-    }
-
-    [Fact]
-    public void Generar_CfeValido_XmlContieneRutEmisor()
-    {
-        var cfe = CrearCfeCompleto();
-        var xml = _builder.Generar(cfe);
-
-        Assert.Contains("<RUCEmisor>210000000012</RUCEmisor>", xml);
-    }
-
-    [Fact]
-    public void Generar_CfeValido_XmlContieneDetalle()
-    {
-        var cfe = CrearCfeCompleto();
-        var xml = _builder.Generar(cfe);
-
-        Assert.Contains("<Detalle", xml);
-        Assert.Contains("<Item", xml);
-        Assert.Contains("Servicio de consultoría", xml);
-    }
-
-    [Fact]
-    public void Generar_CfeValido_XmlContieneTotales()
-    {
-        var cfe = CrearCfeCompleto();
+        using var cert = TestData.CertificadoAutofirmado();
+        using var firmante = new UruFactura.Signature.CfeFirmante(cert, algoritmo);
         cfe.CalcularTotales();
-        var xml = _builder.Generar(cfe); // 1000 neto basico, 22% IVA = 220, Total = 1220
-        Assert.Contains("<MntNetoIVA>1000.00</MntNetoIVA>", xml);
-        Assert.Contains("<MntIVA>220.00</MntIVA>", xml);
-        Assert.Contains("<MntTotal>1220.00</MntTotal>", xml);
+        var firmado = firmante.Firmar(new CfeXmlBuilder().Generar(cfe));
+        return CfeSobreBuilder.Generar(cfe.RutEmisor, 1, DateTimeOffset.UtcNow, cert.RawData, [firmado]);
+    }
+
+    [Theory]
+    [InlineData(TipoCfe.ETicket)]
+    [InlineData(TipoCfe.NotaCreditoETicket)]
+    [InlineData(TipoCfe.NotaDebitoETicket)]
+    [InlineData(TipoCfe.EFactura)]
+    [InlineData(TipoCfe.NotaCreditoEFactura)]
+    [InlineData(TipoCfe.NotaDebitoEFactura)]
+    [InlineData(TipoCfe.EFacturaExportacion)]
+    [InlineData(TipoCfe.NotaCreditoEFacturaExportacion)]
+    [InlineData(TipoCfe.NotaDebitoEFacturaExportacion)]
+    [InlineData(TipoCfe.ERemito)]
+    [InlineData(TipoCfe.ERemitoExportacion)]
+    public void Sobre_ConCfeDeCadaTipo_ValidaContraXsdOficialDeLaDgi(TipoCfe tipo)
+    {
+        var sobre = EnSobreFirmado(TestData.CfeValido(tipo));
+
+        var errores = TestData.ValidarContraXsd(sobre);
+
+        Assert.True(errores.Count == 0, string.Join(Environment.NewLine, errores));
     }
 
     [Fact]
-    public void Generar_CfeValido_XmlEsXmlValido()
+    public void Sobre_ConVariosTiposDeIvaYDescuentos_ValidaContraXsd()
     {
-        var cfe = CrearCfeCompleto();
-        var xml = _builder.Generar(cfe);
+        var cfe = TestData.CfeValido(TipoCfe.EFactura);
+        cfe.Detalle.Clear();
+        cfe.Detalle.Add(new LineaDetalle { NombreItem = "Exento", Cantidad = 1.5m, PrecioUnitario = 10.123456m, IndFactIva = TipoIva.Exento, UnidadMedida = "KG" });
+        cfe.Detalle.Add(new LineaDetalle { NombreItem = "Minimo", Cantidad = 3, PrecioUnitario = 50m, IndFactIva = TipoIva.Minimo, DescuentoMonto = 5m });
+        cfe.Detalle.Add(new LineaDetalle { NombreItem = "Basico", Cantidad = 1, PrecioUnitario = 200m, IndFactIva = TipoIva.Basico, RecargoMonto = 10m });
+        cfe.Detalle.Add(new LineaDetalle { NombreItem = "Suspenso", Cantidad = 1, PrecioUnitario = 100m, IndFactIva = TipoIva.Suspendido });
 
-        // Verificar que el XML es parseable
-        var doc = new System.Xml.XmlDocument();
-        doc.LoadXml(xml); // No debe lanzar excepción
-        Assert.NotNull(doc.DocumentElement);
+        var errores = TestData.ValidarContraXsd(EnSobreFirmado(cfe));
+
+        Assert.True(errores.Count == 0, string.Join(Environment.NewLine, errores));
     }
 
     [Fact]
-    public void Generar_CfeConReceptor_XmlContieneReceptor()
+    public void Sobre_ETicketConReceptorExtranjeroYMonedaExtranjera_ValidaContraXsd()
     {
-        var cfe = CrearCfeCompleto();
-        cfe.Receptor = new Models.Receptor
+        var cfe = TestData.CfeValido();
+        cfe.Moneda = Moneda.DolarAmericano;
+        cfe.TipoCambio = 40.123m;
+        cfe.Receptor = new Receptor
         {
-            RazonSocial = "Cliente Test S.R.L.",
-            Documento = "219999999018",
-            TipoDocumento = UruFactura.Enums.TipoDocumentoReceptor.Rut,
+            Documento = "AB123456", TipoDocumento = TipoDocumentoReceptor.Pasaporte, CodigoPais = "AR",
+            RazonSocial = "Turista", Direccion = "Calle 1", Ciudad = "Buenos Aires", Pais = "Argentina",
         };
 
-        var xml = _builder.Generar(cfe);
+        var errores = TestData.ValidarContraXsd(EnSobreFirmado(cfe));
 
-        Assert.Contains("<Receptor", xml);
-        Assert.Contains("Cliente Test S.R.L.", xml);
-        Assert.Contains("219999999018", xml);
+        Assert.True(errores.Count == 0, string.Join(Environment.NewLine, errores));
     }
 
     [Fact]
-    public void Generar_CfeConReferencia_XmlContieneReferencia()
+    public void Generar_RaizEsCfeConVersion1_0_NoLaVersionDelDocumento()
     {
-        var cfe = CrearCfeCompleto();
-        cfe.Tipo = TipoCfe.NotaCreditoETicket;
-        cfe.Referencias.Add(new Models.RefCfe
-        {
-            TipoCfe = TipoCfe.ETicket,
-            Serie = "A",
-            NroCfe = 10,
-            FechaCfe = new DateTime(2025, 6, 1),
-            MontoCfeRef = 1220m,
-            MonedaCfeRef = Moneda.PesoUruguayo,
-            Razon = "Anulación de e-Ticket",
-        });
+        var doc = Cargar(_builder.Generar(TestData.CfeValido()));
 
-        var xml = _builder.Generar(cfe);
+        Assert.Equal("CFE", doc.DocumentElement!.LocalName);
+        Assert.Equal(Ns, doc.DocumentElement.NamespaceURI);
+        Assert.Equal("1.0", doc.DocumentElement.GetAttribute("version"));
+        Assert.Equal("eTck", doc.DocumentElement.FirstChild!.LocalName);
+    }
 
-        Assert.Contains("<Referencia", xml);
-        Assert.Contains("<RefDoc", xml);
-        Assert.Contains("Anulación de e-Ticket", xml);
+    [Theory]
+    [InlineData(TipoCfe.ETicket, "eTck")]
+    [InlineData(TipoCfe.NotaCreditoEFactura, "eFact")]
+    [InlineData(TipoCfe.EFacturaExportacion, "eFact_Exp")]
+    [InlineData(TipoCfe.ERemito, "eRem")]
+    [InlineData(TipoCfe.ERemitoExportacion, "eRem_Exp")]
+    public void Generar_ElementoPorTipo(TipoCfe tipo, string esperado)
+    {
+        var doc = Cargar(_builder.Generar(TestData.CfeValido(tipo)));
+        Assert.Equal(esperado, doc.DocumentElement!.FirstChild!.LocalName);
+    }
+
+    [Fact]
+    public void Generar_IncluyeCaeDataYTmstFirma()
+    {
+        var doc = Cargar(_builder.Generar(TestData.CfeValido()));
+
+        Assert.Equal("90110001945", Texto(doc, "//c:CAEData/c:CAE_ID"));
+        Assert.Equal("1", Texto(doc, "//c:CAEData/c:DNro"));
+        Assert.Equal("100", Texto(doc, "//c:CAEData/c:HNro"));
+        Assert.Equal("2040-12-31", Texto(doc, "//c:CAEData/c:FecVenc"));
+        Assert.Matches(@"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d-03:00$", Texto(doc, "//c:TmstFirma"));
+    }
+
+    [Fact]
+    public void Generar_IdDocYEmisor_ConLosNombresDelEsquema()
+    {
+        var doc = Cargar(_builder.Generar(TestData.CfeValido()));
+
+        Assert.Equal("101", Texto(doc, "//c:IdDoc/c:TipoCFE"));
+        Assert.Equal("A", Texto(doc, "//c:IdDoc/c:Serie"));
+        Assert.Equal("1", Texto(doc, "//c:IdDoc/c:Nro"));
+        Assert.Equal("2026-06-15", Texto(doc, "//c:IdDoc/c:FchEmis"));
+        Assert.Equal("1", Texto(doc, "//c:IdDoc/c:FmaPago"));
+        Assert.Equal("219999820013", Texto(doc, "//c:Emisor/c:RUCEmisor"));
+        Assert.Equal("1", Texto(doc, "//c:Emisor/c:CdgDGISucur"));
+    }
+
+    [Fact]
+    public void Generar_NoEscribeMntBruto_PorqueLosPreciosSonNetos()
+    {
+        var xml = _builder.Generar(TestData.CfeValido());
+        Assert.DoesNotContain("MntBruto", xml);
+    }
+
+    [Fact]
+    public void Generar_TotalesConIvaBasico()
+    {
+        var doc = Cargar(_builder.Generar(TestData.CfeValido())); // 2 x 100 = 200 neto
+
+        Assert.Equal("UYU", Texto(doc, "//c:Totales/c:TpoMoneda"));
+        Assert.Equal("200.00", Texto(doc, "//c:Totales/c:MntNetoIVATasaBasica"));
+        Assert.Equal("22.000", Texto(doc, "//c:Totales/c:IVATasaBasica"));
+        Assert.Equal("44.00", Texto(doc, "//c:Totales/c:MntIVATasaBasica"));
+        Assert.Equal("244.00", Texto(doc, "//c:Totales/c:MntTotal"));
+        Assert.Equal("244.00", Texto(doc, "//c:Totales/c:MntPagar"));
+        Assert.Equal("1", Texto(doc, "//c:Totales/c:CantLinDet"));
+    }
+
+    [Theory]
+    [InlineData(TipoIva.Exento, "1")]
+    [InlineData(TipoIva.Minimo, "2")]
+    [InlineData(TipoIva.Basico, "3")]
+    [InlineData(TipoIva.Suspendido, "12")]
+    public void Generar_IndFactSegunTipoDeIva(TipoIva iva, string indFact)
+    {
+        var cfe = TestData.CfeValido();
+        cfe.Detalle[0].IndFactIva = iva;
+
+        var doc = Cargar(_builder.Generar(cfe));
+
+        Assert.Equal(indFact, Texto(doc, "//c:Item/c:IndFact"));
+    }
+
+    [Fact]
+    public void Generar_ExentoYSuspensoVanEnSusCamposDeTotales()
+    {
+        var cfe = TestData.CfeValido();
+        cfe.Detalle.Add(new LineaDetalle { NombreItem = "Exento", Cantidad = 1, PrecioUnitario = 30m, IndFactIva = TipoIva.Exento });
+        cfe.Detalle.Add(new LineaDetalle { NombreItem = "Susp", Cantidad = 1, PrecioUnitario = 70m, IndFactIva = TipoIva.Suspendido });
+
+        var doc = Cargar(_builder.Generar(cfe));
+
+        Assert.Equal("30.00", Texto(doc, "//c:Totales/c:MntNoGrv"));
+        Assert.Equal("70.00", Texto(doc, "//c:Totales/c:MntIVaenSusp"));
+        Assert.Equal("344.00", Texto(doc, "//c:Totales/c:MntTotal"));
+    }
+
+    [Fact]
+    public void Generar_LineaSinUnidadDeMedida_UsaNA()
+    {
+        var cfe = TestData.CfeValido();
+        cfe.Detalle[0].UnidadMedida = null;
+
+        var doc = Cargar(_builder.Generar(cfe));
+
+        Assert.Equal("N/A", Texto(doc, "//c:Item/c:UniMed"));
+    }
+
+    [Fact]
+    public void Generar_EFactura_ReceptorSiempreRucUruguayo()
+    {
+        var doc = Cargar(_builder.Generar(TestData.CfeValido(TipoCfe.EFactura)));
+
+        Assert.Equal("2", Texto(doc, "//c:Receptor/c:TipoDocRecep"));
+        Assert.Equal("UY", Texto(doc, "//c:Receptor/c:CodPaisRecep"));
+        Assert.Equal("210000000012", Texto(doc, "//c:Receptor/c:DocRecep"));
+    }
+
+    [Theory]
+    [InlineData(TipoDocumentoReceptor.Rut, "2")]
+    [InlineData(TipoDocumentoReceptor.CedulaIdentidad, "3")]
+    [InlineData(TipoDocumentoReceptor.Pasaporte, "5")]
+    [InlineData(TipoDocumentoReceptor.DocumentoExterior, "4")]
+    public void Generar_TipoDocumentoReceptor_UsaLosCodigosDeLaDgi(TipoDocumentoReceptor tipo, string codigo)
+    {
+        var cfe = TestData.CfeValido();
+        cfe.Receptor = new Receptor { Documento = "1234567", TipoDocumento = tipo };
+
+        var doc = Cargar(_builder.Generar(cfe));
+
+        Assert.Equal(codigo, Texto(doc, "//c:Receptor/c:TipoDocRecep"));
+    }
+
+    [Fact]
+    public void Generar_DocumentoExtranjero_VaEnDocRecepExt()
+    {
+        var cfe = TestData.CfeValido();
+        cfe.Receptor = new Receptor { Documento = "P99", TipoDocumento = TipoDocumentoReceptor.Pasaporte, CodigoPais = "BR" };
+
+        var doc = Cargar(_builder.Generar(cfe));
+
+        Assert.Equal("BR", Texto(doc, "//c:Receptor/c:CodPaisRecep"));
+        Assert.Equal("P99", Texto(doc, "//c:Receptor/c:DocRecepExt"));
+    }
+
+    [Fact]
+    public void Generar_Exportacion_UsaIndFact10SinIvaYTotalesDeExportacion()
+    {
+        var doc = Cargar(_builder.Generar(TestData.CfeValido(TipoCfe.EFacturaExportacion)));
+
+        Assert.Equal("10", Texto(doc, "//c:Item/c:IndFact"));
+        Assert.Equal("200.00", Texto(doc, "//c:Totales/c:MntExpoyAsim"));
+        Assert.Equal("200.00", Texto(doc, "//c:Totales/c:MntTotal"));
+        Assert.Equal("USD", Texto(doc, "//c:Totales/c:TpoMoneda"));
+        Assert.Equal("40.500", Texto(doc, "//c:Totales/c:TpoCambio"));
+        Assert.Equal("FOB", Texto(doc, "//c:IdDoc/c:ClauVenta"));
+        Assert.Equal("1", Texto(doc, "//c:IdDoc/c:ViaTransp"));
+    }
+
+    [Theory]
+    [InlineData(IndTraslado.TrasladoPorVenta, "1")]
+    [InlineData(IndTraslado.TrasladoPropio, "2")]
+    [InlineData(IndTraslado.Devolucion, "2")]
+    public void Generar_ERemito_TipoTrasladoVentaOInterno(IndTraslado ind, string esperado)
+    {
+        var cfe = TestData.CfeValido(TipoCfe.ERemito);
+        cfe.IndTraslado = ind;
+
+        var doc = Cargar(_builder.Generar(cfe));
+
+        Assert.Equal(esperado, Texto(doc, "//c:IdDoc/c:TipoTraslado"));
+        Assert.Equal("1", Texto(doc, "//c:Totales/c:CantLinDet"));
+    }
+
+    [Fact]
+    public void Generar_NotaDeCredito_ReferenciaConLosNombresDelEsquema()
+    {
+        var doc = Cargar(_builder.Generar(TestData.CfeValido(TipoCfe.NotaCreditoETicket)));
+
+        Assert.Equal("1", Texto(doc, "//c:Referencia/c:Referencia/c:NroLinRef"));
+        Assert.Equal("101", Texto(doc, "//c:Referencia/c:Referencia/c:TpoDocRef"));
+        Assert.Equal("A", Texto(doc, "//c:Referencia/c:Referencia/c:Serie"));
+        Assert.Equal("10", Texto(doc, "//c:Referencia/c:Referencia/c:NroCFERef"));
+        Assert.Equal("2026-06-01", Texto(doc, "//c:Referencia/c:Referencia/c:FechaCFEref"));
+        Assert.Equal("500.00", Texto(doc, "//c:Referencia/c:Referencia/c:MntCFEref"));
+        Assert.Equal("UYU", Texto(doc, "//c:Referencia/c:Referencia/c:TpoMonedaRef"));
+    }
+
+    [Fact]
+    public void Generar_ElementosEnElOrdenDelEsquema()
+    {
+        var doc = Cargar(_builder.Generar(TestData.CfeValido(TipoCfe.NotaCreditoETicket)));
+
+        var hijos = doc.DocumentElement!.FirstChild!.ChildNodes.Cast<XmlNode>().Select(n => n.LocalName).ToList();
+
+        Assert.Equal(["TmstFirma", "Encabezado", "Detalle", "Referencia", "CAEData"], hijos);
     }
 
     [Fact]
     public void Generar_CfeInvalido_LanzaCfeValidationException()
     {
-        var cfe = new Cfe
-        {
-            Tipo = TipoCfe.ETicket,
-            Numero = 0, // inválido
-            FechaEmision = DateOnly.FromDateTime(DateTime.Today),
-        };
+        var cfe = TestData.CfeValido();
+        cfe.Detalle.Clear();
 
-        Assert.Throws<CfeValidationException>(() => _builder.Generar(cfe));
+        var ex = Assert.Throws<CfeValidationException>(() => _builder.Generar(cfe));
+        Assert.Contains(ex.Errors, e => e.Contains("línea de detalle"));
     }
 
     [Fact]
-    public void Generar_XmlGenerado_EsXmlBienFormado()
+    public void Generar_SinCae_LanzaCfeValidationException()
     {
-        var cfe = CrearCfeCompleto();
-        var xml = _builder.Generar(cfe);
+        var cfe = TestData.CfeValido();
+        cfe.CaeData = null;
 
-        // Verificar que el XML comienza con declaración XML y contiene el elemento raíz
-        Assert.StartsWith("<?xml", xml.TrimStart());
-        Assert.Contains("<CFE", xml);
-        Assert.NotEmpty(xml);
-    }
-
-    // --- DGI Compatibility ---
-
-    [Fact]
-    public void Generar_MntBruto_EsCero_PreciosNetos()
-    {
-        var cfe = CrearCfeCompleto();
-        var xml = _builder.Generar(cfe);
-
-        // MntBruto=0 significa que los precios en <Detalle> son netos (sin IVA).
-        // MntBruto=1 indicaría precios brutos (con IVA incluido), lo cual sería incorrecto.
-        Assert.Contains("<MntBruto>0</MntBruto>", xml);
-        Assert.DoesNotContain("<MntBruto>1</MntBruto>", xml);
+        var ex = Assert.Throws<CfeValidationException>(() => _builder.Generar(cfe));
+        Assert.Contains(ex.Errors, e => e.Contains("CAE"));
     }
 
     [Fact]
-    public void Generar_MonedaDolar_TipoMonedaUsaCodigoAlfa()
+    public void Generar_NumeroFueraDelRangoDelCae_LanzaCfeValidationException()
     {
-        var cfe = CrearCfeCompleto();
-        cfe.Moneda = Moneda.DolarAmericano;
-        cfe.TipoCambio = 42.5m;
-        var xml = _builder.Generar(cfe);
+        var cfe = TestData.CfeValido(numero: 101);
 
-        Assert.Contains("<TipoMoneda>USD</TipoMoneda>", xml);
-        Assert.DoesNotContain("<TipoMoneda>840</TipoMoneda>", xml);
-        Assert.Contains("<TpoCambio>42.5000</TpoCambio>", xml);
+        var ex = Assert.Throws<CfeValidationException>(() => _builder.Generar(cfe));
+        Assert.Contains(ex.Errors, e => e.Contains("fuera del rango"));
     }
 
     [Fact]
-    public void Generar_MonedaEuro_TipoMonedaUsaCodigoAlfa()
+    public void Generar_EResguardo_NoSoportado()
     {
-        var cfe = CrearCfeCompleto();
-        cfe.Moneda = Moneda.Euro;
-        cfe.TipoCambio = 50.0m;
-        var xml = _builder.Generar(cfe);
+        var cfe = TestData.CfeValido();
+        cfe.Tipo = TipoCfe.EResguardo;
 
-        Assert.Contains("<TipoMoneda>EUR</TipoMoneda>", xml);
+        var ex = Assert.Throws<CfeValidationException>(() => _builder.Generar(cfe));
+        Assert.Contains(ex.Errors, e => e.Contains("e-Resguardo"));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("a")]
+    [InlineData("ABC")]
+    [InlineData("0A")]
+    [InlineData("A1")]
+    public void Generar_SerieInvalida_LanzaCfeValidationException(string serie)
+    {
+        var cfe = TestData.CfeValido();
+        cfe.Serie = serie;
+
+        var ex = Assert.Throws<CfeValidationException>(() => _builder.Generar(cfe));
+        Assert.Contains(ex.Errors, e => e.Contains("serie"));
+    }
+
+    [Theory]
+    [InlineData("A")]
+    [InlineData("AB")]
+    [InlineData("1A")]
+    public void Generar_SerieValida_NoLanza(string serie)
+    {
+        var cfe = TestData.CfeValido();
+        cfe.Serie = serie;
+
+        var ex = Record.Exception(() => _builder.Generar(cfe));
+
+        Assert.Null(ex);
     }
 
     [Fact]
-    public void Generar_MonedaPeso_OmiteTipoMoneda()
+    public void Generar_CaracteresEspecialesEnTexto_SeEscapan()
     {
-        var cfe = CrearCfeCompleto();
-        cfe.Moneda = Moneda.PesoUruguayo;
-        var xml = _builder.Generar(cfe);
-
-        Assert.DoesNotContain("TipoMoneda", xml);
-        Assert.DoesNotContain("TpoCambio", xml);
-    }
-
-    [Fact]
-    public void Validar_MonedaExtranjeraSinTipoCambio_RetornaError()
-    {
-        var cfe = CrearCfeCompleto();
-        cfe.Moneda = Moneda.DolarAmericano;
-        // TipoCambio = null → debe dar error
-        var errores = cfe.Validar();
-        Assert.Contains(errores, e => e.Contains("TipoCambio"));
-    }
-
-    [Fact]
-    public void Validar_MonedaExtranjeraConTipoCambio_NoRetornaErrorMoneda()
-    {
-        var cfe = CrearCfeCompleto();
-        cfe.Moneda = Moneda.DolarAmericano;
-        cfe.TipoCambio = 42.5m;
-        var errores = cfe.Validar();
-        Assert.DoesNotContain(errores, e => e.Contains("TipoCambio"));
-    }
-
-    [Fact]
-    public void Generar_XmlGenerado_DeclaracionContieneEncodingUtf8()
-    {
-        var cfe = CrearCfeCompleto();
-        var xml = _builder.Generar(cfe);
-
-        // La declaración XML debe indicar encoding="utf-8" (no utf-16).
-        // Esto es requerido por los validadores de la DGI.
-        Assert.Contains("encoding=\"utf-8\"", xml, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("utf-16", xml, StringComparison.OrdinalIgnoreCase);
-    }
-
-    // --- Nuevos campos DGI ---
-
-    [Fact]
-    public void Generar_CfeValido_XmlContieneMntPagar()
-    {
-        var cfe = CrearCfeCompleto();
-        cfe.CalcularTotales();
-        var xml = _builder.Generar(cfe);
-
-        // MntPagar es obligatorio en Totales y debe coincidir con MntTotal
-        Assert.Contains("<MntPagar>1220.00</MntPagar>", xml);
-    }
-
-    [Fact]
-    public void Generar_ConIvaSuspendido_XmlContieneMntSuspenso()
-    {
-        var cfe = CrearCfeCompleto();
-        cfe.Detalle[0].IndFactIva = TipoIva.Suspendido;
-        cfe.Detalle[0].Cantidad = 1;
-        cfe.Detalle[0].PrecioUnitario = 500m;
-        cfe.CalcularTotales();
-        var xml = _builder.Generar(cfe);
-
-        Assert.Contains("<MntSuspenso>500.00</MntSuspenso>", xml);
-        Assert.DoesNotContain("<MntExe>", xml);
-    }
-
-    [Fact]
-    public void Generar_ConIvaSuspendido_NoMezclaMntExe()
-    {
-        var cfe = CrearCfeCompleto();
-        cfe.Detalle[0].IndFactIva = TipoIva.Suspendido;
-        cfe.CalcularTotales();
-        var xml = _builder.Generar(cfe);
-
-        // Suspendido debe ir en MntSuspenso, no en MntExe
-        Assert.Contains("MntSuspenso", xml);
-        Assert.DoesNotContain("<MntExe>", xml);
-    }
-
-    [Fact]
-    public void Generar_ERemito_XmlContieneIndTraslado()
-    {
-        var cfe = CrearCfeCompleto();
-        cfe.Tipo = TipoCfe.ERemito;
-        cfe.IndTraslado = IndTraslado.TrasladoPropio;
+        var cfe = TestData.CfeValido();
+        cfe.Detalle[0].NombreItem = "Café & <té> \"caliente\"";
 
         var xml = _builder.Generar(cfe);
+        var doc = Cargar(xml);
 
-        Assert.Contains("<IndTraslado>1</IndTraslado>", xml);
-    }
-
-    [Fact]
-    public void Generar_ETicket_XmlNoContieneIndTraslado()
-    {
-        var cfe = CrearCfeCompleto();
-        var xml = _builder.Generar(cfe);
-
-        Assert.DoesNotContain("IndTraslado", xml);
-    }
-
-    [Fact]
-    public void Generar_ConGiro_XmlContieneGiroNegocio()
-    {
-        var cfe = CrearCfeCompleto();
-        cfe.Giro = "Comercio minorista";
-
-        var xml = _builder.Generar(cfe);
-
-        Assert.Contains("<GiroNegocio>Comercio minorista</GiroNegocio>", xml);
-    }
-
-    [Fact]
-    public void Generar_SinGiro_XmlNoContieneGiroNegocio()
-    {
-        var cfe = CrearCfeCompleto();
-        cfe.Giro = null;
-
-        var xml = _builder.Generar(cfe);
-
-        Assert.DoesNotContain("GiroNegocio", xml);
-    }
-
-    // --- CFE v25.2 ---
-
-    [Fact]
-    public void Generar_XmlContieneVersionCfe25()
-    {
-        var cfe = CrearCfeCompleto();
-        var xml = _builder.Generar(cfe);
-
-        Assert.Contains("version=\"25.2\"", xml);
-        Assert.DoesNotContain("version=\"23.01\"", xml);
-    }
-
-    [Fact]
-    public void Generar_RefCfeConCamposV25_EmiteCamposMontoYMoneda()
-    {
-        var cfe = CrearCfeCompleto();
-        cfe.Tipo = TipoCfe.NotaCreditoETicket;
-        cfe.Referencias.Add(new Models.RefCfe
-        {
-            TipoCfe = TipoCfe.ETicket,
-            Serie = "A",
-            NroCfe = 42,
-            FechaCfe = new DateTime(2025, 6, 15),
-            MontoCfeRef = 1220m,
-            MonedaCfeRef = Moneda.PesoUruguayo,
-        });
-
-        var xml = _builder.Generar(cfe);
-
-        Assert.Contains("<MntCFERef>1220.00</MntCFERef>", xml);
-        Assert.Contains("<MonedaCFERef>UYU</MonedaCFERef>", xml);
-        Assert.DoesNotContain("TpoCambioCFERef", xml);
-    }
-
-    [Fact]
-    public void Generar_RefCfeConMonedaExtranjera_EmiteTipoCambioRef()
-    {
-        var cfe = CrearCfeCompleto();
-        cfe.Tipo = TipoCfe.NotaCreditoEFactura;
-        cfe.Receptor = new Models.Receptor
-        {
-            Documento = "219999999018",
-            TipoDocumento = UruFactura.Enums.TipoDocumentoReceptor.Rut,
-        };
-        cfe.Referencias.Add(new Models.RefCfe
-        {
-            TipoCfe = TipoCfe.EFactura,
-            Serie = "A",
-            NroCfe = 10,
-            FechaCfe = new DateTime(2025, 6, 1),
-            MontoCfeRef = 800m,
-            MonedaCfeRef = Moneda.DolarAmericano,
-            TipoCambioCfeRef = 42.5m,
-        });
-
-        var xml = _builder.Generar(cfe);
-
-        Assert.Contains("<MntCFERef>800.00</MntCFERef>", xml);
-        Assert.Contains("<MonedaCFERef>USD</MonedaCFERef>", xml);
-        Assert.Contains("<TpoCambioCFERef>42.5000</TpoCambioCFERef>", xml);
-    }
-
-    [Fact]
-    public void Generar_RefCfeSinCamposV25_OmiteCamposMontoyMoneda()
-    {
-        // Los e-Remitos con referencias (182) no necesariamente son notas correctivas
-        // que emitan esos campos si no están seteados
-        var cfe = CrearCfeCompleto();
-        cfe.Tipo = TipoCfe.NotaCreditoERemito;
-        cfe.Referencias.Add(new Models.RefCfe
-        {
-            TipoCfe = TipoCfe.ERemito,
-            Serie = "A",
-            NroCfe = 5,
-            FechaCfe = new DateTime(2025, 6, 1),
-            MontoCfeRef = 0m,
-            MonedaCfeRef = Moneda.PesoUruguayo,
-            // Sin TipoCambioCfeRef
-        });
-
-        var xml = _builder.Generar(cfe);
-
-        Assert.Contains("<MntCFERef>0.00</MntCFERef>", xml);
-        Assert.DoesNotContain("TpoCambioCFERef", xml);
+        Assert.Equal("Café & <té> \"caliente\"", Texto(doc, "//c:Item/c:NomItem"));
     }
 }

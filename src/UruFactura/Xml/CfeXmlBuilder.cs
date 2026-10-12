@@ -1,259 +1,388 @@
+using System.Globalization;
 using System.Text;
 using System.Xml;
 using UruFactura.Enums;
-using UruFactura.Models;
 using UruFactura.Exceptions;
 using UruFactura.Formatting;
+using UruFactura.Models;
 
 namespace UruFactura.Xml;
 
 /// <summary>
-/// Genera el XML de un CFE según el esquema de la DGI de Uruguay (versión 25.2).
+/// Genera el XML de un CFE conforme al esquema XSD oficial de la DGI (<c>CFEType.xsd</c>,
+/// namespace <c>http://cfe.dgi.gub.uy</c>, atributo <c>version="1.0"</c>).
+/// Soporta e-Ticket, e-Factura, e-Factura de exportación, e-Remito y e-Remito de exportación
+/// con sus notas de corrección.
 /// </summary>
 public class CfeXmlBuilder : ICfeXmlBuilder
 {
-    private const string NsUri = "http://cfe.dgi.gub.uy";
+    internal const string NsUri = "http://cfe.dgi.gub.uy";
 
     /// <summary>
-    /// Genera el XML sin firmar del CFE.
+    /// Genera el XML sin firmar del CFE. La firma XML (<c>ds:Signature</c>) se agrega después
+    /// con <see cref="Signature.ICfeFirmante"/>.
     /// </summary>
-    /// <param name="cfe">El CFE a serializar.</param>
-    /// <returns>Cadena XML UTF-8 sin firmar.</returns>
     /// <exception cref="CfeValidationException">Si el CFE tiene errores de validación.</exception>
     public string Generar(Cfe cfe)
     {
+        // Los totales se derivan siempre del detalle (el cálculo es idempotente).
+        cfe.CalcularTotales();
+
         var errores = cfe.Validar();
         if (errores.Count > 0)
             throw new CfeValidationException(errores);
 
-        // Use MemoryStream so XmlWriter writes the declaration as encoding="utf-8".
-        // Writing to a StringBuilder always produces encoding="utf-16" regardless of
-        // XmlWriterSettings.Encoding, because StringBuilder is internally UTF-16.
-        // Use UTF8Encoding without BOM so the resulting string is directly parseable
-        // by XmlDocument.LoadXml (which rejects a leading BOM character).
+        // MemoryStream + UTF8 sin BOM: la declaración dice encoding="utf-8" y el resultado
+        // se puede cargar directamente con XmlDocument.LoadXml.
         using var ms = new MemoryStream();
         var settings = new XmlWriterSettings
         {
             Encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
-            Indent = true,
+            Indent = false,
             OmitXmlDeclaration = false,
         };
 
-        using var writer = XmlWriter.Create(ms, settings);
-        EscribirCfe(writer, cfe);
-        writer.Flush();
+        using (var writer = XmlWriter.Create(ms, settings))
+        {
+            EscribirCfe(writer, cfe);
+            writer.Flush();
+        }
 
         return Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
     }
 
+    private enum Familia { Ticket, Factura, FacturaExp, Remito, RemitoExp }
+
+    private static Familia FamiliaDe(TipoCfe tipo) => tipo switch
+    {
+        TipoCfe.ETicket or TipoCfe.NotaCreditoETicket or TipoCfe.NotaDebitoETicket => Familia.Ticket,
+        TipoCfe.EFactura or TipoCfe.NotaCreditoEFactura or TipoCfe.NotaDebitoEFactura => Familia.Factura,
+        TipoCfe.EFacturaExportacion or TipoCfe.NotaCreditoEFacturaExportacion
+            or TipoCfe.NotaDebitoEFacturaExportacion => Familia.FacturaExp,
+        TipoCfe.ERemito => Familia.Remito,
+        TipoCfe.ERemitoExportacion => Familia.RemitoExp,
+        _ => throw new CfeValidationException([$"El tipo de CFE {tipo} no está soportado."]),
+    };
+
+    private static string ElementoRaiz(Familia f) => f switch
+    {
+        Familia.Ticket => "eTck",
+        Familia.Factura => "eFact",
+        Familia.FacturaExp => "eFact_Exp",
+        Familia.Remito => "eRem",
+        _ => "eRem_Exp",
+    };
+
     private static void EscribirCfe(XmlWriter w, Cfe cfe)
     {
+        var familia = FamiliaDe(cfe.Tipo);
+
         w.WriteStartDocument();
         w.WriteStartElement("CFE", NsUri);
-        w.WriteAttributeString("version", "25.2");
+        w.WriteAttributeString("version", "1.0");
+        w.WriteStartElement(ElementoRaiz(familia), NsUri);
 
-        // Identificación del documento
+        El(w, "TmstFirma", TimestampUruguay(DateTimeOffset.UtcNow));
+
         w.WriteStartElement("Encabezado", NsUri);
-        EscribirIdDoc(w, cfe);
+        EscribirIdDoc(w, cfe, familia);
         EscribirEmisor(w, cfe);
-
         if (cfe.Receptor != null)
-            EscribirReceptor(w, cfe);
-
-        EscribirTotales(w, cfe);
+            EscribirReceptor(w, cfe, familia);
+        EscribirTotales(w, cfe, familia);
         w.WriteEndElement(); // Encabezado
 
-        // Detalle de líneas
         w.WriteStartElement("Detalle", NsUri);
         for (int i = 0; i < cfe.Detalle.Count; i++)
-        {
-            EscribirLinea(w, cfe.Detalle[i], i + 1);
-        }
+            EscribirLinea(w, cfe.Detalle[i], i + 1, familia);
         w.WriteEndElement(); // Detalle
 
-        // Referencias
         if (cfe.Referencias.Count > 0)
         {
             w.WriteStartElement("Referencia", NsUri);
-            foreach (var refCfe in cfe.Referencias)
-                EscribirReferencia(w, refCfe);
+            for (int i = 0; i < cfe.Referencias.Count; i++)
+                EscribirReferencia(w, cfe.Referencias[i], i + 1);
             w.WriteEndElement(); // Referencia
         }
 
+        EscribirCaeData(w, cfe.CaeData!);
+
+        w.WriteEndElement(); // eXxx
         w.WriteEndElement(); // CFE
         w.WriteEndDocument();
     }
 
-    private static void EscribirIdDoc(XmlWriter w, Cfe cfe)
+    /// <summary>Fecha/hora con el offset de Uruguay (UTC-03:00, sin horario de verano).</summary>
+    internal static string TimestampUruguay(DateTimeOffset instante) =>
+        instante.ToOffset(TimeSpan.FromHours(-3))
+                .ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture);
+
+    private static void EscribirIdDoc(XmlWriter w, Cfe cfe, Familia familia)
     {
         w.WriteStartElement("IdDoc", NsUri);
-        WriteElement(w, "TipoCFE", ((int)cfe.Tipo).ToString());
-        WriteElement(w, "Serie", cfe.Serie ?? string.Empty);
-        WriteElement(w, "Nro", cfe.Numero.ToString());
-        WriteElement(w, "FchEmis", CfeFormat.DateIso(cfe.FechaEmision));
-        WriteElement(w, "FmaPago", ((int)cfe.FormaPago).ToString());
-        WriteElement(w, "MntBruto", "0"); // precios netos (sin IVA) en el detalle
-        if (cfe.Moneda != Moneda.PesoUruguayo)
-        {
-            WriteElement(w, "TipoMoneda", ObtenerCodigoMoneda(cfe.Moneda));
-            if (cfe.TipoCambio.HasValue)
-                WriteElement(w, "TpoCambio", CfeFormat.DecimalInvariant(cfe.TipoCambio.Value, "F4"));
-        }
+        El(w, "TipoCFE", Int(cfe.Tipo));
+        El(w, "Serie", cfe.Serie!);
+        El(w, "Nro", cfe.Numero.ToString(CultureInfo.InvariantCulture));
+        El(w, "FchEmis", CfeFormat.DateIso(cfe.FechaEmision));
 
-        // e-Remito y e-Remito Despachante requieren el motivo de traslado
-        if ((cfe.Tipo == TipoCfe.ERemito || cfe.Tipo == TipoCfe.ERemitoDespachante)
-            && cfe.IndTraslado.HasValue)
+        switch (familia)
         {
-            WriteElement(w, "IndTraslado", ((int)cfe.IndTraslado.Value).ToString());
+            case Familia.Remito:
+                El(w, "TipoTraslado", TipoTraslado(cfe));
+                break;
+
+            case Familia.RemitoExp:
+                El(w, "TipoTraslado", TipoTraslado(cfe));
+                if (!string.IsNullOrWhiteSpace(cfe.ClausulaVenta))
+                    El(w, "ClauVenta", cfe.ClausulaVenta);
+                El(w, "ModVenta", cfe.ModalidadVenta!.Value.ToString(CultureInfo.InvariantCulture));
+                El(w, "ViaTransp", cfe.ViaTransporte!.Value.ToString(CultureInfo.InvariantCulture));
+                break;
+
+            case Familia.FacturaExp:
+                El(w, "FmaPago", Int(cfe.FormaPago));
+                El(w, "ClauVenta", cfe.ClausulaVenta!);
+                if (cfe.ModalidadVenta.HasValue)
+                    El(w, "ModVenta", cfe.ModalidadVenta.Value.ToString(CultureInfo.InvariantCulture));
+                El(w, "ViaTransp", cfe.ViaTransporte!.Value.ToString(CultureInfo.InvariantCulture));
+                break;
+
+            default:
+                // Los precios del detalle son netos (sin IVA): MntBruto se omite.
+                El(w, "FmaPago", Int(cfe.FormaPago));
+                break;
         }
 
         w.WriteEndElement(); // IdDoc
     }
 
+    /// <summary>
+    /// <c>TipoTraslado</c> del e-Remito: 1 = Venta, 2 = Traslados internos.
+    /// </summary>
+    private static string TipoTraslado(Cfe cfe) =>
+        cfe.IndTraslado == Enums.IndTraslado.TrasladoPorVenta ? "1" : "2";
+
     private static void EscribirEmisor(XmlWriter w, Cfe cfe)
     {
         w.WriteStartElement("Emisor", NsUri);
-        WriteElement(w, "RUCEmisor", cfe.RutEmisor);
-        WriteElement(w, "RznSoc", cfe.RazonSocialEmisor);
+        El(w, "RUCEmisor", cfe.RutEmisor);
+        El(w, "RznSoc", cfe.RazonSocialEmisor);
         if (!string.IsNullOrWhiteSpace(cfe.NombreComercialEmisor))
-            WriteElement(w, "NomComercial", cfe.NombreComercialEmisor);
+            El(w, "NomComercial", cfe.NombreComercialEmisor);
         if (!string.IsNullOrWhiteSpace(cfe.Giro))
-            WriteElement(w, "GiroNegocio", cfe.Giro);
-        WriteElement(w, "DomFiscal", cfe.DomicilioFiscalEmisor);
-        WriteElement(w, "Ciudad", cfe.CiudadEmisor);
-        WriteElement(w, "Departamento", cfe.DepartamentoEmisor);
+            El(w, "GiroEmis", cfe.Giro);
+        El(w, "CdgDGISucur", cfe.CodigoSucursal.ToString(CultureInfo.InvariantCulture));
+        El(w, "DomFiscal", cfe.DomicilioFiscalEmisor);
+        El(w, "Ciudad", cfe.CiudadEmisor);
+        El(w, "Departamento", cfe.DepartamentoEmisor);
         w.WriteEndElement(); // Emisor
     }
 
-    private static void EscribirReceptor(XmlWriter w, Cfe cfe)
+    private static void EscribirReceptor(XmlWriter w, Cfe cfe, Familia familia)
     {
-        var receptor = cfe.Receptor!;
+        var r = cfe.Receptor!;
+        var conDocumento = !string.IsNullOrWhiteSpace(r.Documento);
+        var pais = string.IsNullOrWhiteSpace(r.CodigoPais) ? "UY" : r.CodigoPais.ToUpperInvariant();
+        var tipoDoc = TipoDocumentoDgi(r.TipoDocumento);
+
         w.WriteStartElement("Receptor", NsUri);
 
-        if (!string.IsNullOrWhiteSpace(receptor.Documento))
+        if (conDocumento)
         {
-            WriteElement(w, "TipoDocRecep", ((int)receptor.TipoDocumento).ToString());
-            WriteElement(w, "DocRecep", receptor.Documento);
+            if (familia == Familia.Factura)
+            {
+                // Receptor_Fact: documento fijo RUC (2) de Uruguay.
+                El(w, "TipoDocRecep", "2");
+                El(w, "CodPaisRecep", "UY");
+                El(w, "DocRecep", r.Documento!);
+            }
+            else
+            {
+                El(w, "TipoDocRecep", tipoDoc);
+                El(w, "CodPaisRecep", pais);
+                El(w, pais == "UY" ? "DocRecep" : "DocRecepExt", r.Documento!);
+            }
         }
 
-        if (!string.IsNullOrWhiteSpace(receptor.RazonSocial))
-            WriteElement(w, "RznSocRecep", receptor.RazonSocial);
+        if (!string.IsNullOrWhiteSpace(r.RazonSocial))
+            El(w, "RznSocRecep", r.RazonSocial);
 
-        if (!string.IsNullOrWhiteSpace(receptor.Direccion))
-            WriteElement(w, "DirRecep", receptor.Direccion);
+        // Dirección, ciudad y departamento solo existen en el receptor de e-Ticket y e-Factura.
+        if (familia is Familia.Ticket or Familia.Factura)
+        {
+            if (!string.IsNullOrWhiteSpace(r.Direccion))
+                El(w, "DirRecep", r.Direccion);
+            if (!string.IsNullOrWhiteSpace(r.Ciudad))
+                El(w, "CiudadRecep", r.Ciudad);
+            if (!string.IsNullOrWhiteSpace(r.Departamento))
+                El(w, "DeptoRecep", r.Departamento);
+        }
 
-        if (!string.IsNullOrWhiteSpace(receptor.Ciudad))
-            WriteElement(w, "CiudadRecep", receptor.Ciudad);
-
-        if (!string.IsNullOrWhiteSpace(receptor.Departamento))
-            WriteElement(w, "DeptoRecep", receptor.Departamento);
-
-        if (!string.IsNullOrWhiteSpace(receptor.Pais))
-            WriteElement(w, "PaisRecep", receptor.Pais);
-
-        if (!string.IsNullOrWhiteSpace(receptor.Email))
-            WriteElement(w, "Email", receptor.Email);
+        if (!string.IsNullOrWhiteSpace(r.Pais))
+            El(w, "PaisRecep", r.Pais);
 
         w.WriteEndElement(); // Receptor
     }
 
-    private static void EscribirTotales(XmlWriter w, Cfe cfe)
+    /// <summary>Código de tipo de documento de la DGI (<c>DocType</c>): 2 RUC, 3 CI, 4 Otro, 5 Pasaporte.</summary>
+    private static string TipoDocumentoDgi(TipoDocumentoReceptor tipo) => tipo switch
+    {
+        TipoDocumentoReceptor.Rut => "2",
+        TipoDocumentoReceptor.CedulaIdentidad => "3",
+        TipoDocumentoReceptor.Pasaporte => "5",
+        _ => "4",
+    };
+
+    private static void EscribirTotales(XmlWriter w, Cfe cfe, Familia familia)
     {
         w.WriteStartElement("Totales", NsUri);
 
-        if (cfe.MontoNetoExento > 0)
-            WriteElement(w, "MntExe", CfeFormat.DecimalInvariant(cfe.MontoNetoExento, "F2"));
-
-        if (cfe.MontoNetoSuspendido > 0)
-            WriteElement(w, "MntSuspenso", CfeFormat.DecimalInvariant(cfe.MontoNetoSuspendido, "F2"));
-
-        if (cfe.MontoNetoMinimo > 0)
+        switch (familia)
         {
-            WriteElement(w, "MntNetoIvaTasaMin", CfeFormat.DecimalInvariant(cfe.MontoNetoMinimo, "F2"));
-            WriteElement(w, "IVATasaMin", "10.000");
-            WriteElement(w, "MntIVATasaMin", CfeFormat.DecimalInvariant(cfe.IvaMinimo, "F2"));
-        }
+            case Familia.Remito:
+                El(w, "CantLinDet", Cant(cfe));
+                break;
 
-        if (cfe.MontoNetoBasico > 0)
-        {
-            WriteElement(w, "MntNetoIVA", CfeFormat.DecimalInvariant(cfe.MontoNetoBasico, "F2"));
-            WriteElement(w, "IVATasa", "22.000");
-            WriteElement(w, "MntIVA", CfeFormat.DecimalInvariant(cfe.IvaBasico, "F2"));
-        }
+            case Familia.RemitoExp:
+            case Familia.FacturaExp:
+                EscribirMoneda(w, cfe);
+                El(w, "MntExpoyAsim", M2(cfe.MontoExportacion));
+                El(w, "MntTotal", M2(cfe.MontoTotal));
+                El(w, "CantLinDet", Cant(cfe));
+                if (familia == Familia.FacturaExp)
+                    El(w, "MntPagar", M2(cfe.MontoTotal));
+                break;
 
-        WriteElement(w, "MntTotal", CfeFormat.DecimalInvariant(cfe.MontoTotal, "F2"));
-        WriteElement(w, "MntPagar", CfeFormat.DecimalInvariant(cfe.MontoTotal, "F2"));
-        WriteElement(w, "CantLinDet", cfe.Detalle.Count.ToString());
+            default:
+                EscribirMoneda(w, cfe);
+                if (cfe.MontoNetoExento > 0)
+                    El(w, "MntNoGrv", M2(cfe.MontoNetoExento));
+                if (cfe.MontoNetoSuspendido > 0)
+                    El(w, "MntIVaenSusp", M2(cfe.MontoNetoSuspendido));
+                if (cfe.MontoNetoMinimo > 0)
+                    El(w, "MntNetoIvaTasaMin", M2(cfe.MontoNetoMinimo));
+                if (cfe.MontoNetoBasico > 0)
+                    El(w, "MntNetoIVATasaBasica", M2(cfe.MontoNetoBasico));
+                if (cfe.MontoNetoMinimo > 0)
+                    El(w, "IVATasaMin", "10.000");
+                if (cfe.MontoNetoBasico > 0)
+                    El(w, "IVATasaBasica", "22.000");
+                if (cfe.MontoNetoMinimo > 0)
+                    El(w, "MntIVATasaMin", M2(cfe.IvaMinimo));
+                if (cfe.MontoNetoBasico > 0)
+                    El(w, "MntIVATasaBasica", M2(cfe.IvaBasico));
+                El(w, "MntTotal", M2(cfe.MontoTotal));
+                El(w, "CantLinDet", Cant(cfe));
+                El(w, "MntPagar", M2(cfe.MontoTotal));
+                break;
+        }
 
         w.WriteEndElement(); // Totales
     }
 
-    private static void EscribirLinea(XmlWriter w, LineaDetalle linea, int nro)
+    private static void EscribirMoneda(XmlWriter w, Cfe cfe)
+    {
+        El(w, "TpoMoneda", ObtenerCodigoIso4217(cfe.Moneda));
+        if (cfe.Moneda != Moneda.PesoUruguayo && cfe.TipoCambio.HasValue)
+            El(w, "TpoCambio", CfeFormat.DecimalInvariant(cfe.TipoCambio.Value, "F3"));
+    }
+
+    private static void EscribirLinea(XmlWriter w, LineaDetalle linea, int nro, Familia familia)
     {
         w.WriteStartElement("Item", NsUri);
+        El(w, "NroLinDet", nro.ToString(CultureInfo.InvariantCulture));
 
-        WriteElement(w, "NroLinDet", nro.ToString());
+        var unidad = string.IsNullOrWhiteSpace(linea.UnidadMedida) ? "N/A" : linea.UnidadMedida;
 
-        if (!string.IsNullOrWhiteSpace(linea.UnidadMedida))
-            WriteElement(w, "UniMed", linea.UnidadMedida);
+        if (familia == Familia.Remito)
+        {
+            El(w, "NomItem", linea.NombreItem);
+            El(w, "Cantidad", CfeFormat.DecimalInvariant(linea.Cantidad, "F3"));
+            El(w, "UniMed", unidad);
+            w.WriteEndElement();
+            return;
+        }
 
-        WriteElement(w, "NomItem", linea.NombreItem);
-        WriteElement(w, "Cantidad", CfeFormat.DecimalInvariant(linea.Cantidad, "F4"));
-        WriteElement(w, "PrecioUnitario", CfeFormat.DecimalInvariant(linea.PrecioUnitario, "F4"));
+        // Item_Rem_Exp no admite IndFact 10: en el e-Remito de exportación se omite.
+        if (familia != Familia.RemitoExp)
+            El(w, "IndFact", IndFact(linea, familia));
+        El(w, "NomItem", linea.NombreItem);
+        El(w, "Cantidad", CfeFormat.DecimalInvariant(linea.Cantidad, "F3"));
+        El(w, "UniMed", unidad);
+        El(w, "PrecioUnitario", CfeFormat.DecimalInvariant(linea.PrecioUnitario, "F6"));
 
-        if (linea.DescuentoMonto > 0)
-            WriteElement(w, "DescuentoMonto", CfeFormat.DecimalInvariant(linea.DescuentoMonto, "F2"));
+        if (linea.DescuentoMonto > 0 && familia != Familia.RemitoExp)
+            El(w, "DescuentoMonto", M2(linea.DescuentoMonto));
 
-        if (linea.RecargoMonto > 0)
-            WriteElement(w, "RecargoMonto", CfeFormat.DecimalInvariant(linea.RecargoMonto, "F2"));
+        if (linea.RecargoMonto > 0 && familia != Familia.RemitoExp)
+            El(w, "RecargoMnt", M2(linea.RecargoMonto));
 
-        WriteElement(w, "IndFact", ((int)linea.IndFactIva).ToString());
-        WriteElement(w, "MontoItem", CfeFormat.DecimalInvariant(linea.MontoTotal, "F2"));
-
+        El(w, "MontoItem", M2(linea.MontoTotal));
         w.WriteEndElement(); // Item
     }
 
-    private static void EscribirReferencia(XmlWriter w, RefCfe refCfe)
+    /// <summary>Indicador de facturación (<c>IndFact</c>) de la línea.</summary>
+    private static string IndFact(LineaDetalle linea, Familia familia)
     {
-        w.WriteStartElement("RefDoc", NsUri);
-        WriteElement(w, "TpoDocRef", ((int)refCfe.TipoCfe).ToString());
-        WriteElement(w, "Serie", refCfe.Serie);
-        WriteElement(w, "NroCFERef", refCfe.NroCfe.ToString());
-        WriteElement(w, "FechaCFERef", CfeFormat.DateIso(refCfe.FechaCfe));
-        if (refCfe.MontoCfeRef.HasValue)
-            WriteElement(w, "MntCFERef", CfeFormat.DecimalInvariant(refCfe.MontoCfeRef.Value, "F2"));
-        if (refCfe.MonedaCfeRef.HasValue)
-            WriteElement(w, "MonedaCFERef", ObtenerCodigoIso4217(refCfe.MonedaCfeRef.Value));
-        if (refCfe.TipoCambioCfeRef.HasValue)
-            WriteElement(w, "TpoCambioCFERef", CfeFormat.DecimalInvariant(refCfe.TipoCambioCfeRef.Value, "F4"));
-        if (!string.IsNullOrWhiteSpace(refCfe.Razon))
-            WriteElement(w, "RazonRef", refCfe.Razon);
-        w.WriteEndElement(); // RefDoc
+        if (familia is Familia.FacturaExp or Familia.RemitoExp)
+            return "10"; // Exportación y asimiladas
+
+        return linea.IndFactIva switch
+        {
+            TipoIva.Exento => "1",
+            TipoIva.Minimo => "2",
+            TipoIva.Basico => "3",
+            TipoIva.Suspendido => "12", // IVA en suspenso
+            _ => throw new CfeValidationException([$"Indicador de IVA no soportado: {linea.IndFactIva}."]),
+        };
     }
 
-    private static void WriteElement(XmlWriter w, string name, string value)
+    private static void EscribirReferencia(XmlWriter w, RefCfe r, int nro)
+    {
+        w.WriteStartElement("Referencia", NsUri);
+        El(w, "NroLinRef", nro.ToString(CultureInfo.InvariantCulture));
+        El(w, "TpoDocRef", Int(r.TipoCfe));
+        El(w, "Serie", r.Serie);
+        El(w, "NroCFERef", r.NroCfe.ToString(CultureInfo.InvariantCulture));
+        if (!string.IsNullOrWhiteSpace(r.Razon))
+            El(w, "RazonRef", r.Razon);
+        El(w, "FechaCFEref", CfeFormat.DateIso(r.FechaCfe));
+        if (r.MontoCfeRef.HasValue)
+            El(w, "MntCFEref", M2(r.MontoCfeRef.Value));
+        if (r.MonedaCfeRef.HasValue)
+            El(w, "TpoMonedaRef", ObtenerCodigoIso4217(r.MonedaCfeRef.Value));
+        if (r.TipoCambioCfeRef.HasValue)
+            El(w, "TpoCambioRef", CfeFormat.DecimalInvariant(r.TipoCambioCfeRef.Value, "F3"));
+        w.WriteEndElement(); // Referencia
+    }
+
+    private static void EscribirCaeData(XmlWriter w, CaeData cae)
+    {
+        w.WriteStartElement("CAEData", NsUri);
+        El(w, "CAE_ID", cae.NumeroAutorizacion);
+        El(w, "DNro", cae.RangoDesde.ToString(CultureInfo.InvariantCulture));
+        El(w, "HNro", cae.RangoHasta.ToString(CultureInfo.InvariantCulture));
+        El(w, "FecVenc", CfeFormat.DateIso(cae.FechaVencimiento));
+        w.WriteEndElement(); // CAEData
+    }
+
+    // -------------------------------------------------------------------------
+
+    private static void El(XmlWriter w, string name, string value)
     {
         w.WriteStartElement(name, NsUri);
         w.WriteString(value);
         w.WriteEndElement();
     }
 
-    /// <summary>
-    /// Retorna el código ISO 4217 alfabético de 3 letras que usa la DGI
-    /// para el elemento <c>TipoMoneda</c> (sólo para monedas distintas al peso uruguayo).
-    /// </summary>
-    private static string ObtenerCodigoMoneda(Moneda moneda) => moneda switch
-    {
-        Moneda.DolarAmericano => "USD",
-        Moneda.Euro           => "EUR",
-        _ => throw new ArgumentOutOfRangeException(nameof(moneda),
-                 $"Moneda '{moneda}' sin código ISO 4217 definido."),
-    };
+    private static string Int(Enum value) =>
+        Convert.ToInt32(value, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture);
 
-    /// <summary>
-    /// Retorna el código ISO 4217 de 3 letras para todos los valores de <see cref="Moneda"/>,
-    /// incluyendo el peso uruguayo (UYU). Usado en la zona de referencia (F-C9).
-    /// </summary>
+    private static string M2(decimal value) => CfeFormat.DecimalInvariant(value, "F2");
+
+    private static string Cant(Cfe cfe) => cfe.Detalle.Count.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>Código ISO 4217 de 3 letras que usa la DGI (<c>TpoMoneda</c>).</summary>
     private static string ObtenerCodigoIso4217(Moneda moneda) => moneda switch
     {
         Moneda.PesoUruguayo   => "UYU",

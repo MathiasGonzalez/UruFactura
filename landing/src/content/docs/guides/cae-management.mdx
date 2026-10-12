@@ -15,6 +15,8 @@ El **CAE (Constancia de Autorización de Emisión)** es el rango de numeración 
 client.Cae.RegistrarCae(new Cae
 {
     NroSerie         = "CAE2025001",           // Identificador único del CAE
+    NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
+    Serie            = "A",
     TipoCfe          = TipoCfe.ETicket,        // Tipo de CFE al que aplica
     RangoDesde       = 1,                      // Primer número autorizado
     RangoHasta       = 1000,                   // Último número autorizado
@@ -29,6 +31,8 @@ Podés registrar múltiples CAEs (para distintos tipos de CFE):
 client.Cae.RegistrarCae(new Cae
 {
     NroSerie         = "CAE2025-ET",
+    NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
+    Serie            = "A",
     TipoCfe          = TipoCfe.ETicket,
     RangoDesde       = 1,
     RangoHasta       = 5000,
@@ -39,6 +43,8 @@ client.Cae.RegistrarCae(new Cae
 client.Cae.RegistrarCae(new Cae
 {
     NroSerie         = "CAE2025-EF",
+    NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
+    Serie            = "A",
     TipoCfe          = TipoCfe.EFactura,
     RangoDesde       = 1,
     RangoHasta       = 500,
@@ -146,6 +152,8 @@ builder.Services.AddHostedService<CaeMonitorService>();
    client.Cae.RegistrarCae(new Cae
    {
        NroSerie         = "CAE2026001",       // Nuevo número de serie
+       NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
+       Serie            = "A",
        TipoCfe          = TipoCfe.ETicket,
        RangoDesde       = 1001,               // Continuar desde donde terminó el anterior
        RangoHasta       = 2000,

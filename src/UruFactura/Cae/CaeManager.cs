@@ -69,18 +69,16 @@ public class CaeManager : ICaeManager
     /// <exception cref="CaeException">Si no hay CAE vigente o disponible.</exception>
     public (Models.Cae Cae, long Numero) ObtenerProximoNumero(TipoCfe tipoCfe)
     {
-        Models.Cae? caeActivo;
         lock (_lock)
         {
-            caeActivo = ObtenerCaeActivoInterno(tipoCfe);
+            // Elegir e incrementar bajo el mismo lock evita que dos hilos tomen el último
+            // número del mismo CAE y el segundo falle habiendo otro CAE disponible.
+            var caeActivo = ObtenerCaeActivoInterno(tipoCfe)
+                ?? throw new CaeException(
+                    $"No hay CAE vigente y con números disponibles para el tipo {tipoCfe}.");
+
+            return (caeActivo, caeActivo.ObtenerProximoNumero());
         }
-
-        if (caeActivo is null)
-            throw new CaeException(
-                $"No hay CAE vigente y con números disponibles para el tipo {tipoCfe}.");
-
-        var numero = caeActivo.ObtenerProximoNumero();
-        return (caeActivo, numero);
     }
 
     /// <summary>

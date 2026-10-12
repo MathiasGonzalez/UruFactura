@@ -27,6 +27,9 @@ public partial class UruFacturaClient : IUruFacturaClient
     private readonly ICaeManager _caeManager;
     private readonly IDgiSoapClient _soapClient;
     private readonly ICfePdfGenerator? _pdfGenerator;
+    private readonly ICaeRepository? _caeRepository;
+    private readonly Lock _idEnvioLock = new();
+    private long _ultimoIdEnvio;
     private bool _disposed;
 
     /// <summary>Gestión de CAEs del cliente.</summary>
@@ -43,7 +46,8 @@ public partial class UruFacturaClient : IUruFacturaClient
         ICfeFirmante firmante,
         ICaeManager caeManager,
         IDgiSoapClient soapClient,
-        ICfePdfGenerator? pdfGenerator)
+        ICfePdfGenerator? pdfGenerator,
+        ICaeRepository? caeRepository = null)
     {
         _config = config;
         _xmlBuilder = xmlBuilder;
@@ -51,6 +55,7 @@ public partial class UruFacturaClient : IUruFacturaClient
         _caeManager = caeManager;
         _soapClient = soapClient;
         _pdfGenerator = pdfGenerator;
+        _caeRepository = caeRepository;
     }
 
     // -----------------------------------------------------------------------
@@ -87,14 +92,14 @@ public partial class UruFacturaClient : IUruFacturaClient
     /// <summary>Crea una nota de débito de e-Factura de exportación.</summary>
     public Cfe CrearNotaDebitoEFacturaExportacion() => CrearCfe(TipoCfe.NotaDebitoEFacturaExportacion);
 
-    /// <summary>Crea un e-Remito de despachante (131).</summary>
-    public Cfe CrearERemitoDespachante() => CrearCfe(TipoCfe.ERemitoDespachante);
+    /// <summary>Crea un e-Remito de exportación (124).</summary>
+    public Cfe CrearERemitoExportacion() => CrearCfe(TipoCfe.ERemitoExportacion);
 
-    /// <summary>Crea un e-Resguardo (151).</summary>
+    /// <summary>
+    /// Crea un e-Resguardo (182). El modelo actual no incluye retenciones/percepciones, por lo
+    /// que <see cref="Cfe.Validar"/> lo rechaza hasta que se agregue ese soporte.
+    /// </summary>
     public Cfe CrearEResguardo() => CrearCfe(TipoCfe.EResguardo);
-
-    /// <summary>Crea una nota de crédito de e-Remito (182).</summary>
-    public Cfe CrearNotaCreditoERemito() => CrearCfe(TipoCfe.NotaCreditoERemito);
 
     private Cfe CrearCfe(TipoCfe tipo) => new()
     {
@@ -106,12 +111,53 @@ public partial class UruFacturaClient : IUruFacturaClient
         DomicilioFiscalEmisor = _config.DomicilioFiscal,
         CiudadEmisor = _config.Ciudad,
         DepartamentoEmisor = _config.Departamento,
+        CodigoSucursal = _config.CodigoSucursal,
         FechaEmision = DateOnly.FromDateTime(DateTime.Today),
     };
 
     // -----------------------------------------------------------------------
     // XML y Firma
     // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Toma el próximo número del CAE vigente para el tipo del CFE y completa
+    /// <see cref="Cfe.Numero"/>, <see cref="Cfe.Serie"/> y <see cref="Cfe.CaeData"/>.
+    /// No persiste el número usado: si lo necesita, use <see cref="AsignarCaeAsync"/>
+    /// con un <see cref="ICaeRepository"/>.
+    /// </summary>
+    /// <exception cref="Exceptions.CaeException">Si no hay un CAE vigente con números disponibles.</exception>
+    public void AsignarCae(Cfe cfe)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(cfe);
+        AsignarCaeInterno(cfe);
+    }
+
+    /// <summary>
+    /// Como <see cref="AsignarCae"/>, y además guarda el último número usado en el
+    /// <see cref="ICaeRepository"/> configurado (si lo hay) para que sobreviva a reinicios.
+    /// </summary>
+    public async Task AsignarCaeAsync(Cfe cfe)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(cfe);
+        var cae = AsignarCaeInterno(cfe);
+
+        if (_caeRepository is not null)
+            await _caeRepository.ActualizarUltimoNroUsadoAsync(cae.NroSerie, cfe.Numero);
+    }
+
+    private Models.Cae AsignarCaeInterno(Cfe cfe)
+    {
+        var (cae, numero) = _caeManager.ObtenerProximoNumero(cfe.Tipo);
+        cfe.Numero = numero;
+        cfe.Serie = cae.Serie;
+        cfe.CaeData = CaeData.Desde(cae);
+        // El XML anterior (si existía) ya no corresponde a estos datos.
+        cfe.XmlSinFirmar = null;
+        cfe.XmlFirmado = null;
+        return cae;
+    }
 
     /// <summary>
     /// Genera el XML sin firmar del CFE.
@@ -128,7 +174,7 @@ public partial class UruFacturaClient : IUruFacturaClient
     }
 
     /// <summary>
-    /// Firma digitalmente el CFE con XAdES-BES.
+    /// Firma digitalmente el CFE (XML Signature enveloped).
     /// </summary>
     /// <param name="cfe">El CFE (debe haberse generado el XML previamente).</param>
     /// <returns>XML firmado.</returns>
@@ -160,59 +206,170 @@ public partial class UruFacturaClient : IUruFacturaClient
     // -----------------------------------------------------------------------
 
     /// <summary>
-    /// Envía el CFE firmado a la DGI.
-    /// Si el CFE aún no está firmado, lo firma primero.
+    /// Envía el CFE a la DGI dentro de un sobre (<c>EFACRECEPCIONSOBRE</c>).
+    /// Si el CFE aún no está firmado, lo genera y firma primero. Un envío exitoso
+    /// (<see cref="RespuestaDgi.Exitoso"/>) significa que la DGI <b>recibió el sobre</b>; el
+    /// resultado del comprobante se obtiene después con <see cref="ConsultarEstadoEnvioAsync"/>.
     /// </summary>
     /// <param name="cfe">El CFE a enviar.</param>
     /// <param name="cancellationToken">Token de cancelación.</param>
-    /// <returns>Respuesta de la DGI.</returns>
-    public async Task<RespuestaDgi> EnviarCfeAsync(
+    /// <returns>Respuesta de la DGI (<c>ACKSobre</c>).</returns>
+    public Task<RespuestaDgi> EnviarCfeAsync(
         Cfe cfe,
+        CancellationToken cancellationToken = default) =>
+        EnviarCfesAsync([cfe], cancellationToken);
+
+    /// <summary>
+    /// Envía varios CFE (1 a 250) en un único sobre.
+    /// </summary>
+    public async Task<RespuestaDgi> EnviarCfesAsync(
+        IEnumerable<Cfe> cfes,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        if (string.IsNullOrWhiteSpace(cfe.XmlFirmado))
-            GenerarYFirmar(cfe);
+        var lista = cfes.ToList();
 
-        var respuesta = await _soapClient.EnviarCfeAsync(cfe.XmlFirmado!, cancellationToken);
+        var xmls = new List<string>(lista.Count);
+        foreach (var cfe in lista)
+        {
+            if (string.IsNullOrWhiteSpace(cfe.XmlFirmado))
+                GenerarYFirmar(cfe);
+            xmls.Add(cfe.XmlFirmado!);
+        }
 
-        cfe.CodigoRespuestaDgi = respuesta.Codigo;
-        cfe.MensajeRespuestaDgi = respuesta.Mensaje;
-        cfe.AceptadoPorDgi = respuesta.Exitoso;
+        var sobre = CfeSobreBuilder.Generar(
+            _config.RutEmisor,
+            SiguienteIdEnvio(),
+            DateTimeOffset.UtcNow,
+            _firmante.ObtenerCertificadoDer(),
+            xmls);
+
+        var respuesta = await _soapClient.EnviarSobreAsync(sobre, cancellationToken);
+
+        foreach (var cfe in lista)
+        {
+            cfe.CodigoRespuestaDgi = respuesta.Codigo;
+            cfe.MensajeRespuestaDgi = respuesta.Mensaje;
+            cfe.IdReceptorDgi = respuesta.IdReceptor;
+            cfe.TokenDgi = respuesta.Token;
+            // AceptadoPorDgi solo se actualiza con la consulta de estado.
+        }
 
         return respuesta;
     }
 
     /// <summary>
-    /// Consulta el estado de un CFE en los servidores de la DGI.
+    /// Consulta el resultado de un sobre ya enviado (<c>EFACCONSULTARESTADOENVIO</c>) y actualiza
+    /// <see cref="Cfe.AceptadoPorDgi"/> de los CFE indicados según el estado informado.
+    /// </summary>
+    /// <param name="envio">Respuesta devuelta por <see cref="EnviarCfeAsync"/> / <see cref="EnviarCfesAsync"/>.</param>
+    /// <param name="cfes">CFE del sobre cuyo estado se actualiza (opcional).</param>
+    public async Task<RespuestaDgi> ConsultarEstadoEnvioAsync(
+        RespuestaDgi envio,
+        IEnumerable<Cfe>? cfes = null,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(envio);
+
+        if (string.IsNullOrWhiteSpace(envio.IdReceptor) || string.IsNullOrWhiteSpace(envio.Token))
+            throw new InvalidOperationException(
+                "La respuesta del envío no tiene IdReceptor/Token: el sobre no fue recibido por la DGI.");
+
+        var respuesta = await _soapClient.ConsultarEstadoEnvioAsync(
+            envio.IdReceptor, envio.Token, cancellationToken);
+
+        if (cfes is not null)
+        {
+            foreach (var cfe in cfes)
+            {
+                var estado = respuesta.Comprobantes.FirstOrDefault(c =>
+                    c.TipoCfe == (int)cfe.Tipo && c.Serie == cfe.Serie && c.Numero == cfe.Numero);
+                if (estado is null)
+                    continue;
+
+                cfe.CodigoRespuestaDgi = estado.Estado;
+                cfe.MensajeRespuestaDgi = string.Join(" ", estado.Motivos);
+                cfe.AceptadoPorDgi = estado.Estado == "AE";
+            }
+        }
+
+        return respuesta;
+    }
+
+    /// <summary>
+    /// Consulta el estado de un CFE por tipo, serie y número (<c>EFACCONSULTARESTADOCFE</c>).
     /// </summary>
     public async Task<RespuestaDgi> ConsultarEstadoCfeAsync(
         Cfe cfe,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return await _soapClient.ConsultarEstadoCfeAsync(
-            cfe.RutEmisor, (int)cfe.Tipo,
-            cfe.Serie ?? string.Empty, cfe.Numero,
-            cancellationToken);
+        if (string.IsNullOrWhiteSpace(cfe.Serie))
+            throw new InvalidOperationException("El CFE no tiene serie asignada.");
+
+        var respuesta = await _soapClient.ConsultarEstadoCfeAsync(
+            (int)cfe.Tipo, cfe.Serie, cfe.Numero, cancellationToken);
+
+        cfe.CodigoRespuestaDgi = respuesta.Codigo;
+        cfe.MensajeRespuestaDgi = respuesta.Mensaje;
+        cfe.AceptadoPorDgi = respuesta.Exitoso;
+        return respuesta;
     }
 
     /// <summary>
-    /// Envía el Reporte Diario a la DGI con los CFE del día.
+    /// Envía el Reporte Diario (<c>EFACRECEPCIONREPORTE</c>): un resumen firmado con montos,
+    /// cantidades y rangos de los CFE emitidos en <paramref name="fecha"/>. Los CFE con otra
+    /// fecha de emisión se ignoran.
+    /// </summary>
+    public Task<RespuestaReporteDiario> EnviarReporteDiarioAsync(
+        DateTime fecha,
+        IEnumerable<Cfe> cfes,
+        CancellationToken cancellationToken = default) =>
+        EnviarReporteDiarioAsync(fecha, cfes, secEnvio: 0, cancellationToken);
+
+    /// <summary>
+    /// Igual que <see cref="EnviarReporteDiarioAsync(DateTime, IEnumerable{Cfe}, CancellationToken)"/>
+    /// indicando la secuencia del envío del día (0 el primero, 1 el siguiente, ...).
     /// </summary>
     public async Task<RespuestaReporteDiario> EnviarReporteDiarioAsync(
         DateTime fecha,
         IEnumerable<Cfe> cfes,
+        int secEnvio,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        var xmlsFirmados = cfes
-            .Select(c => string.IsNullOrWhiteSpace(c.XmlFirmado)
-                ? GenerarYFirmar(c)
-                : c.XmlFirmado!)
-            .ToList();
+        var dia = DateOnly.FromDateTime(fecha);
+        var lista = cfes.ToList();
 
-        return await _soapClient.EnviarReporteDiarioAsync(fecha, xmlsFirmados, cancellationToken);
+        foreach (var cfe in lista.Where(c => c.FechaEmision == dia))
+            cfe.CalcularTotales();
+
+        var reporte = ReporteDiarioBuilder.Generar(
+            _config.RutEmisor, dia, secEnvio, SiguienteIdEnvio(), DateTimeOffset.UtcNow, lista);
+        var firmado = _firmante.Firmar(reporte);
+
+        var respuesta = await _soapClient.EnviarReporteDiarioAsync(firmado, cancellationToken);
+
+        return new RespuestaReporteDiario
+        {
+            FechaReporte = fecha,
+            CantidadCfe = lista.Count(c => c.FechaEmision == dia),
+            Respuesta = respuesta,
+        };
+    }
+
+    /// <summary>
+    /// Número de envío asignado por el emisor (<c>Idemisor</c>, hasta 10 dígitos): estrictamente
+    /// creciente dentro del proceso y basado en la hora para no repetirse entre reinicios.
+    /// </summary>
+    private long SiguienteIdEnvio()
+    {
+        lock (_idEnvioLock)
+        {
+            _ultimoIdEnvio = Math.Max(_ultimoIdEnvio + 1, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+            return _ultimoIdEnvio;
+        }
     }
 
     // -----------------------------------------------------------------------

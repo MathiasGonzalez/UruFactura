@@ -81,6 +81,8 @@ El **CAE (Constancia de Autorización de Emisión)** es el rango de números de 
 client.Cae.RegistrarCae(new Cae
 {
     NroSerie         = "CAE2025001",
+    NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
+    Serie            = "A",
     TipoCfe          = TipoCfe.ETicket,
     RangoDesde       = 1,
     RangoHasta       = 1000,
@@ -114,11 +116,12 @@ La DGI exige un proceso de **homologación** antes de habilitar la emisión en p
 
 ### Configurar el ambiente de homologación
 
-UruFactura apunta automáticamente a:
+Con `Ambiente = Ambiente.Homologacion` UruFactura apunta automáticamente a los servicios de prueba de la DGI:
 ```
-https://efacturahomologacion.dgi.gub.uy/ePresentacionSoap/service
+Envío (ws_efactura):     https://efactura.dgi.gub.uy:6443/ePrueba/ws_eprueba
+Consultas (ws_consultas): https://efactura.dgi.gub.uy:6460/ePrueba/ws_consultasPrueba
 ```
-cuando `Ambiente = Ambiente.Homologacion`.
+(los WSDL están publicados en esas URL con el sufijo `?wsdl`). Para otros ambientes configurá `UrlEnvio` y `UrlConsultas`.
 
 ### Pasos de homologación
 
@@ -127,7 +130,7 @@ cuando `Ambiente = Ambiente.Homologacion`.
 ```csharp
 // Ejemplo: enviar un e-Ticket de prueba
 var eticket = client.CrearETicket();
-eticket.Numero = 1;
+client.AsignarCae(eticket);   // toma el próximo número del CAE
 eticket.Detalle.Add(new LineaDetalle
 {
     NroLinea       = 1,
@@ -208,6 +211,8 @@ using var client = new UruFacturaClient(config);
 client.Cae.RegistrarCae(new Cae
 {
     NroSerie         = "CAE2025001",
+    NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
+    Serie            = "A",
     TipoCfe          = TipoCfe.ETicket,
     RangoDesde       = 1,
     RangoHasta       = 1000,
@@ -216,7 +221,7 @@ client.Cae.RegistrarCae(new Cae
 
 // 3. Crear comprobante
 var eticket = client.CrearETicket();
-eticket.Numero = 1;
+client.AsignarCae(eticket);   // toma el próximo número del CAE
 eticket.Detalle.Add(new LineaDetalle
 {
     NroLinea       = 1,
@@ -227,10 +232,15 @@ eticket.Detalle.Add(new LineaDetalle
 });
 
 // 4. Generar, firmar y enviar
-var respuesta = await client.EnviarCfeAsync(eticket);
+var respuesta = await client.EnviarCfeAsync(eticket);   // acuse del sobre (AS / BS)
 
 if (!respuesta.Exitoso)
-    throw new Exception($"DGI rechazó el CFE: {respuesta.Mensaje}");
+    throw new Exception($"DGI rechazó el sobre: {respuesta.Mensaje}");
+
+// El resultado del comprobante se consulta con el IdReceptor/Token del acuse
+var estado = await client.ConsultarEstadoEnvioAsync(respuesta, [eticket]);
+if (!estado.Exitoso)
+    throw new Exception($"DGI rechazó el CFE ({estado.Codigo}): {estado.Mensaje}");
 
 // 5. Generar representación impresa
 byte[] pdf = client.GenerarPdfA4(eticket);
@@ -256,7 +266,7 @@ await File.WriteAllBytesAsync("eticket_001.pdf", pdf);
 | Recurso | Enlace |
 |---|---|
 | Portal DGI en línea | [https://www.dgi.gub.uy/](https://www.dgi.gub.uy/) |
-| Consulta de esquemas XML CFE (v25.2) | [https://www.dgi.gub.uy/wdgi/page?2,factura-electronica,index,O,es,0,](https://www.dgi.gub.uy/wdgi/page?2,factura-electronica,index,O,es,0,) |
+| XSD, WSDL y formatos (CFE v25.2, XSD 1.44.2) | [https://www.dgi.gub.uy/wdgi/page?2,factura-electronica,index,O,es,0,](https://www.dgi.gub.uy/wdgi/page?2,factura-electronica,index,O,es,0,) |
 | Instructivo técnico de integración | Disponible en el portal DGI en línea → Gestión CFE |
 | AGESIC (autoridades certificantes) | [https://www.agesic.gub.uy/](https://www.agesic.gub.uy/) |
 | Soporte DGI | [https://www.dgi.gub.uy/wdgi/page?2,contacto,index,O,es,0,](https://www.dgi.gub.uy/wdgi/page?2,contacto,index,O,es,0,) |
@@ -267,14 +277,18 @@ await File.WriteAllBytesAsync("eticket_001.pdf", pdf);
 
 ## Códigos de respuesta DGI comunes
 
-| Código | Significado |
-|--------|-------------|
-| `00` | Comprobante aceptado |
-| `01` | Aceptado con observaciones |
-| `05` | Rechazado |
-| `06` | RUT emisor no habilitado |
-| `09` | Número de CAE inválido o vencido |
-| `11` | Error en la firma digital |
-| `99` | Error interno del servidor DGI |
+| Estado | Mensaje | Significado |
+|--------|---------|-------------|
+| `AS` | `ACKSobre` | Sobre recibido (no implica que los CFE hayan sido aceptados) |
+| `BS` | `ACKSobre` | Sobre rechazado: ver los motivos (`S01`…`S20`) en `respuesta.Mensaje` |
+| `BA` | `ACKSobre` / `ACKRepDiario` | Archivo rechazado |
+| `AR` | `ACKRepDiario` | Reporte diario recibido |
+| `BR` | `ACKRepDiario` | Reporte diario rechazado |
+| `AE` | `ACKCFE` | Comprobante aceptado |
+| `BE` | `ACKCFE` | Comprobante rechazado (CFE): ver motivos en `Comprobantes[i].Motivos` |
+| `CE` | `ACKCFE` | Comprobante observado (CFC) |
+| `FE` | `ACKCFE` | Comprobante reliquidado |
+| `SOAP_FAULT` | — | La DGI respondió con un SOAP Fault (p. ej. firma WS-Security inválida) |
+| `4xx` / `5xx` | — | Error HTTP sin cuerpo SOAP (proxy, servicio caído) |
 
-> En caso de rechazo, revisar el campo `respuesta.Mensaje` que contiene la descripción detallada del error.
+> En caso de rechazo, revisar `respuesta.Mensaje` (incluye los códigos y glosas de los motivos) y, para comprobantes, `respuesta.Comprobantes`.

@@ -25,6 +25,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- XSD y WSDL oficiales de la DGI (xsds_fe_1_44_2), usados para validar el XML generado. -->
+    <Content Include="Schemas\dgi\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\UruFactura\UruFactura.csproj" />
   </ItemGroup>
 

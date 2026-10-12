@@ -1,32 +1,35 @@
-using System.Globalization;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Security.Cryptography.Xml;
-using System.Text;
 using System.Xml;
+using UruFactura.Enums;
 using UruFactura.Exceptions;
 
 namespace UruFactura.Signature;
 
 /// <summary>
-/// Firmante digital XAdES-BES de documentos CFE según los requerimientos de la DGI de Uruguay.
-/// Implementa la firma XML enveloped con referencia a todo el documento y soporte para
-/// propiedades XAdES (SigningTime, SigningCertificate) que constituyen el nivel XAdES-BES.
+/// Firmante digital de documentos de la DGI de Uruguay (CFE y reporte diario).
+/// Produce una firma XML Signature "enveloped" sobre todo el documento, con el mismo
+/// formato que los ejemplos oficiales de la DGI: <c>Reference URI=""</c>, transformadas
+/// enveloped-signature y C14N, y el certificado en <c>KeyInfo</c>.
 /// </summary>
 public class CfeFirmante : ICfeFirmante
 {
     private readonly X509Certificate2 _certificado;
+    private readonly AlgoritmoFirma _algoritmo;
     private bool _disposed;
 
     /// <summary>
     /// Inicializa el firmante con el certificado cargado en memoria.
     /// </summary>
     /// <param name="certificado">Certificado X.509 con clave privada.</param>
-    public CfeFirmante(X509Certificate2 certificado)
+    /// <param name="algoritmo">Algoritmo de firma (por defecto SHA-256).</param>
+    public CfeFirmante(X509Certificate2 certificado, AlgoritmoFirma algoritmo = AlgoritmoFirma.Sha256)
     {
         if (!certificado.HasPrivateKey)
             throw new FirmaDigitalException("El certificado no contiene clave privada.");
         _certificado = certificado;
+        _algoritmo = algoritmo;
     }
 
     /// <summary>
@@ -36,22 +39,24 @@ public class CfeFirmante : ICfeFirmante
     /// <param name="password">Contraseña del certificado.</param>
     /// <remarks>
     /// Se usa <see cref="X509KeyStorageFlags.EphemeralKeySet"/> para no persistir la clave
-    /// privada en el almacén del sistema operativo (compatible con contenedores y Linux).
-    /// En entornos Windows con IIS o cuentas de servicio que requieren persistencia de clave,
-    /// instanciar directamente con el constructor que recibe <see cref="X509Certificate2"/>.
+    /// privada en el almacén del sistema operativo (compatible con contenedores y Linux);
+    /// en macOS ese modo no está soportado y se usa el almacenamiento por defecto.
     /// </remarks>
     public CfeFirmante(string rutaArchivo, string password)
-        : this(X509CertificateLoader.LoadPkcs12FromFile(
-               rutaArchivo, password,
-               X509KeyStorageFlags.EphemeralKeySet))
+        : this(CertificadoLoader.Cargar(rutaArchivo, password))
     {
     }
 
-    /// <summary>
-    /// Firma digitalmente el XML del CFE con esquema XAdES-BES.
-    /// </summary>
-    /// <param name="xmlSinFirmar">XML sin firmar del CFE (UTF-8).</param>
-    /// <returns>XML firmado.</returns>
+    /// <summary>Inicializa el firmante desde un archivo .p12/.pfx con el algoritmo indicado.</summary>
+    public CfeFirmante(string rutaArchivo, string password, AlgoritmoFirma algoritmo)
+        : this(CertificadoLoader.Cargar(rutaArchivo, password), algoritmo)
+    {
+    }
+
+    /// <inheritdoc />
+    public byte[] ObtenerCertificadoDer() => _certificado.RawData;
+
+    /// <inheritdoc />
     /// <exception cref="FirmaDigitalException">Si ocurre algún error durante la firma.</exception>
     public string Firmar(string xmlSinFirmar)
     {
@@ -60,52 +65,37 @@ public class CfeFirmante : ICfeFirmante
             var doc = new XmlDocument { PreserveWhitespace = true };
             doc.LoadXml(xmlSinFirmar);
 
-            var signedXml = new SignedXmlConXades(doc);
-            using var rsa = ObtenerClavePrivada();
-            signedXml.SigningKey = rsa;
+            using var rsa = _certificado.GetRSAPrivateKey()
+                ?? throw new FirmaDigitalException(
+                    "No se pudo obtener la clave RSA privada del certificado.");
 
-            // Asignar Id al Signature para que QualifyingProperties.Target lo referencie
-            signedXml.Signature.Id = "Signature";
+            var signedXml = new SignedXml(doc) { SigningKey = rsa };
+            signedXml.SignedInfo!.CanonicalizationMethod = SignedXml.XmlDsigCanonicalizationUrl;
+            signedXml.SignedInfo.SignatureMethod = _algoritmo == AlgoritmoFirma.Sha1
+                ? SignedXml.XmlDsigRSASHA1Url
+                : SignedXml.XmlDsigRSASHA256Url;
 
-            // Referencia al documento completo (enveloped signature)
             var reference = new Reference
             {
                 Uri = "",
-                DigestMethod = SignedXml.XmlDsigSHA256Url,
+                DigestMethod = _algoritmo == AlgoritmoFirma.Sha1
+                    ? SignedXml.XmlDsigSHA1Url
+                    : SignedXml.XmlDsigSHA256Url,
             };
             reference.AddTransform(new XmlDsigEnvelopedSignatureTransform());
             reference.AddTransform(new XmlDsigC14NTransform());
             signedXml.AddReference(reference);
 
-            // Información del firmante
             var keyInfo = new KeyInfo();
             keyInfo.AddClause(new KeyInfoX509Data(_certificado));
             signedXml.KeyInfo = keyInfo;
 
-            // Propiedades XAdES: SigningTime y SigningCertificate (nivel BES)
-            var xadesObject = CrearObjetoXades(signedXml);
-            signedXml.AddObject(xadesObject);
-
-            // XAdES-BES requiere una Reference a SignedProperties en el SignedInfo.
-            // Se agrega C14N como transform explícito para garantizar interoperabilidad
-            // con validadores externos (el digest se calcula sobre el XML canonicalizado).
-            var spReference = new Reference
-            {
-                Uri = "#SignedProperties",
-                Type = "http://uri.etsi.org/01903#SignedProperties",
-                DigestMethod = SignedXml.XmlDsigSHA256Url,
-            };
-            spReference.AddTransform(new XmlDsigC14NTransform());
-            signedXml.AddReference(spReference);
-
-            signedXml.SignedInfo!.SignatureMethod = SignedXml.XmlDsigRSASHA256Url;
             signedXml.ComputeSignature();
 
-            // Insertar el elemento Signature en el documento
-            var signatureElement = signedXml.GetXml();
-            doc.DocumentElement!.AppendChild(doc.ImportNode(signatureElement, true));
+            doc.DocumentElement!.AppendChild(doc.ImportNode(signedXml.GetXml(), true));
 
-            return PrettyPrint(doc);
+            // Sin re-indentar: cualquier cambio de espacios posterior a la firma la invalidaría.
+            return doc.OuterXml;
         }
         catch (FirmaDigitalException)
         {
@@ -113,12 +103,15 @@ public class CfeFirmante : ICfeFirmante
         }
         catch (Exception ex)
         {
-            throw new FirmaDigitalException("Error al firmar el XML del CFE.", ex);
+            throw new FirmaDigitalException("Error al firmar el XML.", ex);
         }
     }
 
     /// <summary>
-    /// Verifica la firma digital de un XML CFE firmado.
+    /// Verifica la firma digital de un XML firmado con <see cref="Firmar"/>.
+    /// Comprueba que haya exactamente una firma, que sea hija directa de la raíz y que
+    /// referencie el documento completo (<c>URI=""</c>), además de la validez criptográfica.
+    /// No valida la cadena de confianza del certificado.
     /// </summary>
     /// <param name="xmlFirmado">XML firmado a verificar.</param>
     /// <returns>True si la firma es válida.</returns>
@@ -129,113 +122,27 @@ public class CfeFirmante : ICfeFirmante
             var doc = new XmlDocument { PreserveWhitespace = true };
             doc.LoadXml(xmlFirmado);
 
-            var signedXml = new SignedXml(doc);
             var signatureNodes = doc.GetElementsByTagName("Signature", SignedXml.XmlDsigNamespaceUrl);
-
-            if (signatureNodes.Count == 0)
+            if (signatureNodes.Count != 1)
                 return false;
 
-            signedXml.LoadXml((XmlElement)signatureNodes[0]!);
+            var signatureElement = (XmlElement)signatureNodes[0]!;
+            if (signatureElement.ParentNode != doc.DocumentElement)
+                return false;
+
+            var signedXml = new SignedXml(doc);
+            signedXml.LoadXml(signatureElement);
+
+            if (signedXml.SignedInfo!.References.Count != 1
+                || ((Reference)signedXml.SignedInfo.References[0]!).Uri != "")
+                return false;
+
             return signedXml.CheckSignature();
         }
         catch (Exception)
         {
             return false;
         }
-    }
-
-    private AsymmetricAlgorithm ObtenerClavePrivada()
-    {
-        var rsa = _certificado.GetRSAPrivateKey()
-            ?? throw new FirmaDigitalException(
-                "No se pudo obtener la clave RSA privada del certificado.");
-        return rsa;
-    }
-
-    private DataObject CrearObjetoXades(SignedXml signedXml)
-    {
-        const string xadesNs = "http://uri.etsi.org/01903/v1.3.2#";
-        var objectId = "XadesObject";
-
-        var doc = new XmlDocument();
-
-        // QualifyingProperties
-        var qualProps = doc.CreateElement("xades", "QualifyingProperties", xadesNs);
-        qualProps.SetAttribute("Target", $"#{signedXml.Signature.Id ?? "Signature"}");
-
-        var signedProps = doc.CreateElement("xades", "SignedProperties", xadesNs);
-        signedProps.SetAttribute("Id", "SignedProperties");
-
-        var signedSigProps = doc.CreateElement("xades", "SignedSignatureProperties", xadesNs);
-
-        // SigningTime
-        var signingTime = doc.CreateElement("xades", "SigningTime", xadesNs);
-        signingTime.InnerText = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
-        signedSigProps.AppendChild(signingTime);
-
-        // SigningCertificate
-        var signingCert = doc.CreateElement("xades", "SigningCertificate", xadesNs);
-        var cert = doc.CreateElement("xades", "Cert", xadesNs);
-        var certDigest = doc.CreateElement("xades", "CertDigest", xadesNs);
-
-        var digestMethod = doc.CreateElement("ds", "DigestMethod", SignedXml.XmlDsigNamespaceUrl);
-        digestMethod.SetAttribute("Algorithm", SignedXml.XmlDsigSHA256Url);
-        certDigest.AppendChild(digestMethod);
-
-        var digestValue = doc.CreateElement("ds", "DigestValue", SignedXml.XmlDsigNamespaceUrl);
-        digestValue.InnerText = Convert.ToBase64String(SHA256.HashData(_certificado.RawData));
-        certDigest.AppendChild(digestValue);
-
-        cert.AppendChild(certDigest);
-
-        var issuerSerial = doc.CreateElement("xades", "IssuerSerial", xadesNs);
-        var x509IssuerName = doc.CreateElement("ds", "X509IssuerName", SignedXml.XmlDsigNamespaceUrl);
-        x509IssuerName.InnerText = _certificado.Issuer;
-        var x509SerialNumber = doc.CreateElement("ds", "X509SerialNumber", SignedXml.XmlDsigNamespaceUrl);
-        x509SerialNumber.InnerText = _certificado.SerialNumber;
-        issuerSerial.AppendChild(x509IssuerName);
-        issuerSerial.AppendChild(x509SerialNumber);
-
-        cert.AppendChild(issuerSerial);
-        signingCert.AppendChild(cert);
-        signedSigProps.AppendChild(signingCert);
-
-        signedProps.AppendChild(signedSigProps);
-        qualProps.AppendChild(signedProps);
-        doc.AppendChild(qualProps);
-
-        var dataObject = new DataObject
-        {
-            Id = objectId,
-            // doc.ChildNodes = [qualProps], lo que produce la estructura completa:
-            // <Object Id="XadesObject">
-            //   <xades:QualifyingProperties Target="#Signature">
-            //     <xades:SignedProperties Id="SignedProperties">...</xades:SignedProperties>
-            //   </xades:QualifyingProperties>
-            // </Object>
-            Data = doc.ChildNodes
-        };
-
-        return dataObject;
-    }
-
-    private static string PrettyPrint(XmlDocument doc)
-    {
-        // StringBuilder-backed XmlWriter ignora la propiedad Encoding y siempre emite
-        // encoding="utf-16". Escribir a MemoryStream garantiza encoding="utf-8" en la declaración,
-        // coherente con la codificación de transporte SOAP (UTF-8).
-        using var ms = new MemoryStream();
-        var settings = new XmlWriterSettings
-        {
-            Indent = true,
-            Encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
-            OmitXmlDeclaration = false,
-        };
-        using var writer = XmlWriter.Create(ms, settings);
-        doc.Save(writer);
-        writer.Flush();
-        // GetBuffer() evita copiar el buffer interno (ms.ToArray() asignaría un arreglo adicional).
-        return Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
     }
 
     /// <inheritdoc />
@@ -245,50 +152,5 @@ public class CfeFirmante : ICfeFirmante
         _certificado.Dispose();
         _disposed = true;
         GC.SuppressFinalize(this);
-    }
-
-    /// <summary>
-    /// Subclase de <see cref="SignedXml"/> que resuelve referencias de fragmento (#id)
-    /// dentro de los <c>DataObject</c>s de la firma.
-    /// Necesario para que la Reference a <c>#SignedProperties</c> requerida por XAdES-BES
-    /// sea encontrada cuando <c>ComputeSignature()</c> calcula el digest.
-    /// </summary>
-    private sealed class SignedXmlConXades : SignedXml
-    {
-        public SignedXmlConXades(XmlDocument document) : base(document) { }
-
-        /// <inheritdoc />
-        public override XmlElement? GetIdElement(XmlDocument? document, string idValue)
-        {
-            // Búsqueda estándar en el documento principal
-            var elem = base.GetIdElement(document, idValue);
-            if (elem != null)
-                return elem;
-
-            // Búsqueda recursiva dentro de los DataObjects (necesario para XAdES SignedProperties)
-            foreach (DataObject obj in Signature.ObjectList)
-            {
-                var found = BuscarElementoPorId(obj.GetXml(), idValue);
-                if (found != null)
-                    return found;
-            }
-
-            return null;
-        }
-
-        private static XmlElement? BuscarElementoPorId(XmlNode nodo, string idValue)
-        {
-            if (nodo is XmlElement elemento && elemento.GetAttribute("Id") == idValue)
-                return elemento;
-
-            foreach (XmlNode hijo in nodo.ChildNodes)
-            {
-                var encontrado = BuscarElementoPorId(hijo, idValue);
-                if (encontrado != null)
-                    return encontrado;
-            }
-
-            return null;
-        }
     }
 }

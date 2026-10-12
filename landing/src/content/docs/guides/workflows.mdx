@@ -26,11 +26,13 @@ flowchart TD
     E -- Sí --> G[Crear CFE\nCrearETicket / CrearEFactura / …]
     G --> H[Completar datos\nDetalle · Receptor · Referencias]
     H --> I[GenerarXml\nSerialización al esquema DGI]
-    I --> J[FirmarCfe\nXAdES-BES con certificado .p12]
-    J --> K[EnviarCfeAsync\nSOAP hacia endpoint DGI]
-    K --> L{Respuesta DGI}
-    L -- Código 00/01\naceptado --> M[✅ CFE aceptado]
-    L -- Código 05+\nrechazado --> N[❌ Revisar error\nrespuesta.Mensaje]
+    I --> J[FirmarCfe\nXML Signature con certificado .p12]
+    J --> K[EnviarCfeAsync\nsobre EnvioCFE + SOAP/WS-Security]
+    K --> L{Acuse del sobre}
+    L -- AS\nrecibido --> L2[ConsultarEstadoEnvioAsync\ncon IdReceptor + Token]
+    L -- BS / BA\nrechazado --> N[❌ Revisar error\nrespuesta.Mensaje]
+    L2 -- AE\naceptado --> M[✅ CFE aceptado]
+    L2 -- BE / CE --> N
     M --> O[GenerarPdfA4 / GenerarPdfTermico]
     O --> P[Archivar XML firmado\nobligatorio 5 años]
     P --> Q([Fin])
@@ -52,14 +54,14 @@ sequenceDiagram
     participant DGI as DGI (SOAP)
 
     App->>Client: EnviarCfeAsync(cfe)
-    Client->>Xml: Generar(cfe)
+    Client->>Xml: Generar(cfe)  (cfe.CaeData ya asignado con AsignarCae)
     Xml-->>Client: xmlSinFirmar
     Client->>Firma: Firmar(xmlSinFirmar)
-    Note over Firma: XAdES-BES con certificado .p12/.pfx
+    Note over Firma: XML Signature enveloped con certificado .p12/.pfx
     Firma-->>Client: xmlFirmado
-    Client->>Soap: EnviarCfeAsync(xmlFirmado)
-    Soap->>DGI: POST SOAP envelope
-    DGI-->>Soap: RespuestaDgi (código, mensaje)
+    Client->>Soap: EnviarSobreAsync(EnvioCFE con xmlFirmado)
+    Soap->>DGI: POST SOAP (WS-Security) EFACRECEPCIONSOBRE
+    DGI-->>Soap: ACKSobre (AS/BS, IdReceptor, Token)
     Soap-->>Client: RespuestaDgi
     Client-->>App: RespuestaDgi
 ```
@@ -68,7 +70,7 @@ sequenceDiagram
 
 ## Flujo de firma digital
 
-Detalle del proceso de firma XAdES-BES que aplica el SDK a cada CFE.
+Detalle del proceso de firma (XML Signature enveloped) que aplica el SDK a cada CFE.
 
 ```mermaid
 flowchart LR
@@ -78,7 +80,7 @@ flowchart LR
     D --> E[Firmar SignedInfo\ncon clave privada del .p12]
     E --> F[Adjuntar certificado\npúblico KeyInfo X509]
     F --> G[XML con nodo\nds:Signature embebido]
-    G --> H[Sobre SOAP\nSOAPEnvelope]
+    G --> H[Sobre EnvioCFE\n+ SOAP firmado con WS-Security]
     H --> I[Envío HTTPS\na endpoint DGI]
 ```
 
@@ -91,7 +93,7 @@ stateDiagram-v2
     [*] --> Registrado : client.Cae.RegistrarCae()
 
     Registrado --> Activo : Primer número usado
-    Activo --> Activo : Emitir CFE\n(incrementa UltimoNroUsado)
+    Activo --> Activo : AsignarCae\n(incrementa UltimoNroUsado)
 
     Activo --> AdvertenciaRango : > 80% del rango utilizado
     AdvertenciaRango --> Activo : Se registra CAE adicional

@@ -199,4 +199,19 @@ public class CaeRepositoryTests
         var (_, numero) = manager2.ObtenerProximoNumero(TipoCfe.ETicket);
         Assert.Equal(4, numero);
     }
+
+    [Fact]
+    public async Task GuardarYCargar_ConservaNumeroAutorizacionYSerie()
+    {
+        var repo = new InMemoryCaeRepository();
+        var cae = CrearCae();
+        cae.NumeroAutorizacion = "90110001945";
+        cae.Serie = "AB";
+
+        await repo.GuardarCaeAsync(cae);
+        var cargado = (await repo.CargarTodosAsync()).Single();
+
+        Assert.Equal("90110001945", cargado.NumeroAutorizacion);
+        Assert.Equal("AB", cargado.Serie);
+    }
 }

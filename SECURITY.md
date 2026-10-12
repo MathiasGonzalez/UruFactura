@@ -55,19 +55,19 @@ PasswordCertificado = "mi_password_en_texto_plano"
 
 ### 📄 XML y firma digital
 
-- UruFactura firma los CFE con **XAdES-BES usando RSA-SHA256**, en línea con los requisitos de la DGI.
+- UruFactura firma los CFE y el reporte diario con **XML Signature enveloped (RSA-SHA256 por defecto; RSA-SHA1 opcional con `AlgoritmoFirma`)**, con el formato de los ejemplos oficiales de la DGI, y cada mensaje SOAP con **WS-Security** (certificado X.509 en `BinarySecurityToken` y firma del `Body`).
 - Los XML firmados contienen el certificado público del emisor embebido en `<KeyInfo>`; no incluyen la clave privada.
 - Los archivos XML firmados deben conservarse según el Código Tributario (mínimo 5 años). Asegurate de que el almacenamiento tenga controles de acceso adecuados.
 
 ### 🌐 Comunicación con la DGI
 
-- Todas las comunicaciones usan **HTTPS**. Las URLs de producción y homologación están definidas en `UruFacturaConfig.DgiSoapBaseUrl` y no son modificables en tiempo de ejecución (solo dependen del `Ambiente` configurado).
+- Todas las comunicaciones usan **HTTPS**. En Homologación se usan por defecto los servicios de prueba de la DGI; en Producción `UrlEnvio` y `UrlConsultas` deben configurarse explícitamente con las URL entregadas por la DGI (`UruFacturaConfig.DgiEnvioUrl` / `DgiConsultasUrl`).
 - Si usás un proxy corporativo, configurá el `HttpClient` correspondiente en tu infraestructura; UruFactura no expone configuración de proxy directamente.
 
 ### 🗝️ CAE (Constancia de Autorización de Emisión)
 
 - El CAE es un rango de números de comprobante autorizado por la DGI. No lo compartas públicamente ni lo expongas en logs.
-- `CaeManager` es thread-safe: el método `ObtenerProximoNumero` usa un lock para garantizar secuencialidad en entornos concurrentes.
+- `CaeManager` es thread-safe: `ObtenerProximoNumero` elige el CAE y consume el número dentro de un mismo lock, garantizando secuencialidad en entornos concurrentes. Persistí el último número usado (`AsignarCaeAsync` con un `ICaeRepository`) para no repetir números tras un reinicio.
 
 ### 🧪 Ambiente de homologación vs. producción
 
@@ -80,7 +80,7 @@ PasswordCertificado = "mi_password_en_texto_plano"
 
 | Paquete | Uso en UruFactura |
 |---------|--------------|
-| `System.Security.Cryptography.Xml` | Firma XML (XAdES-BES) |
+| `System.Security.Cryptography.Xml` | Firma XML (XML Signature / WS-Security) |
 | `System.Security.Cryptography.Pkcs` | Manejo de certificados PKCS#12 |
 | `QuestPDF` | Generación de PDFs |
 | `ZXing.Net` | Generación de código QR en el PDF |

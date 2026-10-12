@@ -49,18 +49,43 @@ public class UruFacturaConfigTests
     }
 
     [Fact]
-    public void DgiSoapBaseUrl_Homologacion_UrlCorrecta()
+    public void Urls_Homologacion_ApuntanAlServicioDePruebaDeLaDgi()
     {
         var config = ConfigValida();
-        Assert.Contains("homologacion", config.DgiSoapBaseUrl, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("https://efactura.dgi.gub.uy:6443/ePrueba/ws_eprueba", config.DgiEnvioUrl);
+        Assert.Equal("https://efactura.dgi.gub.uy:6460/ePrueba/ws_consultasPrueba", config.DgiConsultasUrl);
     }
 
     [Fact]
-    public void DgiSoapBaseUrl_Produccion_UrlCorrecta()
+    public void Urls_Produccion_SinConfigurar_LanzaExcepcion()
     {
         var config = ConfigValida() with { Ambiente = Ambiente.Produccion };
-        Assert.DoesNotContain("homologacion", config.DgiSoapBaseUrl, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("efactura.dgi.gub.uy", config.DgiSoapBaseUrl);
+        Assert.Throws<UruFacturaException>(() => config.DgiEnvioUrl);
+        Assert.Throws<UruFacturaException>(() => config.DgiConsultasUrl);
+        Assert.Throws<UruFacturaException>(() => config.Validate());
+    }
+
+    [Fact]
+    public void Urls_Configuradas_TienenPrioridad()
+    {
+        var config = ConfigValida() with
+        {
+            Ambiente = Ambiente.Produccion,
+            UrlEnvio = "https://dgi.example/envio",
+            UrlConsultas = "https://dgi.example/consultas",
+        };
+        Assert.Equal("https://dgi.example/envio", config.DgiEnvioUrl);
+        Assert.Equal("https://dgi.example/consultas", config.DgiConsultasUrl);
+        config.Validate();
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(10000)]
+    public void Validate_CodigoSucursalInvalido_LanzaExcepcion(int sucursal)
+    {
+        var config = ConfigValida() with { CodigoSucursal = sucursal };
+        Assert.Throws<UruFacturaException>(() => config.Validate());
     }
 
     [Fact]

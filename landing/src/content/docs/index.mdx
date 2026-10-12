@@ -36,7 +36,7 @@ import { Card, CardGrid, LinkCard, Tabs, TabItem, Badge, Aside } from '@astrojs/
     Olvidate de lidiar con SOAP, XML y estructuras complejas. Creá un e-Ticket con pocas líneas de C#.
   </Card>
   <Card title="Firma Digital incluida" icon="approve-check-circle">
-    Módulo integrado para firma XAdES-BES con certificados `.p12` / `.pfx` — sin dependencias externas.
+    Firma XML y WS-Security integradas con certificados `.p12` / `.pfx`, validadas contra los XSD y WSDL oficiales de la DGI.
   </Card>
   <Card title="Todos los tipos de CFE" icon="document">
     e-Ticket, e-Factura, e-Remito, Exportación, Notas de Crédito/Débito, e-Resguardo y más.
@@ -107,6 +107,8 @@ using var client = new UruFacturaClient(config);
 client.Cae.RegistrarCae(new Cae
 {
     NroSerie         = "CAE2025001",
+    NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
+    Serie            = "A",
     TipoCfe          = TipoCfe.ETicket,
     RangoDesde       = 1,
     RangoHasta       = 1000,
@@ -115,7 +117,7 @@ client.Cae.RegistrarCae(new Cae
 
 // 3. Crear y enviar e-Ticket
 var eticket = client.CrearETicket();
-eticket.Numero = 1;
+client.AsignarCae(eticket);   // toma el próximo número del CAE
 eticket.Detalle.Add(new LineaDetalle
 {
     NroLinea       = 1,
@@ -154,10 +156,9 @@ if (respuesta.Exitoso)
 | 121 | e-Factura de Exportación | ✅ Soportado |
 | 122 | Nota de Crédito Exportación | ✅ Soportado |
 | 123 | Nota de Débito Exportación | ✅ Soportado |
-| 131 | e-Remito Despachante | ✅ Soportado |
-| 151 | e-Resguardo | ✅ Soportado |
+| 124 | e-Remito de Exportación | ✅ Soportado |
 | 181 | e-Remito | ✅ Soportado |
-| 182 | Nota de Crédito e-Remito | ✅ Soportado |
+| 182 | e-Resguardo | ⏳ Pendiente (requiere retenciones) |
 
 ---
 

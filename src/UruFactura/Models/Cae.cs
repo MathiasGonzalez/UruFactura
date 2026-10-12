@@ -13,6 +13,17 @@ public class Cae
     /// <summary>Número de serie del CAE.</summary>
     public string NroSerie { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Número de autorización del CAE (<c>CAE_ID</c>, hasta 11 dígitos). Se incluye en el
+    /// bloque <c>CAEData</c> de cada CFE.
+    /// </summary>
+    public string NumeroAutorizacion { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Serie de los CFE autorizados por este CAE (1 o 2 caracteres: "A", "AB" o "1A").
+    /// </summary>
+    public string Serie { get; set; } = string.Empty;
+
     /// <summary>Tipo de CFE al que aplica este CAE.</summary>
     public TipoCfe TipoCfe { get; set; }
 

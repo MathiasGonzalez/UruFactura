@@ -28,7 +28,7 @@ Al ejecutar este runbook, el agente debe responder cada punto y actuar si es nec
 
 ### 2.1 Versión del formato CFE
 
-- [ ] ¿La DGI publicó una nueva versión del esquema CFE? (actualmente implementada: **v25.2**)
+- [ ] ¿La DGI publicó una nueva versión del esquema CFE? (actualmente implementada: documento de formato **v25.2**, paquete XSD **1.44.2**; el atributo `version` del XML es `1.0`)
   - Si sí: actualizar `version="xx.xx"` en `src/UruFactura/Xml/CfeXmlBuilder.cs` (línea con `WriteAttributeString("version", ...)`)
   - Actualizar el comentario del `summary` de la clase `CfeXmlBuilder`
 
@@ -61,12 +61,12 @@ Para cada cambio de campo en el nuevo formato, evaluar:
 - [ ] ¿La DGI habilitó nuevos tipos de comprobante?
   - Si sí: agregar en `src/UruFactura/Enums/TipoCfe.cs`
   - Agregar método de creación en `src/UruFactura/UruFacturaClient.cs`
-  - Actualizar arrays `TiposCorreccion`, `TiposFactura`, `TiposRemito` en `Cfe.cs` según corresponda
+  - Actualizar arrays `TiposCorreccion`, `TiposFactura`, `TiposRemito`, `TiposExportacion` en `Cfe.cs` y la familia (`eTck`, `eFact`, ...) en `CfeXmlBuilder`
 
 ### 2.4 Cambios en endpoints SOAP
 
 - [ ] ¿Cambiaron las URLs de los servicios SOAP de la DGI (homologación o producción)?
-  - Si sí: actualizar `DgiSoapBaseUrl` en `src/UruFactura/Configuration/UruFacturaConfig.cs`
+  - Si sí: actualizar `DgiEnvioUrl` / `DgiConsultasUrl` en `src/UruFactura/Configuration/UruFacturaConfig.cs` y los WSDL de `tests/UruFactura.Tests/Schemas/dgi`
 
 ### 2.5 Cambios en tasas de IVA
 
@@ -97,10 +97,18 @@ Cuando se detecta un cambio que requiere actualización:
 
 ---
 
+### Actualizar los XSD/WSDL de referencia
+
+Los tests validan el XML generado contra los XSD oficiales (`tests/UruFactura.Tests/Schemas/dgi`). Al publicarse una versión nueva:
+
+1. Descargá el paquete `xsds_fe_<versión>` y los WSDL (`…/ePrueba/ws_eprueba?wsdl`, `…/ws_consultasPrueba?wsdl`) desde [Documentos de interés](https://www.efactura.dgi.gub.uy/principal/ampliacion_de_contenido/documentos-de-interes?es).
+2. Reemplazá los archivos de esa carpeta y corré `dotnet test`: las diferencias aparecen como errores de validación.
+
 ## 4. Registro de actualizaciones de normativa
 
 | Fecha | Versión CFE | Cambios implementados |
 |-------|-------------|----------------------|
+| 2026-10-12 | XSD 1.44.2 | Alineación con los XSD y WSDL oficiales de la DGI: `version="1.0"`, estructura `eTck`/`eFact`/..., `CAEData`, `TmstFirma`, sobre `EnvioCFE`, SOAP `Datain/xmlData` con WS-Security, reporte diario agregado; corrección de códigos de tipo (182 = e-Resguardo, 124 = e-Remito de exportación) |
 | 2026-06-08 | v25.2 | Versión XML 25.01→25.2 tras revisión normativa DGI de junio 2026 |
 | 2026-05-21 | v25.01 | Versión XML 23.01→25.01; campos F-C8 (MntCFERef), F-C9 (MonedaCFERef), F-C10 (TpoCambioCFERef) en RefCfe; validación de Ciudad y Departamento del emisor; validación de MontoCfeRef/MonedaCfeRef en notas correctivas |
 | — | v23.01 | Versión base inicial |

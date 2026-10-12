@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<wsdl:definitions xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/" xmlns:soap11="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:soap12="http://schemas.xmlsoap.org/wsdl/soap12/" xmlns:http="http://schemas.xmlsoap.org/wsdl/http/" xmlns:mime="http://schemas.xmlsoap.org/wsdl/mime/" xmlns:wsp="http://www.w3.org/ns/ws-policy" xmlns:wsp200409="http://schemas.xmlsoap.org/ws/2004/09/policy" xmlns:wsp200607="http://www.w3.org/2006/07/ws-policy" xmlns:ns0="http://dgi.gub.uy" targetNamespace="http://dgi.gub.uy">
+<wsdl:types xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+<xsd:schema>
+<xsd:import schemaLocation="ws_consultasPrueba.xsd1.xsd" namespace="http://dgi.gub.uy"/></xsd:schema></wsdl:types>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARCFERECIBIDOSSoapIn">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARCFERECIBIDOS" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARCFERECIBIDOSSoapOut">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARCFERECIBIDOSResponse" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARENVIOSCFESoapIn">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARENVIOSCFE" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARENVIOSCFESoapOut">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARENVIOSCFEResponse" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARENVIOSREPORTESoapIn">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARENVIOSREPORTE" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARENVIOSREPORTESoapOut">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARENVIOSREPORTEResponse" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARENVIOSSOBRESoapIn">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARENVIOSSOBRE" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARENVIOSSOBRESoapOut">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARENVIOSSOBREResponse" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARESTADOCFESoapIn">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARESTADOCFE" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARESTADOCFESoapOut">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARESTADOCFEResponse" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARRESPUESTAREPORTESoapIn">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARRESPUESTAREPORTE" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARRESPUESTAREPORTESoapOut">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARRESPUESTAREPORTEResponse" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESSoapIn">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARRUCEMISORES" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESSoapOut">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESResponse" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROVSoapIn">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROV" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROVSoapOut">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROVResponse" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOSoapIn">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDO" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOSoapOut">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOResponse" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONSoapIn">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICION" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:message name="WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONSoapOut">
+<wsdl:part name="parameters" element="xsns:WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONResponse" xmlns:xsns="http://dgi.gub.uy"/></wsdl:message>
+<wsdl:portType name="WS_eFactura_ConsultasSoapPort">
+<wsdl:operation name="EFACCONSULTARCFERECIBIDOS">
+<wsdl:input name="EFACCONSULTARCFERECIBIDOSRequest" message="ns0:WS_eFactura_Consultas.EFACCONSULTARCFERECIBIDOSSoapIn"/>
+<wsdl:output name="EFACCONSULTARCFERECIBIDOSResponse" message="ns0:WS_eFactura_Consultas.EFACCONSULTARCFERECIBIDOSSoapOut"/></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARENVIOSCFE">
+<wsdl:input name="EFACCONSULTARENVIOSCFERequest" message="ns0:WS_eFactura_Consultas.EFACCONSULTARENVIOSCFESoapIn"/>
+<wsdl:output name="EFACCONSULTARENVIOSCFEResponse" message="ns0:WS_eFactura_Consultas.EFACCONSULTARENVIOSCFESoapOut"/></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARENVIOSREPORTE">
+<wsdl:input name="EFACCONSULTARENVIOSREPORTERequest" message="ns0:WS_eFactura_Consultas.EFACCONSULTARENVIOSREPORTESoapIn"/>
+<wsdl:output name="EFACCONSULTARENVIOSREPORTEResponse" message="ns0:WS_eFactura_Consultas.EFACCONSULTARENVIOSREPORTESoapOut"/></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARENVIOSSOBRE">
+<wsdl:input name="EFACCONSULTARENVIOSSOBRERequest" message="ns0:WS_eFactura_Consultas.EFACCONSULTARENVIOSSOBRESoapIn"/>
+<wsdl:output name="EFACCONSULTARENVIOSSOBREResponse" message="ns0:WS_eFactura_Consultas.EFACCONSULTARENVIOSSOBRESoapOut"/></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARESTADOCFE">
+<wsdl:input name="EFACCONSULTARESTADOCFERequest" message="ns0:WS_eFactura_Consultas.EFACCONSULTARESTADOCFESoapIn"/>
+<wsdl:output name="EFACCONSULTARESTADOCFEResponse" message="ns0:WS_eFactura_Consultas.EFACCONSULTARESTADOCFESoapOut"/></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARRESPUESTAREPORTE">
+<wsdl:input name="EFACCONSULTARRESPUESTAREPORTERequest" message="ns0:WS_eFactura_Consultas.EFACCONSULTARRESPUESTAREPORTESoapIn"/>
+<wsdl:output name="EFACCONSULTARRESPUESTAREPORTEResponse" message="ns0:WS_eFactura_Consultas.EFACCONSULTARRESPUESTAREPORTESoapOut"/></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARRUCEMISORES">
+<wsdl:input name="EFACCONSULTARRUCEMISORESRequest" message="ns0:WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESSoapIn"/>
+<wsdl:output name="EFACCONSULTARRUCEMISORESResponse" message="ns0:WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESSoapOut"/></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARRUCEMISORESTRANSICION">
+<wsdl:input name="EFACCONSULTARRUCEMISORESTRANSICIONRequest" message="ns0:WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONSoapIn"/>
+<wsdl:output name="EFACCONSULTARRUCEMISORESTRANSICIONResponse" message="ns0:WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONSoapOut"/></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDO">
+<wsdl:input name="EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDORequest" message="ns0:WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOSoapIn"/>
+<wsdl:output name="EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOResponse" message="ns0:WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOSoapOut"/></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROV">
+<wsdl:input name="EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROVRequest" message="ns0:WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROVSoapIn"/>
+<wsdl:output name="EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROVResponse" message="ns0:WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROVSoapOut"/></wsdl:operation></wsdl:portType>
+<wsdl:binding name="WS_eFactura_ConsultasSoapBinding" type="ns0:WS_eFactura_ConsultasSoapPort">
+<soap11:binding transport="http://schemas.xmlsoap.org/soap/http" style="document"/>
+<wsdl:operation name="EFACCONSULTARCFERECIBIDOS">
+<soap11:operation soapAction="http://dgi.gub.uyaction/AWS_EFACTURA_CONSULTAS.EFACCONSULTARCFERECIBIDOS" style="document"/>
+<wsdl:input name="EFACCONSULTARCFERECIBIDOSRequest">
+<soap11:body use="literal"/></wsdl:input>
+<wsdl:output name="EFACCONSULTARCFERECIBIDOSResponse">
+<soap11:body use="literal"/></wsdl:output></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARENVIOSCFE">
+<soap11:operation soapAction="http://dgi.gub.uyaction/AWS_EFACTURA_CONSULTAS.EFACCONSULTARENVIOSCFE" style="document"/>
+<wsdl:input name="EFACCONSULTARENVIOSCFERequest">
+<soap11:body use="literal"/></wsdl:input>
+<wsdl:output name="EFACCONSULTARENVIOSCFEResponse">
+<soap11:body use="literal"/></wsdl:output></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARENVIOSREPORTE">
+<soap11:operation soapAction="http://dgi.gub.uyaction/AWS_EFACTURA_CONSULTAS.EFACCONSULTARENVIOSREPORTE" style="document"/>
+<wsdl:input name="EFACCONSULTARENVIOSREPORTERequest">
+<soap11:body use="literal"/></wsdl:input>
+<wsdl:output name="EFACCONSULTARENVIOSREPORTEResponse">
+<soap11:body use="literal"/></wsdl:output></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARENVIOSSOBRE">
+<soap11:operation soapAction="http://dgi.gub.uyaction/AWS_EFACTURA_CONSULTAS.EFACCONSULTARENVIOSSOBRE" style="document"/>
+<wsdl:input name="EFACCONSULTARENVIOSSOBRERequest">
+<soap11:body use="literal"/></wsdl:input>
+<wsdl:output name="EFACCONSULTARENVIOSSOBREResponse">
+<soap11:body use="literal"/></wsdl:output></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARESTADOCFE">
+<soap11:operation soapAction="http://dgi.gub.uyaction/AWS_EFACTURA_CONSULTAS.EFACCONSULTARESTADOCFE" style="document"/>
+<wsdl:input name="EFACCONSULTARESTADOCFERequest">
+<soap11:body use="literal"/></wsdl:input>
+<wsdl:output name="EFACCONSULTARESTADOCFEResponse">
+<soap11:body use="literal"/></wsdl:output></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARRESPUESTAREPORTE">
+<soap11:operation soapAction="http://dgi.gub.uyaction/AWS_EFACTURA_CONSULTAS.EFACCONSULTARRESPUESTAREPORTE" style="document"/>
+<wsdl:input name="EFACCONSULTARRESPUESTAREPORTERequest">
+<soap11:body use="literal"/></wsdl:input>
+<wsdl:output name="EFACCONSULTARRESPUESTAREPORTEResponse">
+<soap11:body use="literal"/></wsdl:output></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARRUCEMISORES">
+<soap11:operation soapAction="http://dgi.gub.uyaction/AWS_EFACTURA_CONSULTAS.EFACCONSULTARRUCEMISORES" style="document"/>
+<wsdl:input name="EFACCONSULTARRUCEMISORESRequest">
+<soap11:body use="literal"/></wsdl:input>
+<wsdl:output name="EFACCONSULTARRUCEMISORESResponse">
+<soap11:body use="literal"/></wsdl:output></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARRUCEMISORESTRANSICION">
+<soap11:operation soapAction="http://dgi.gub.uyaction/AWS_EFACTURA_CONSULTAS.EFACCONSULTARRUCEMISORESTRANSICION" style="document"/>
+<wsdl:input name="EFACCONSULTARRUCEMISORESTRANSICIONRequest">
+<soap11:body use="literal"/></wsdl:input>
+<wsdl:output name="EFACCONSULTARRUCEMISORESTRANSICIONResponse">
+<soap11:body use="literal"/></wsdl:output></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDO">
+<soap11:operation soapAction="http://dgi.gub.uyaction/AWS_EFACTURA_CONSULTAS.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDO" style="document"/>
+<wsdl:input name="EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDORequest">
+<soap11:body use="literal"/></wsdl:input>
+<wsdl:output name="EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOResponse">
+<soap11:body use="literal"/></wsdl:output></wsdl:operation>
+<wsdl:operation name="EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROV">
+<soap11:operation soapAction="http://dgi.gub.uyaction/AWS_EFACTURA_CONSULTAS.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROV" style="document"/>
+<wsdl:input name="EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROVRequest">
+<soap11:body use="literal"/></wsdl:input>
+<wsdl:output name="EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROVResponse">
+<soap11:body use="literal"/></wsdl:output></wsdl:operation></wsdl:binding>
+<wsdl:service name="WS_eFactura_Consultas">
+<wsp:PolicyReference URI="#policy0" xmlns:wsp="http://schemas.xmlsoap.org/ws/2004/09/policy"/>
+<wsdl:port name="WS_eFactura_ConsultasSoapPort" binding="ns0:WS_eFactura_ConsultasSoapBinding">
+<soap11:address location="https://efactura.dgi.gub.uy:6460/ePrueba/ws_consultasPrueba"/></wsdl:port></wsdl:service>
+<wsp:Policy wsu:Id="policy0" xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd" xmlns:wsp="http://schemas.xmlsoap.org/ws/2004/09/policy">
+<wsp:ExactlyOne>
+<wsp:All>
+<dpe:summary xmlns:sp="http://docs.oasis-open.org/ws-sx/ws-securitypolicy/200512" xmlns:dpe="http://www.datapower.com/extensions">
+    
+<dppolicy:domain xmlns:dppolicy="http://www.datapower.com/policy">
+      http://docs.oasis-open.org/ws-sx/ws-securitypolicy/200512
+    </dppolicy:domain>
+    
+<description>
+      Implements WS Security Policy 1.1 - support SignedParts
+    </description>
+  </dpe:summary>
+<sp:SignedParts xmlns:sp="http://docs.oasis-open.org/ws-sx/ws-securitypolicy/200512">
+        
+<sp:Body/>
+      </sp:SignedParts></wsp:All></wsp:ExactlyOne></wsp:Policy></wsdl:definitions>

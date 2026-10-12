@@ -233,7 +233,8 @@ public class UruFacturaClientBuilderTests : IDisposable
     private sealed class FirmanteStub : ICfeFirmante
     {
         public bool LlamadoFirmar { get; private set; }
-        public string Firmar(string xmlSinFirmar) { LlamadoFirmar = true; return xmlSinFirmar + "-firmado"; }
+        public string Firmar(string xmlSinFirmar) { LlamadoFirmar = true; return xmlSinFirmar.Replace("<CFE/>", "<CFE><Firmado/></CFE>"); }
+        public byte[] ObtenerCertificadoDer() => [1, 2, 3];
         public void Dispose() { }
     }
 
@@ -241,19 +242,20 @@ public class UruFacturaClientBuilderTests : IDisposable
     {
         public bool LlamadoEnviarCfe { get; private set; }
 
-        public Task<RespuestaDgi> EnviarCfeAsync(string xmlFirmado, CancellationToken ct = default)
+        public Task<RespuestaDgi> EnviarSobreAsync(string sobreXml, CancellationToken ct = default)
         {
             LlamadoEnviarCfe = true;
-            return Task.FromResult(RespuestaDgi.Exito("00", "OK"));
+            return Task.FromResult(RespuestaDgi.Exito("AS", "OK"));
         }
 
-        public Task<RespuestaDgi> ConsultarEstadoCfeAsync(
-            string rut, int tipo, string serie, long numero, CancellationToken ct = default)
-            => Task.FromResult(RespuestaDgi.Exito("00", "OK"));
+        public Task<RespuestaDgi> ConsultarEstadoEnvioAsync(string idReceptor, string token, CancellationToken ct = default)
+            => Task.FromResult(RespuestaDgi.Exito("AE", "OK"));
 
-        public Task<RespuestaReporteDiario> EnviarReporteDiarioAsync(
-            DateTime fecha, IEnumerable<string> cfes, CancellationToken ct = default)
-            => Task.FromResult(new RespuestaReporteDiario { Respuesta = RespuestaDgi.Exito("00", "OK") });
+        public Task<RespuestaDgi> ConsultarEstadoCfeAsync(int tipo, string serie, long numero, CancellationToken ct = default)
+            => Task.FromResult(RespuestaDgi.Exito("AE", "OK"));
+
+        public Task<RespuestaDgi> EnviarReporteDiarioAsync(string reporteFirmadoXml, CancellationToken ct = default)
+            => Task.FromResult(RespuestaDgi.Exito("AR", "OK"));
 
         public IDgiSoapClient WithHttpClient(HttpClient httpClient) => this;
 

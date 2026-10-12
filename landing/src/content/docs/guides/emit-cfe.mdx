@@ -20,10 +20,9 @@ UruFactura provee métodos de fábrica en `UruFacturaClient` para crear cada tip
 | `CrearEFacturaExportacion()` | e-Factura de Exportación | 121 |
 | `CrearNotaCreditoEFacturaExportacion()` | NC e-Factura de Exportación | 122 |
 | `CrearNotaDebitoEFacturaExportacion()` | ND e-Factura de Exportación | 123 |
-| `CrearERemitoDespachante()` | e-Remito Despachante | 131 |
-| `CrearEResguardo()` | e-Resguardo | 151 |
+| `CrearERemitoExportacion()` | e-Remito de Exportación | 124 |
+| `CrearEResguardo()` | e-Resguardo (aún no emitible) | 182 |
 | `CrearERemito()` | e-Remito | 181 |
-| `CrearNotaCreditoERemito()` | Nota de Crédito e-Remito | 182 |
 
 ---
 
@@ -33,7 +32,7 @@ El e-Ticket es el comprobante más común para ventas al consumidor final (sin i
 
 ```csharp
 var eticket = client.CrearETicket();
-eticket.Numero = 1;                           // Número del comprobante
+client.AsignarCae(eticket);   // toma el próximo número del CAE
 eticket.FechaEmision = DateOnly.FromDateTime(DateTime.Today); // Opcional, por defecto hoy
 
 // Agregar líneas de detalle
@@ -66,7 +65,7 @@ La e-Factura requiere identificar al receptor (empresa o persona).
 
 ```csharp
 var efactura = client.CrearEFactura();
-efactura.Numero = 1;
+client.AsignarCae(efactura);   // toma el próximo número del CAE
 
 // Datos del receptor (obligatorio para e-Factura)
 efactura.Receptor = new Receptor
@@ -98,7 +97,7 @@ Las notas de corrección deben referenciar el CFE original.
 
 ```csharp
 var notaCredito = client.CrearNotaCreditoETicket();
-notaCredito.Numero = 1;
+client.AsignarCae(notaCredito);   // toma el próximo número del CAE
 
 // Referenciar el comprobante que se está corrigiendo
 notaCredito.Referencias.Add(new RefCfe
@@ -149,7 +148,7 @@ await File.WriteAllTextAsync($"eticket_{eticket.Numero:D8}.xml", xmlFirmado);
 ```
 
 <Aside type="note">
-  El método `EnviarCfeAsync` internamente llama a `GenerarYFirmar` antes de enviar. No es necesario llamarlo por separado salvo que lo necesites explícitamente.
+  El método `EnviarCfeAsync` internamente llama a `GenerarYFirmar` antes de enviar el CFE dentro de un sobre `EnvioCFE`. No es necesario llamarlo por separado salvo que lo necesites explícitamente.
 </Aside>
 
 ---
@@ -159,20 +158,19 @@ await File.WriteAllTextAsync($"eticket_{eticket.Numero:D8}.xml", xmlFirmado);
 ```csharp
 try
 {
+    // 1) Sobre: la DGI responde AS (recibido) o BS/BA (rechazado)
     var respuesta = await client.EnviarCfeAsync(eticket);
-
-    switch (respuesta.Codigo)
+    if (!respuesta.Exitoso)
     {
-        case "00":
-            Console.WriteLine("✅ Aceptado");
-            break;
-        case "01":
-            Console.WriteLine($"⚠️ Aceptado con observaciones: {respuesta.Mensaje}");
-            break;
-        default:
-            Console.WriteLine($"❌ Rechazado [{respuesta.Codigo}]: {respuesta.Mensaje}");
-            break;
+        Console.WriteLine($"❌ Sobre rechazado [{respuesta.Codigo}]: {respuesta.Mensaje}");
+        return;
     }
+
+    // 2) Resultado del comprobante: AE aceptado, BE rechazado, CE observado
+    var estado = await client.ConsultarEstadoEnvioAsync(respuesta, [eticket]);
+    Console.WriteLine(estado.Exitoso
+        ? "✅ Aceptado"
+        : $"❌ [{estado.Codigo}]: {estado.Mensaje}");
 }
 catch (DgiCommunicationException ex)
 {

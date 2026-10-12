@@ -29,7 +29,7 @@ public partial class UruFacturaClient
     public UruFacturaClient(UruFacturaConfig config, ICfePdfGenerator? pdfGenerator)
         : this(config,
                new CfeXmlBuilder(),
-               new CfeFirmante(config.RutaCertificado, config.PasswordCertificado),
+               new CfeFirmante(config.RutaCertificado, config.PasswordCertificado, config.AlgoritmoFirma),
                new CaeManager(),
                new DgiSoapClient(config),
                pdfGenerator)

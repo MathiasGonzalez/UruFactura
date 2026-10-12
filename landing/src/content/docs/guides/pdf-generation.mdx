@@ -76,7 +76,7 @@ public class FacturaService
     public async Task EmitirYEnviarAsync(string emailCliente, LineaDetalle[] detalle)
     {
         var eticket = _client.CrearETicket();
-        eticket.Numero = await ObtenerProximoNumeroAsync();
+        client.AsignarCae(eticket);   // toma el próximo número del CAE
 
         foreach (var linea in detalle)
             eticket.Detalle.Add(linea);

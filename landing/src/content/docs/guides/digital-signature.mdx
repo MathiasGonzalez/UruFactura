@@ -1,13 +1,15 @@
 ---
 title: Firma Digital
-description: Cómo funciona la firma XAdES-BES en UruFactura
+description: Cómo firma UruFactura los CFE, el reporte diario y los mensajes SOAP
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
 ## ¿Qué es la firma digital en CFE?
 
-DGI exige que cada comprobante fiscal electrónico esté firmado digitalmente usando el estándar **XAdES-BES** (XML Advanced Electronic Signatures - Basic Electronic Signature). Esta firma garantiza la autenticidad e integridad del documento XML.
+DGI exige que cada comprobante fiscal electrónico esté firmado digitalmente con una **firma XML (XML Signature) enveloped**: un nodo `ds:Signature` dentro del CFE, que referencia el documento completo (`URI=""`) con las transformadas *enveloped-signature* y C14N, y que incluye el certificado en `KeyInfo`. Es el mismo formato que usan los ejemplos oficiales de la DGI. Además, **cada mensaje SOAP** se firma con **WS-Security** (el certificado viaja en un `BinarySecurityToken` y se firma el `Body`).
+
+El algoritmo es RSA-SHA256 por defecto; si la DGI rechaza SHA-256 en tu ambiente podés usar `AlgoritmoFirma = AlgoritmoFirma.Sha1`, que es el que usan los ejemplos de la documentación.
 
 UruFactura maneja **toda la complejidad de la firma de forma automática**. Solo necesitás configurar la ruta y contraseña del certificado.
 
@@ -37,9 +39,9 @@ El certificado debe estar emitido por una **Autoridad Certificante reconocida po
 Cuando llamás a `EnviarCfeAsync`, el SDK:
 
 1. Genera el XML del CFE
-2. Firma el XML con XAdES-BES usando el certificado configurado
-3. Envuelve el XML firmado en el sobre SOAP
-4. Envía la solicitud al endpoint DGI
+2. Firma el XML con XML Signature enveloped usando el certificado configurado
+3. Arma el sobre `EnvioCFE` (carátula con el certificado + los CFE firmados)
+4. Lo envía en un mensaje SOAP firmado con WS-Security al servicio `ws_efactura` de la DGI
 
 ```csharp
 // La firma ocurre automáticamente aquí

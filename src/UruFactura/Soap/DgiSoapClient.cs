@@ -4,24 +4,28 @@ using System.Text;
 using System.Xml;
 using UruFactura.Configuration;
 using UruFactura.Exceptions;
-using UruFactura.Formatting;
 using UruFactura.Models;
+using UruFactura.Signature;
 
 namespace UruFactura.Soap;
 
 /// <summary>
-/// Cliente SOAP para comunicarse con los servicios web de la DGI de Uruguay
-/// (envío de CFE, consulta de estado y envío de reporte diario).
+/// Cliente SOAP 1.1 de los servicios web de la DGI de Uruguay: <c>ws_efactura</c>
+/// (<c>EFACRECEPCIONSOBRE</c>, <c>EFACRECEPCIONREPORTE</c>, <c>EFACCONSULTARESTADOENVIO</c>) y
+/// <c>ws_consultas</c> (<c>EFACCONSULTARESTADOCFE</c>). Cada mensaje se firma con WS-Security
+/// usando el certificado configurado. Operaciones, namespaces y SOAPAction provienen de los
+/// WSDL oficiales (<c>ws_eprueba?wsdl</c> y <c>ws_consultasPrueba?wsdl</c>).
 /// </summary>
 public class DgiSoapClient : IDgiSoapClient
 {
     private readonly UruFacturaConfig _config;
+    private readonly X509Certificate2? _certificado;
     private HttpClient? _httpClient;
     private bool _ownsHttpClient;
     private bool _disposed;
 
-    private const string SoapAction = "\"\"";
-    private const string SoapNs = "http://schemas.xmlsoap.org/soap/envelope/";
+    private const string ActionEnvio = "http://dgi.gub.uyaction/AWS_EFACTURA.";
+    private const string ActionConsultas = "http://dgi.gub.uyaction/AWS_EFACTURA_CONSULTAS.";
 
     /// <summary>
     /// Inicializa el cliente SOAP con la configuración de UruFactura.
@@ -29,6 +33,16 @@ public class DgiSoapClient : IDgiSoapClient
     public DgiSoapClient(UruFacturaConfig config, HttpClient? httpClient = null)
     {
         _config = config;
+
+        if (!string.IsNullOrWhiteSpace(config.RutaCertificado))
+        {
+            if (!File.Exists(config.RutaCertificado))
+                throw new UruFacturaException(
+                    $"No se encontró el archivo de certificado: '{config.RutaCertificado}'.");
+
+            _certificado = CertificadoLoader.Cargar(config.RutaCertificado, config.PasswordCertificado);
+        }
+
         if (httpClient is not null)
         {
             ValidarHttpClientExterno(httpClient);
@@ -53,10 +67,6 @@ public class DgiSoapClient : IDgiSoapClient
         return this;
     }
 
-    /// <summary>
-    /// Valida que el <see cref="HttpClient"/> externo cumpla los requisitos mínimos para
-    /// comunicarse correctamente con la DGI.
-    /// </summary>
     private static void ValidarHttpClientExterno(HttpClient httpClient)
     {
         if (httpClient.Timeout == Timeout.InfiniteTimeSpan)
@@ -66,277 +76,176 @@ public class DgiSoapClient : IDgiSoapClient
                 nameof(httpClient));
     }
 
-    /// <summary>
-    /// Envía un CFE firmado a la DGI.
-    /// </summary>
-    /// <param name="xmlFirmado">XML del CFE firmado digitalmente.</param>
-    /// <param name="cancellationToken">Token de cancelación.</param>
-    /// <returns>Respuesta de la DGI.</returns>
-    public async Task<RespuestaDgi> EnviarCfeAsync(
-        string xmlFirmado,
-        CancellationToken cancellationToken = default)
+    /// <inheritdoc />
+    public Task<RespuestaDgi> EnviarSobreAsync(string sobreXml, CancellationToken cancellationToken = default)
     {
-        var soapBody = ConstruirSoapEnvio(xmlFirmado);
-        return await EnviarSolicitudAsync(soapBody, "enviarCFE", cancellationToken);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sobreXml);
+        return InvocarAsync(
+            _config.DgiEnvioUrl, ActionEnvio + "EFACRECEPCIONSOBRE", "EFACRECEPCIONSOBRE",
+            doc => DatainXml(doc, "WS_eFactura.EFACRECEPCIONSOBRE", sobreXml),
+            DgiRespuestaParser.ProcesarSobre, cancellationToken);
     }
 
-    /// <summary>
-    /// Consulta el estado de un CFE previamente enviado.
-    /// </summary>
-    /// <param name="rutEmisor">RUT del emisor.</param>
-    /// <param name="tipoCfe">Tipo de CFE (número entero de la DGI).</param>
-    /// <param name="serie">Serie del CFE.</param>
-    /// <param name="numero">Número del CFE.</param>
-    /// <param name="cancellationToken">Token de cancelación.</param>
-    public async Task<RespuestaDgi> ConsultarEstadoCfeAsync(
-        string rutEmisor,
-        int tipoCfe,
-        string serie,
-        long numero,
-        CancellationToken cancellationToken = default)
+    /// <inheritdoc />
+    public Task<RespuestaDgi> ConsultarEstadoEnvioAsync(
+        string idReceptor, string token, CancellationToken cancellationToken = default)
     {
-        var soapBody = ConstruirSoapConsulta(rutEmisor, tipoCfe, serie, numero);
-        return await EnviarSolicitudAsync(soapBody, "consultarEstadoCFE", cancellationToken);
+        ArgumentException.ThrowIfNullOrWhiteSpace(idReceptor);
+        ArgumentException.ThrowIfNullOrWhiteSpace(token);
+
+        var consulta = new XmlDocument();
+        var el = consulta.CreateElement("ConsultaCFE", WsSecurity.DgiNs);
+        AddText(consulta, el, "IdReceptor", idReceptor);
+        AddText(consulta, el, "Token", token);
+        consulta.AppendChild(el);
+
+        return InvocarAsync(
+            _config.DgiEnvioUrl, ActionEnvio + "EFACCONSULTARESTADOENVIO", "EFACCONSULTARESTADOENVIO",
+            doc => DatainXml(doc, "WS_eFactura.EFACCONSULTARESTADOENVIO", consulta.OuterXml),
+            DgiRespuestaParser.ProcesarEstadoEnvio, cancellationToken);
     }
 
-    /// <summary>
-    /// Envía el Reporte Diario de CFE a la DGI.
-    /// </summary>
-    /// <param name="fecha">Fecha del reporte.</param>
-    /// <param name="cfesFirmados">Lista de XMLs firmados de los CFE del día.</param>
-    /// <param name="cancellationToken">Token de cancelación.</param>
-    public async Task<RespuestaReporteDiario> EnviarReporteDiarioAsync(
-        DateTime fecha,
-        IEnumerable<string> cfesFirmados,
-        CancellationToken cancellationToken = default)
+    /// <inheritdoc />
+    public Task<RespuestaDgi> ConsultarEstadoCfeAsync(
+        int tipoCfe, string serie, long numero, CancellationToken cancellationToken = default)
     {
-        var listaXmls = cfesFirmados.ToList();
-        var soapBody = ConstruirSoapReporteDiario(fecha, listaXmls);
-        var respuesta = await EnviarSolicitudAsync(soapBody, "enviarReporteDiario", cancellationToken);
-
-        return new RespuestaReporteDiario
-        {
-            FechaReporte = fecha,
-            CantidadCfe = listaXmls.Count,
-            Respuesta = respuesta,
-        };
+        ArgumentException.ThrowIfNullOrWhiteSpace(serie);
+        return InvocarAsync(
+            _config.DgiConsultasUrl, ActionConsultas + "EFACCONSULTARESTADOCFE", "EFACCONSULTARESTADOCFE",
+            doc =>
+            {
+                var op = doc.CreateElement("dgi", "WS_eFactura_Consultas.EFACCONSULTARESTADOCFE", WsSecurity.DgiNs);
+                var cfeid = doc.CreateElement("dgi", "Cfeid", WsSecurity.DgiNs);
+                AddDgi(doc, cfeid, "TipoCFE", tipoCfe.ToString(CultureInfo.InvariantCulture));
+                AddDgi(doc, cfeid, "Serie", serie);
+                AddDgi(doc, cfeid, "Nro", numero.ToString(CultureInfo.InvariantCulture));
+                op.AppendChild(cfeid);
+                return op;
+            },
+            DgiRespuestaParser.ProcesarEstadoCfe, cancellationToken);
     }
 
-    private async Task<RespuestaDgi> EnviarSolicitudAsync(
-        string soapEnvelope,
+    /// <inheritdoc />
+    public Task<RespuestaDgi> EnviarReporteDiarioAsync(
+        string reporteFirmadoXml, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reporteFirmadoXml);
+        return InvocarAsync(
+            _config.DgiEnvioUrl, ActionEnvio + "EFACRECEPCIONREPORTE", "EFACRECEPCIONREPORTE",
+            doc => DatainXml(doc, "WS_eFactura.EFACRECEPCIONREPORTE", reporteFirmadoXml),
+            DgiRespuestaParser.ProcesarReporte, cancellationToken);
+    }
+
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Arma <c>&lt;dgi:Operacion&gt;&lt;dgi:Datain&gt;&lt;dgi:xmlData&gt;&lt;![CDATA[xml]]&gt;</c>.
+    /// </summary>
+    private static XmlElement DatainXml(XmlDocument doc, string operacion, string xml)
+    {
+        var op = doc.CreateElement("dgi", operacion, WsSecurity.DgiNs);
+        var datain = doc.CreateElement("dgi", "Datain", WsSecurity.DgiNs);
+        var xmlData = doc.CreateElement("dgi", "xmlData", WsSecurity.DgiNs);
+        xmlData.AppendChild(doc.CreateCDataSection(xml));
+        datain.AppendChild(xmlData);
+        op.AppendChild(datain);
+        return op;
+    }
+
+    private static void AddDgi(XmlDocument doc, XmlElement parent, string name, string text)
+    {
+        var el = doc.CreateElement("dgi", name, WsSecurity.DgiNs);
+        el.InnerText = text;
+        parent.AppendChild(el);
+    }
+
+    private static void AddText(XmlDocument doc, XmlElement parent, string name, string text)
+    {
+        var el = doc.CreateElement(name, WsSecurity.DgiNs);
+        el.InnerText = text;
+        parent.AppendChild(el);
+    }
+
+    private async Task<RespuestaDgi> InvocarAsync(
+        string url,
+        string soapAction,
         string operacion,
+        Func<XmlDocument, XmlElement> body,
+        Func<string, RespuestaDgi> procesar,
         CancellationToken cancellationToken)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        var certificado = _certificado ?? throw new UruFacturaException(
+            "Se requiere RutaCertificado para firmar los mensajes SOAP (WS-Security) de la DGI.");
+
+        var client = _httpClient ?? throw new InvalidOperationException("No se ha inicializado el HttpClient.");
+
         try
         {
-            var client = _httpClient ?? throw new InvalidOperationException(
-                "No se ha inicializado el HttpClient.");
+            var envelope = WsSecurity.CrearYFirmar(body, certificado, _config.AlgoritmoFirma);
 
-            var content = new StringContent(soapEnvelope, Encoding.UTF8, "text/xml");
-            content.Headers.Add("SOAPAction", SoapAction);
+            using var request = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent(envelope, Encoding.UTF8, "text/xml"),
+            };
+            request.Headers.TryAddWithoutValidation("SOAPAction", $"\"{soapAction}\"");
 
-            var response = await client.PostAsync(
-                _config.DgiSoapBaseUrl, content, cancellationToken);
-
+            using var response = await client.SendAsync(request, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
-            return ProcesarRespuesta(responseBody, operacion);
+            // Un error HTTP sin cuerpo SOAP (p. ej. HTML de un proxy 502/503) no es interpretable.
+            if (!response.IsSuccessStatusCode && !responseBody.TrimStart().StartsWith('<'))
+                return RespuestaDgi.Error(
+                    ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture),
+                    $"HTTP {(int)response.StatusCode} {response.ReasonPhrase} al invocar '{operacion}'.",
+                    responseBody);
+
+            return procesar(responseBody);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (HttpRequestException ex)
         {
             throw new DgiCommunicationException(
                 $"Error de red al invocar '{operacion}': {ex.Message}", ex);
         }
-        catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        catch (TaskCanceledException ex)
         {
             throw new DgiCommunicationException(
                 $"Timeout al invocar '{operacion}'. Verifique el SoapTimeoutSegundos.", ex);
         }
-        catch (DgiCommunicationException)
+        catch (Exception ex) when (ex is DgiCommunicationException or UruFacturaException)
         {
             throw;
         }
         catch (Exception ex)
         {
-            throw new DgiCommunicationException(
-                $"Error inesperado al invocar '{operacion}'.", ex);
+            throw new DgiCommunicationException($"Error inesperado al invocar '{operacion}'.", ex);
         }
-    }
-
-    private static RespuestaDgi ProcesarRespuesta(string xmlRespuesta, string operacion)
-    {
-        try
-        {
-            var doc = new XmlDocument();
-            doc.LoadXml(xmlRespuesta);
-
-            var nsManager = new XmlNamespaceManager(doc.NameTable);
-            nsManager.AddNamespace("soap", SoapNs);
-
-            // Detectar SOAP Fault
-            var fault = doc.SelectSingleNode("//soap:Fault", nsManager)
-                      ?? doc.SelectSingleNode("//Fault");
-
-            if (fault != null)
-            {
-                var faultString = fault.SelectSingleNode("faultstring")?.InnerText
-                               ?? "Error SOAP sin detalle.";
-                return RespuestaDgi.Error("SOAP_FAULT", faultString, xmlRespuesta);
-            }
-
-            // Intentar extraer codigo y mensaje de la respuesta DGI
-            var codigo = doc.SelectSingleNode("//*[local-name()='Codigo']")?.InnerText
-                      ?? doc.SelectSingleNode("//*[local-name()='Estado']")?.InnerText
-                      ?? "OK";
-
-            var mensaje = doc.SelectSingleNode("//*[local-name()='Mensaje']")?.InnerText
-                       ?? doc.SelectSingleNode("//*[local-name()='Descripcion']")?.InnerText
-                       ?? $"Respuesta de '{operacion}' procesada correctamente.";
-
-            bool exitoso = codigo == "00" || codigo == "01";
-
-            return exitoso
-                ? RespuestaDgi.Exito(codigo, mensaje, xmlRespuesta)
-                : RespuestaDgi.Error(codigo, mensaje, xmlRespuesta);
-        }
-        catch (Exception ex)
-        {
-            throw new DgiCommunicationException(
-                $"Error al procesar la respuesta de '{operacion}'.", ex);
-        }
-    }
-
-    private static string ConstruirSoapEnvio(string xmlFirmado)
-    {
-        var (doc, body) = CrearEnvelope();
-
-        var enviarCfe = doc.CreateElement("enviarCFE");
-        enviarCfe.SetAttribute("xmlns", "http://dgi.gub.uy/efactura");
-        body.AppendChild(enviarCfe);
-
-        var cfeEl = doc.CreateElement("cfe");
-        cfeEl.AppendChild(doc.CreateCDataSection(xmlFirmado));
-        enviarCfe.AppendChild(cfeEl);
-
-        return SerializeXml(doc);
-    }
-
-    private static string ConstruirSoapConsulta(
-        string rut, int tipo, string serie, long numero)
-    {
-        var (doc, body) = CrearEnvelope();
-
-        var consultar = doc.CreateElement("consultarEstadoCFE");
-        consultar.SetAttribute("xmlns", "http://dgi.gub.uy/efactura");
-        body.AppendChild(consultar);
-
-        AddTextEl(doc, consultar, "rut",      rut);
-        AddTextEl(doc, consultar, "tipoCFE",  tipo.ToString(CultureInfo.InvariantCulture));
-        AddTextEl(doc, consultar, "serie",    serie);
-        AddTextEl(doc, consultar, "numero",   numero.ToString(CultureInfo.InvariantCulture));
-
-        return SerializeXml(doc);
-    }
-
-    private static string ConstruirSoapReporteDiario(
-        DateTime fecha, IList<string> cfes)
-    {
-        var (doc, body) = CrearEnvelope();
-
-        var enviarReporte = doc.CreateElement("enviarReporteDiario");
-        enviarReporte.SetAttribute("xmlns", "http://dgi.gub.uy/efactura");
-        body.AppendChild(enviarReporte);
-
-        AddTextEl(doc, enviarReporte, "fecha", CfeFormat.DateIso(fecha));
-
-        var cfesEl = doc.CreateElement("cfes");
-        foreach (var xml in cfes)
-        {
-            var cfeFirmadoEl = doc.CreateElement("cfeFirmado");
-            cfeFirmadoEl.AppendChild(doc.CreateCDataSection(xml));
-            cfesEl.AppendChild(cfeFirmadoEl);
-        }
-        enviarReporte.AppendChild(cfesEl);
-
-        return SerializeXml(doc);
-    }
-
-    // -------------------------------------------------------------------------
-    // XML helpers
-    // -------------------------------------------------------------------------
-
-    private static (XmlDocument Doc, XmlElement Body) CrearEnvelope()
-    {
-        var doc = new XmlDocument();
-        doc.AppendChild(doc.CreateXmlDeclaration("1.0", "utf-8", null));
-
-        var envelope = doc.CreateElement("soap", "Envelope", SoapNs);
-        doc.AppendChild(envelope);
-
-        var body = doc.CreateElement("soap", "Body", SoapNs);
-        envelope.AppendChild(body);
-
-        return (doc, body);
-    }
-
-    private static void AddTextEl(XmlDocument doc, XmlElement parent, string tag, string text)
-    {
-        var el = doc.CreateElement(tag);
-        el.InnerText = text;
-        parent.AppendChild(el);
-    }
-
-    /// <summary>
-    /// Serializes an <see cref="XmlDocument"/> to a UTF-8 string.
-    /// Using XmlWriter + MemoryStream ensures the XML declaration reflects the
-    /// actual encoding of the string and avoids string-interpolation data flows
-    /// that static analysis tools can misclassify as injection vectors.
-    /// </summary>
-    private static string SerializeXml(XmlDocument doc)
-    {
-        using var ms = new MemoryStream();
-        var settings = new XmlWriterSettings
-        {
-            Encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
-            Indent   = false,
-        };
-        using (var writer = XmlWriter.Create(ms, settings))
-            doc.WriteTo(writer);
-        return Encoding.UTF8.GetString(ms.ToArray());
     }
 
     private HttpClient CrearHttpClient()
     {
         var handler = new HttpClientHandler();
 
-        // Disable TLS certificate validation only when the caller explicitly opts in.
-        // Previously this was enabled automatically for the Homologación environment, but
-        // doing so silently is a security risk. Callers must now set OmitirValidacionSsl = true.
+        // La validación del certificado TLS del servidor solo se deshabilita si el llamador
+        // lo pide explícitamente (OmitirValidacionSsl). Nunca se hace de forma automática.
         if (_config.OmitirValidacionSsl)
         {
             handler.ServerCertificateCustomValidationCallback =
                 HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
         }
 
-        if (!string.IsNullOrWhiteSpace(_config.RutaCertificado))
-        {
-            if (!File.Exists(_config.RutaCertificado))
-                throw new Exceptions.UruFacturaException(
-                    $"No se encontró el archivo de certificado: '{_config.RutaCertificado}'.");
+        if (_certificado is not null)
+            handler.ClientCertificates.Add(_certificado);
 
-            var cert = X509CertificateLoader.LoadPkcs12FromFile(
-                _config.RutaCertificado, _config.PasswordCertificado);
-            handler.ClientCertificates.Add(cert);
-        }
-
-        var client = new HttpClient(handler)
+        return new HttpClient(handler)
         {
             Timeout = TimeSpan.FromSeconds(_config.SoapTimeoutSegundos),
-            BaseAddress = new Uri(_config.DgiSoapBaseUrl),
         };
-
-        client.DefaultRequestHeaders.Add("Accept", "text/xml");
-        return client;
     }
 
     public void Dispose()
@@ -344,6 +253,7 @@ public class DgiSoapClient : IDgiSoapClient
         if (_disposed) return;
         if (_ownsHttpClient)
             _httpClient?.Dispose();
+        _certificado?.Dispose();
         _disposed = true;
         GC.SuppressFinalize(this);
     }

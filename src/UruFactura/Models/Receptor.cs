@@ -25,7 +25,13 @@ public class Receptor
     /// <summary>Departamento del receptor.</summary>
     public string? Departamento { get; set; }
 
-    /// <summary>País del receptor (para exportación).</summary>
+    /// <summary>
+    /// Código de país del documento (ISO 3166 alfa-2, p. ej. "UY"). Por defecto "UY".
+    /// Si es distinto de "UY" el documento se informa como documento extranjero.
+    /// </summary>
+    public string CodigoPais { get; set; } = "UY";
+
+    /// <summary>País del receptor (nombre, para exportación).</summary>
     public string? Pais { get; set; }
 
     /// <summary>Email del receptor (para envío electrónico).</summary>
