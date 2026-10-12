@@ -70,19 +70,19 @@ export default defineConfig({
         },
         {
           label: 'Primeros Pasos',
-          autogenerate: { directory: 'getting-started' },
+          items: [{ autogenerate: { directory: 'getting-started' } }],
         },
         {
           label: 'Guías',
-          autogenerate: { directory: 'guides' },
+          items: [{ autogenerate: { directory: 'guides' } }],
         },
         {
           label: 'Migración',
-          autogenerate: { directory: 'migration' },
+          items: [{ autogenerate: { directory: 'migration' } }],
         },
         {
           label: 'Referencia',
-          autogenerate: { directory: 'reference' },
+          items: [{ autogenerate: { directory: 'reference' } }],
         },
       ],
       head: [
