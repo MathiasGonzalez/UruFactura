@@ -33,7 +33,9 @@ La **adhesión es obligatoria** para todos los contribuyentes de IVA (incluido I
 | **123** | Nota de Débito e-Factura Exportación | Ajuste en más sobre e-Factura de Exportación |
 | **124** | e-Remito de Exportación | Traslado de mercadería para exportación |
 | **181** | e-Remito | Traslado de mercadería sin transferencia de dominio |
-| **182** | e-Resguardo | Retención de impuestos (aún no emitible con el SDK: falta soporte de retenciones) |
+| **182** | e-Resguardo | Retención/percepción de impuestos a proveedores |
+| **131-133 / 141-143** | e-Ticket / e-Factura venta por cuenta ajena | Venta en nombre de un mandante (requiere `Mandante`) |
+| **2xx** | Comprobantes de contingencia | Misma estructura que el CFE que sustituyen |
 
 > La diferencia principal entre **e-Ticket** y **e-Factura** es si el receptor tiene o no RUT. Las empresas siempre deben exigir e-Factura para poder descontar el IVA compras.
 

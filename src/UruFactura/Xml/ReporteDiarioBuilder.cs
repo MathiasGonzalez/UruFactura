@@ -16,23 +16,48 @@ namespace UruFactura.Xml;
 /// </summary>
 public static class ReporteDiarioBuilder
 {
-    // Orden y nombre de los resúmenes tal como los exige el XSD (los no soportados se omiten).
+    // Orden y nombre de los resúmenes tal como los exige el XSD.
     private static readonly (TipoCfe Tipo, string Elemento, Resumen Clase)[] Resumenes =
     [
-        (TipoCfe.ETicket,                        "Rsmn_Tck",                      Resumen.FacturaYTicket),
-        (TipoCfe.NotaCreditoETicket,             "Rsmn_Tck_Nota_Credito",         Resumen.FacturaYTicket),
-        (TipoCfe.NotaDebitoETicket,              "Rsmn_Tck_Nota_Debito",          Resumen.FacturaYTicket),
-        (TipoCfe.EFactura,                       "Rsmn_Fac",                      Resumen.FacturaYTicket),
-        (TipoCfe.NotaCreditoEFactura,            "Rsmn_Fac_Nota_Credito",         Resumen.FacturaYTicket),
-        (TipoCfe.NotaDebitoEFactura,             "Rsmn_Fac_Nota_Debito",          Resumen.FacturaYTicket),
-        (TipoCfe.EFacturaExportacion,            "Rsmn_Fac_Exp",                  Resumen.Exportacion),
-        (TipoCfe.NotaCreditoEFacturaExportacion, "Rsmn_Fac_Exp_Nota_Credito",     Resumen.Exportacion),
-        (TipoCfe.NotaDebitoEFacturaExportacion,  "Rsmn_Fac_Exp_Nota_Debito",      Resumen.Exportacion),
-        (TipoCfe.ERemito,                        "Rsmn_Rem",                      Resumen.Remito),
-        (TipoCfe.ERemitoExportacion,             "Rsmn_Rem_Exp",                  Resumen.RemitoExportacion),
+        (TipoCfe.ETicket,                                   "Rsmn_Tck",                           Resumen.FacturaYTicket),
+        (TipoCfe.NotaCreditoETicket,                        "Rsmn_Tck_Nota_Credito",              Resumen.FacturaYTicket),
+        (TipoCfe.NotaDebitoETicket,                         "Rsmn_Tck_Nota_Debito",               Resumen.FacturaYTicket),
+        (TipoCfe.ETicketContingencia,                       "Rsmn_Tck_Cont",                      Resumen.FacturaYTicket),
+        (TipoCfe.NotaCreditoETicketContingencia,            "Rsmn_Tck_Cont_Nota_Credito",         Resumen.FacturaYTicket),
+        (TipoCfe.NotaDebitoETicketContingencia,             "Rsmn_Tck_Cont_Nota_Debito",          Resumen.FacturaYTicket),
+        (TipoCfe.ETicketCuentaAjena,                        "Rsmn_Tck_CtaAj",                     Resumen.FacturaYTicket),
+        (TipoCfe.NotaCreditoETicketCuentaAjena,             "Rsmn_Tck_Nota_Credito_CtaAj",        Resumen.FacturaYTicket),
+        (TipoCfe.NotaDebitoETicketCuentaAjena,              "Rsmn_Tck_Nota_Debito_CtaAj",         Resumen.FacturaYTicket),
+        (TipoCfe.ETicketCuentaAjenaContingencia,            "Rsmn_Tck_CtaAj_Cont",                Resumen.FacturaYTicket),
+        (TipoCfe.NotaCreditoETicketCuentaAjenaContingencia, "Rsmn_Tck_CtaAj_Cont_Nota_Credito",   Resumen.FacturaYTicket),
+        (TipoCfe.NotaDebitoETicketCuentaAjenaContingencia,  "Rsmn_Tck_CtaAj_Cont_Nota_Debito",    Resumen.FacturaYTicket),
+        (TipoCfe.EFactura,                                  "Rsmn_Fac",                           Resumen.FacturaYTicket),
+        (TipoCfe.NotaCreditoEFactura,                       "Rsmn_Fac_Nota_Credito",              Resumen.FacturaYTicket),
+        (TipoCfe.NotaDebitoEFactura,                        "Rsmn_Fac_Nota_Debito",               Resumen.FacturaYTicket),
+        (TipoCfe.EFacturaContingencia,                      "Rsmn_Fac_Cont",                      Resumen.FacturaYTicket),
+        (TipoCfe.NotaCreditoEFacturaContingencia,           "Rsmn_Fac_Cont_Nota_Credito",         Resumen.FacturaYTicket),
+        (TipoCfe.NotaDebitoEFacturaContingencia,            "Rsmn_Fac_Cont_Nota_Debito",          Resumen.FacturaYTicket),
+        (TipoCfe.EFacturaCuentaAjena,                       "Rsmn_Fac_CtaAj",                     Resumen.FacturaYTicket),
+        (TipoCfe.NotaCreditoEFacturaCuentaAjena,            "Rsmn_Fac_Nota_Credito_CtaAj",        Resumen.FacturaYTicket),
+        (TipoCfe.NotaDebitoEFacturaCuentaAjena,             "Rsmn_Fac_Nota_Debito_CtaAj",         Resumen.FacturaYTicket),
+        (TipoCfe.EFacturaCuentaAjenaContingencia,           "Rsmn_Fac_CtaAj_Cont",                Resumen.FacturaYTicket),
+        (TipoCfe.NotaCreditoEFacturaCuentaAjenaContingencia,"Rsmn_Fac_CtaAj_Cont_Nota_Credito",   Resumen.FacturaYTicket),
+        (TipoCfe.NotaDebitoEFacturaCuentaAjenaContingencia, "Rsmn_Fac_CtaAj_Cont_Nota_Debito",    Resumen.FacturaYTicket),
+        (TipoCfe.EFacturaExportacion,                       "Rsmn_Fac_Exp",                       Resumen.Exportacion),
+        (TipoCfe.NotaCreditoEFacturaExportacion,            "Rsmn_Fac_Exp_Nota_Credito",          Resumen.Exportacion),
+        (TipoCfe.NotaDebitoEFacturaExportacion,             "Rsmn_Fac_Exp_Nota_Debito",           Resumen.Exportacion),
+        (TipoCfe.EFacturaExportacionContingencia,           "Rsmn_Fac_Exp_Cont",                  Resumen.Exportacion),
+        (TipoCfe.NotaCreditoEFacturaExportacionContingencia,"Rsmn_Fac_Exp_Cont_Nota_Credito",     Resumen.Exportacion),
+        (TipoCfe.NotaDebitoEFacturaExportacionContingencia, "Rsmn_Fac_Exp_Cont_Nota_Debito",      Resumen.Exportacion),
+        (TipoCfe.ERemito,                                   "Rsmn_Rem",                           Resumen.Remito),
+        (TipoCfe.ERemitoContingencia,                       "Rsmn_Rem_Cont",                      Resumen.Remito),
+        (TipoCfe.ERemitoExportacion,                        "Rsmn_Rem_Exp",                       Resumen.RemitoExportacion),
+        (TipoCfe.ERemitoExportacionContingencia,            "Rsmn_Rem_Exp_Cont",                  Resumen.RemitoExportacion),
+        (TipoCfe.EResguardo,                                "Rsmn_Resg",                          Resumen.Resguardo),
+        (TipoCfe.EResguardoContingencia,                    "Rsmn_Resg_Cont",                     Resumen.Resguardo),
     ];
 
-    private enum Resumen { FacturaYTicket, Exportacion, Remito, RemitoExportacion }
+    private enum Resumen { FacturaYTicket, Exportacion, Remito, RemitoExportacion, Resguardo }
 
     /// <summary>
     /// Genera el reporte (sin firmar) con los CFE emitidos en <paramref name="fecha"/>.
@@ -114,6 +139,7 @@ public static class ReporteDiarioBuilder
                 Resumen.FacturaYTicket => "Mnts_FyT_Item",
                 Resumen.Exportacion => "Mnts_FExp_Item",
                 Resumen.Remito => "Mnts_Rem_Item",
+                Resumen.Resguardo => "Mnts_Res_Item",
                 _ => "Mnts_Rem_Exp_Item",
             };
 
@@ -137,6 +163,10 @@ public static class ReporteDiarioBuilder
                     if (netoMin > 0) El(w, "IVATasaMin", "10.000");
                     if (netoBas > 0) El(w, "IVATasaBas", "22.000");
                     El(w, "TotMntTotal", M2(g.Sum(c => c.MontoTotal)));
+                    break;
+
+                case Resumen.Resguardo:
+                    El(w, "TotMntRetenido", M2(g.Sum(c => c.MontoRetenido)));
                     break;
 
                 case Resumen.Exportacion:

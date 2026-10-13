@@ -213,7 +213,7 @@ public class CfeXmlBuilderTests
 
         Assert.Equal("2", Texto(doc, "//c:Receptor/c:TipoDocRecep"));
         Assert.Equal("UY", Texto(doc, "//c:Receptor/c:CodPaisRecep"));
-        Assert.Equal("210000000012", Texto(doc, "//c:Receptor/c:DocRecep"));
+        Assert.Equal("214844360018", Texto(doc, "//c:Receptor/c:DocRecep"));
     }
 
     [Theory]
@@ -224,7 +224,7 @@ public class CfeXmlBuilderTests
     public void Generar_TipoDocumentoReceptor_UsaLosCodigosDeLaDgi(TipoDocumentoReceptor tipo, string codigo)
     {
         var cfe = TestData.CfeValido();
-        cfe.Receptor = new Receptor { Documento = "1234567", TipoDocumento = tipo };
+        cfe.Receptor = new Receptor { Documento = tipo == TipoDocumentoReceptor.Rut ? "214844360018" : "1234567", TipoDocumento = tipo };
 
         var doc = Cargar(_builder.Generar(cfe));
 

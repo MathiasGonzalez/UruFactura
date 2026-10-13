@@ -48,7 +48,7 @@ La DGI exige que cada CFE esté **firmado digitalmente** con un certificado de e
 ```csharp
 var config = new UruFacturaConfig
 {
-    RutEmisor           = "210000000012",   // 12 dígitos, sin puntos ni guión
+    RutEmisor           = "219999820013",   // 12 dígitos, sin puntos ni guión
     RazonSocialEmisor   = "Mi Empresa S.A.",
     DomicilioFiscal     = "Av. 18 de Julio 1234",
     Ciudad              = "Montevideo",
@@ -91,7 +91,7 @@ client.Cae.RegistrarCae(new Cae
 ```
 
 > 💡 **En producción, persistí el estado del CAE.** Usá `ICaeRepository` para cargar los CAEs
-> al arrancar la app y actualizar `UltimoNroUsado` después de cada emisión. Si la app reinicia
+> al arrancar la app y persistir `UltimoNroUsado` después de cada emisión (`AsignarCaeAsync` lo hace con el repositorio configurado). Si la app reinicia
 > sin persistencia, el contador vuelve a cero y la DGI rechazará los comprobantes duplicados.
 > Ver [Persistencia de CAEs en README](../README.md#-persistencia-de-caes) para el patrón completo.
 
@@ -176,10 +176,7 @@ Una vez que la DGI aprueba la homologación:
 Ambiente = Ambiente.Produccion
 ```
 
-UruFactura usará automáticamente:
-```
-https://efactura.dgi.gub.uy/ePresentacionSoap/service
-```
+En Producción UruFactura **no** usa URL por defecto: configurá `UrlEnvio` y `UrlConsultas` con las URL de los servicios `ws_efactura` y `ws_consultas` que entrega la DGI al habilitar el ambiente.
 
 2. Verificar que el certificado digital **de producción** esté configurado (puede ser el mismo que el de homologación si es un certificado real de empresa).
 
@@ -195,7 +192,7 @@ https://efactura.dgi.gub.uy/ePresentacionSoap/service
 // 1. Configurar
 var config = new UruFacturaConfig
 {
-    RutEmisor           = "210000000012",
+    RutEmisor           = "219999820013",
     RazonSocialEmisor   = "Mi Empresa S.A.",
     DomicilioFiscal     = "Av. 18 de Julio 1234",
     Ciudad              = "Montevideo",

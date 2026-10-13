@@ -62,6 +62,17 @@ public partial class UruFacturaClient : IUruFacturaClient
     // Generación de CFE
     // -----------------------------------------------------------------------
 
+    /// <summary>
+    /// Crea un CFE de cualquier tipo soportado (contingencia, cuenta ajena, etc.) pre-configurado con los
+    /// datos del emisor.
+    /// </summary>
+    public virtual Cfe Crear(TipoCfe tipo)
+    {
+        if (!Enum.IsDefined(tipo))
+            throw new ArgumentOutOfRangeException(nameof(tipo), tipo, $"Tipo de CFE no soportado: {tipo}.");
+        return CrearCfe(tipo);
+    }
+
     /// <summary>Crea un nuevo e-Ticket pre-configurado con los datos del emisor.</summary>
     public virtual Cfe CrearETicket() => CrearCfe(TipoCfe.ETicket);
 
@@ -104,6 +115,10 @@ public partial class UruFacturaClient : IUruFacturaClient
     /// <summary>Crea el CFE base de un tipo con los datos del emisor; sobreescribible para ajustar los valores por defecto.</summary>
     protected virtual Cfe CrearCfe(TipoCfe tipo) => new()
     {
+        TelefonosEmisor = [.. _config.TelefonosEmisor],
+        CorreoEmisor = _config.CorreoEmisor,
+        SucursalEmisor = _config.SucursalEmisor,
+        TopeMontoNetoSinReceptor = _config.ValorUnidadIndexada is { } ui ? ui * 5000m : null,
         Tipo = tipo,
         RutEmisor = _config.RutEmisor,
         RazonSocialEmisor = _config.RazonSocialEmisor,
@@ -119,6 +134,34 @@ public partial class UruFacturaClient : IUruFacturaClient
     // -----------------------------------------------------------------------
     // XML y Firma
     // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Carga en el gestor todos los CAE guardados en el <see cref="ICaeRepository"/> configurado
+    /// (con su último número usado). Llamarlo al iniciar la aplicación. Es idempotente.
+    /// </summary>
+    /// <returns>Cantidad de CAE cargados (0 si no hay repositorio).</returns>
+    public virtual async Task<int> CargarCaesAsync()
+    {
+        ThrowIfDisposed();
+        if (_caeRepository is null)
+            return 0;
+
+        var caes = (await _caeRepository.CargarTodosAsync()).ToList();
+        _caeManager.RegistrarCaes(caes);
+        return caes.Count;
+    }
+
+    /// <summary>
+    /// Registra un CAE nuevo en el gestor y lo guarda en el <see cref="ICaeRepository"/> configurado (si lo hay).
+    /// </summary>
+    public virtual async Task RegistrarCaeAsync(Models.Cae cae)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(cae);
+        _caeManager.RegistrarCae(cae);
+        if (_caeRepository is not null)
+            await _caeRepository.GuardarCaeAsync(cae);
+    }
 
     /// <summary>
     /// Toma el próximo número del CAE vigente para el tipo del CFE y completa
@@ -187,6 +230,7 @@ public partial class UruFacturaClient : IUruFacturaClient
 
         var xmlFirmado = _firmante.Firmar(cfe.XmlSinFirmar!);
         cfe.XmlFirmado = xmlFirmado;
+        RegistrarDatosDeFirma(cfe, xmlFirmado);
         return xmlFirmado;
     }
 
@@ -390,6 +434,7 @@ public partial class UruFacturaClient : IUruFacturaClient
     {
         ThrowIfDisposed();
         ThrowIfNoPdfGenerator();
+        AsegurarFirmado(cfe);
         return _pdfGenerator!.GenerarA4(cfe);
     }
 
@@ -406,12 +451,46 @@ public partial class UruFacturaClient : IUruFacturaClient
     {
         ThrowIfDisposed();
         ThrowIfNoPdfGenerator();
+        AsegurarFirmado(cfe);
         return _pdfGenerator!.GenerarTermico(cfe);
     }
 
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Extrae del XML firmado la fecha de firma (<c>TmstFirma</c>) y el código de seguridad
+    /// (<c>DigestValue</c> de la firma), que se imprimen en el QR de la representación impresa.
+    /// </summary>
+    private static void RegistrarDatosDeFirma(Cfe cfe, string xmlFirmado)
+    {
+        try
+        {
+            var doc = new System.Xml.XmlDocument();
+            doc.LoadXml(xmlFirmado);
+
+            var tmst = doc.SelectSingleNode("//*[local-name()='TmstFirma']")?.InnerText;
+            if (DateTimeOffset.TryParse(tmst, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var fecha))
+                cfe.FechaFirma = fecha;
+
+            cfe.CodigoSeguridad = doc.SelectSingleNode(
+                "//*[local-name()='SignedInfo']/*[local-name()='Reference']/*[local-name()='DigestValue']")
+                ?.InnerText.Trim();
+        }
+        catch (System.Xml.XmlException)
+        {
+            // Un firmante personalizado puede devolver XML que no sigue el formato estándar.
+        }
+    }
+
+    /// <summary>La representación impresa requiere el CFE firmado (QR con el código de seguridad).</summary>
+    private void AsegurarFirmado(Cfe cfe)
+    {
+        if (string.IsNullOrWhiteSpace(cfe.XmlFirmado))
+            GenerarYFirmar(cfe);
+    }
 
     private void ThrowIfDisposed() =>
         ObjectDisposedException.ThrowIf(_disposed, this);

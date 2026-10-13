@@ -27,7 +27,7 @@ using var client = new UruFacturaClient(config);
 
 | Propiedad | Tipo | Requerido | Descripción |
 |-----------|------|-----------|-------------|
-| `RutEmisor` | `string` | ✅ | RUT del emisor — 12 dígitos sin puntos ni guión (ej: `"210000000012"`) |
+| `RutEmisor` | `string` | ✅ | RUT del emisor — 12 dígitos sin puntos ni guión (ej: `"219999820013"`) |
 | `RazonSocialEmisor` | `string` | ✅ | Razón social del emisor tal como figura en DGI |
 | `NombreComercialEmisor` | `string?` | — | Nombre comercial o de fantasía del emisor |
 | `Giro` | `string?` | — | Giro o actividad económica del emisor |
@@ -53,6 +53,11 @@ using var client = new UruFacturaClient(config);
 | `Ambiente` | `Ambiente` | `Ambiente.Homologacion` | Define el endpoint DGI a usar |
 | `UrlEnvio` | `string?` | *(Homologación: servicio de prueba)* | URL del servicio `ws_efactura` (sobres, reporte diario, estado del envío). **Obligatoria en Producción** |
 | `UrlConsultas` | `string?` | *(Homologación: servicio de prueba)* | URL del servicio `ws_consultas` (estado de un CFE). **Obligatoria en Producción** |
+| `TelefonosEmisor` | `IReadOnlyList<string>` | vacío | Hasta 2 teléfonos del emisor (hasta 20 caracteres) que se informan en cada CFE |
+| `CorreoEmisor` / `SucursalEmisor` | `string?` | — | Correo (hasta 80) y sucursal (hasta 20) del emisor |
+| `ValorUnidadIndexada` | `decimal?` | — | Si se informa, se valida el tope de 5.000 UI para e-Tickets sin receptor |
+| `FechaIncorporacionEmisor` | `string?` | — | Leyenda "Fecha emisor" del pie impreso (fecha o `Res. N/año`) |
+| `UrlVerificacionEmisor` | `string?` | — | Leyenda de verificación de los e-Tickets (por defecto www.dgi.gub.uy) |
 | `CodigoSucursal` | `int` | `1` | Código de sucursal asignado por la DGI (`CdgDGISucur`, 1-9999) |
 | `AlgoritmoFirma` | `AlgoritmoFirma` | `Sha256` | Algoritmo de la firma del CFE y de WS-Security (`Sha1` si la DGI rechaza SHA-256) |
 | `SoapTimeoutSegundos` | `int` | `30` | Timeout en segundos para las llamadas SOAP a DGI |
@@ -73,7 +78,7 @@ Valores del enum `Ambiente`:
 var config = new UruFacturaConfig
 {
     // Identificación
-    RutEmisor           = "210000000012",
+    RutEmisor           = "219999820013",
     RazonSocialEmisor   = "Mi Empresa S.A.",
     DomicilioFiscal     = "Av. 18 de Julio 1234, Apto. 201",
     Ciudad              = "Montevideo",
@@ -101,7 +106,7 @@ Para proyectos ASP.NET Core, es recomendable usar el patrón de opciones:
 // appsettings.json
 {
   "UruFactura": {
-    "RutEmisor": "210000000012",
+    "RutEmisor": "219999820013",
     "RazonSocialEmisor": "Mi Empresa S.A.",
     "DomicilioFiscal": "Av. 18 de Julio 1234",
     "Ciudad": "Montevideo",

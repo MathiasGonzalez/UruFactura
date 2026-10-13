@@ -51,31 +51,19 @@ public class CfeXmlBuilder : ICfeXmlBuilder
         return Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
     }
 
-    private enum Familia { Ticket, Factura, FacturaExp, Remito, RemitoExp }
-
-    private static Familia FamiliaDe(TipoCfe tipo) => tipo switch
+    private static string ElementoRaiz(FamiliaCfe f) => f switch
     {
-        TipoCfe.ETicket or TipoCfe.NotaCreditoETicket or TipoCfe.NotaDebitoETicket => Familia.Ticket,
-        TipoCfe.EFactura or TipoCfe.NotaCreditoEFactura or TipoCfe.NotaDebitoEFactura => Familia.Factura,
-        TipoCfe.EFacturaExportacion or TipoCfe.NotaCreditoEFacturaExportacion
-            or TipoCfe.NotaDebitoEFacturaExportacion => Familia.FacturaExp,
-        TipoCfe.ERemito => Familia.Remito,
-        TipoCfe.ERemitoExportacion => Familia.RemitoExp,
-        _ => throw new CfeValidationException([$"El tipo de CFE {tipo} no está soportado."]),
-    };
-
-    private static string ElementoRaiz(Familia f) => f switch
-    {
-        Familia.Ticket => "eTck",
-        Familia.Factura => "eFact",
-        Familia.FacturaExp => "eFact_Exp",
-        Familia.Remito => "eRem",
-        _ => "eRem_Exp",
+        FamiliaCfe.Ticket => "eTck",
+        FamiliaCfe.Factura => "eFact",
+        FamiliaCfe.FacturaExportacion => "eFact_Exp",
+        FamiliaCfe.Remito => "eRem",
+        FamiliaCfe.RemitoExportacion => "eRem_Exp",
+        _ => "eResg",
     };
 
     private static void EscribirCfe(XmlWriter w, Cfe cfe)
     {
-        var familia = FamiliaDe(cfe.Tipo);
+        var familia = cfe.Tipo.Familia();
 
         w.WriteStartDocument();
         w.WriteStartElement("CFE", NsUri);
@@ -97,6 +85,12 @@ public class CfeXmlBuilder : ICfeXmlBuilder
             EscribirLinea(w, cfe.Detalle[i], i + 1, familia);
         w.WriteEndElement(); // Detalle
 
+        if (cfe.DescuentosRecargos.Count > 0)
+            EscribirDescuentosRecargos(w, cfe, familia);
+
+        if (cfe.MediosPago.Count > 0)
+            EscribirMediosPago(w, cfe);
+
         if (cfe.Referencias.Count > 0)
         {
             w.WriteStartElement("Referencia", NsUri);
@@ -106,6 +100,9 @@ public class CfeXmlBuilder : ICfeXmlBuilder
         }
 
         EscribirCaeData(w, cfe.CaeData!);
+
+        if (cfe.Mandante is not null)
+            EscribirComplementoFiscal(w, cfe);
 
         w.WriteEndElement(); // eXxx
         w.WriteEndElement(); // CFE
@@ -117,21 +114,23 @@ public class CfeXmlBuilder : ICfeXmlBuilder
         instante.ToOffset(TimeSpan.FromHours(-3))
                 .ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture);
 
-    private static void EscribirIdDoc(XmlWriter w, Cfe cfe, Familia familia)
+    private static void EscribirIdDoc(XmlWriter w, Cfe cfe, FamiliaCfe familia)
     {
         w.WriteStartElement("IdDoc", NsUri);
         El(w, "TipoCFE", Int(cfe.Tipo));
         El(w, "Serie", cfe.Serie!);
         El(w, "Nro", cfe.Numero.ToString(CultureInfo.InvariantCulture));
+        if (!string.IsNullOrWhiteSpace(cfe.NroInterno))
+            El(w, "NroInterno", cfe.NroInterno);
         El(w, "FchEmis", CfeFormat.DateIso(cfe.FechaEmision));
 
         switch (familia)
         {
-            case Familia.Remito:
+            case FamiliaCfe.Remito:
                 El(w, "TipoTraslado", TipoTraslado(cfe));
                 break;
 
-            case Familia.RemitoExp:
+            case FamiliaCfe.RemitoExportacion:
                 El(w, "TipoTraslado", TipoTraslado(cfe));
                 if (!string.IsNullOrWhiteSpace(cfe.ClausulaVenta))
                     El(w, "ClauVenta", cfe.ClausulaVenta);
@@ -139,8 +138,13 @@ public class CfeXmlBuilder : ICfeXmlBuilder
                 El(w, "ViaTransp", cfe.ViaTransporte!.Value.ToString(CultureInfo.InvariantCulture));
                 break;
 
-            case Familia.FacturaExp:
+            case FamiliaCfe.Resguardo:
+                break;
+
+            case FamiliaCfe.FacturaExportacion:
                 El(w, "FmaPago", Int(cfe.FormaPago));
+                if (cfe.FechaVencimiento is { } vencExp)
+                    El(w, "FchVenc", CfeFormat.DateIso(vencExp));
                 El(w, "ClauVenta", cfe.ClausulaVenta!);
                 if (cfe.ModalidadVenta.HasValue)
                     El(w, "ModVenta", cfe.ModalidadVenta.Value.ToString(CultureInfo.InvariantCulture));
@@ -150,8 +154,13 @@ public class CfeXmlBuilder : ICfeXmlBuilder
             default:
                 // Los precios del detalle son netos (sin IVA): MntBruto se omite.
                 El(w, "FmaPago", Int(cfe.FormaPago));
+                if (cfe.FechaVencimiento is { } venc)
+                    El(w, "FchVenc", CfeFormat.DateIso(venc));
                 break;
         }
+
+        if (!string.IsNullOrWhiteSpace(cfe.InfoAdicional))
+            El(w, "InfoAdicionalDoc", cfe.InfoAdicional);
 
         w.WriteEndElement(); // IdDoc
     }
@@ -171,25 +180,32 @@ public class CfeXmlBuilder : ICfeXmlBuilder
             El(w, "NomComercial", cfe.NombreComercialEmisor);
         if (!string.IsNullOrWhiteSpace(cfe.Giro))
             El(w, "GiroEmis", cfe.Giro);
+        foreach (var tel in cfe.TelefonosEmisor)
+            El(w, "Telefono", tel);
+        if (!string.IsNullOrWhiteSpace(cfe.CorreoEmisor))
+            El(w, "CorreoEmisor", cfe.CorreoEmisor);
+        if (!string.IsNullOrWhiteSpace(cfe.SucursalEmisor))
+            El(w, "EmiSucursal", cfe.SucursalEmisor);
         El(w, "CdgDGISucur", cfe.CodigoSucursal.ToString(CultureInfo.InvariantCulture));
         El(w, "DomFiscal", cfe.DomicilioFiscalEmisor);
         El(w, "Ciudad", cfe.CiudadEmisor);
         El(w, "Departamento", cfe.DepartamentoEmisor);
+        if (!string.IsNullOrWhiteSpace(cfe.InfoAdicionalEmisor))
+            El(w, "InfoAdicionalEmisor", cfe.InfoAdicionalEmisor);
         w.WriteEndElement(); // Emisor
     }
 
-    private static void EscribirReceptor(XmlWriter w, Cfe cfe, Familia familia)
+    private static void EscribirReceptor(XmlWriter w, Cfe cfe, FamiliaCfe familia)
     {
         var r = cfe.Receptor!;
         var conDocumento = !string.IsNullOrWhiteSpace(r.Documento);
         var pais = string.IsNullOrWhiteSpace(r.CodigoPais) ? "UY" : r.CodigoPais.ToUpperInvariant();
-        var tipoDoc = TipoDocumentoDgi(r.TipoDocumento);
 
         w.WriteStartElement("Receptor", NsUri);
 
         if (conDocumento)
         {
-            if (familia == Familia.Factura)
+            if (familia == FamiliaCfe.Factura)
             {
                 // Receptor_Fact: documento fijo RUC (2) de Uruguay.
                 El(w, "TipoDocRecep", "2");
@@ -198,7 +214,7 @@ public class CfeXmlBuilder : ICfeXmlBuilder
             }
             else
             {
-                El(w, "TipoDocRecep", tipoDoc);
+                El(w, "TipoDocRecep", TipoDocumentoDgi(r.TipoDocumento));
                 El(w, "CodPaisRecep", pais);
                 El(w, pais == "UY" ? "DocRecep" : "DocRecepExt", r.Documento!);
             }
@@ -206,54 +222,72 @@ public class CfeXmlBuilder : ICfeXmlBuilder
 
         if (!string.IsNullOrWhiteSpace(r.RazonSocial))
             El(w, "RznSocRecep", r.RazonSocial);
-
-        // Dirección, ciudad y departamento solo existen en el receptor de e-Ticket y e-Factura.
-        if (familia is Familia.Ticket or Familia.Factura)
-        {
-            if (!string.IsNullOrWhiteSpace(r.Direccion))
-                El(w, "DirRecep", r.Direccion);
-            if (!string.IsNullOrWhiteSpace(r.Ciudad))
-                El(w, "CiudadRecep", r.Ciudad);
-            if (!string.IsNullOrWhiteSpace(r.Departamento))
-                El(w, "DeptoRecep", r.Departamento);
-        }
-
+        if (!string.IsNullOrWhiteSpace(r.Direccion))
+            El(w, "DirRecep", r.Direccion);
+        if (!string.IsNullOrWhiteSpace(r.Ciudad))
+            El(w, "CiudadRecep", r.Ciudad);
+        if (!string.IsNullOrWhiteSpace(r.Departamento))
+            El(w, "DeptoRecep", r.Departamento);
         if (!string.IsNullOrWhiteSpace(r.Pais))
             El(w, "PaisRecep", r.Pais);
+        if (!string.IsNullOrWhiteSpace(r.CodigoPostal))
+            El(w, "CP", r.CodigoPostal);
+        if (!string.IsNullOrWhiteSpace(r.InfoAdicional))
+            El(w, "InfoAdicional", r.InfoAdicional);
+        if (familia != FamiliaCfe.Resguardo)
+        {
+            if (!string.IsNullOrWhiteSpace(r.LugarDestinoEntrega))
+                El(w, "LugarDestEnt", r.LugarDestinoEntrega);
+            if (!string.IsNullOrWhiteSpace(r.CompraId))
+                El(w, "CompraID", r.CompraId);
+        }
 
         w.WriteEndElement(); // Receptor
     }
 
-    /// <summary>Código de tipo de documento de la DGI (<c>DocType</c>): 2 RUC, 3 CI, 4 Otro, 5 Pasaporte.</summary>
+    /// <summary>Código de tipo de documento de la DGI (<c>DocType</c>).</summary>
     private static string TipoDocumentoDgi(TipoDocumentoReceptor tipo) => tipo switch
     {
         TipoDocumentoReceptor.Rut => "2",
         TipoDocumentoReceptor.CedulaIdentidad => "3",
         TipoDocumentoReceptor.Pasaporte => "5",
-        TipoDocumentoReceptor.Otro or TipoDocumentoReceptor.DocumentoExterior => "4",
         TipoDocumentoReceptor.Dni => "6",
         TipoDocumentoReceptor.Nife => "7",
         _ => "4",
     };
 
-    private static void EscribirTotales(XmlWriter w, Cfe cfe, Familia familia)
+    private static void EscribirTotales(XmlWriter w, Cfe cfe, FamiliaCfe familia)
     {
         w.WriteStartElement("Totales", NsUri);
 
         switch (familia)
         {
-            case Familia.Remito:
+            case FamiliaCfe.Remito:
                 El(w, "CantLinDet", Cant(cfe));
                 break;
 
-            case Familia.RemitoExp:
-            case Familia.FacturaExp:
+            case FamiliaCfe.RemitoExportacion:
+            case FamiliaCfe.FacturaExportacion:
                 EscribirMoneda(w, cfe);
                 El(w, "MntExpoyAsim", M2(cfe.MontoExportacion));
                 El(w, "MntTotal", M2(cfe.MontoTotal));
                 El(w, "CantLinDet", Cant(cfe));
-                if (familia == Familia.FacturaExp)
+                if (familia == FamiliaCfe.FacturaExportacion)
                     El(w, "MntPagar", M2(cfe.MontoTotal));
+                break;
+
+            case FamiliaCfe.Resguardo:
+                EscribirMoneda(w, cfe);
+                El(w, "MntTotRetenido", M2(cfe.MontoRetenido));
+                El(w, "CantLinDet", Cant(cfe));
+                foreach (var grupo in cfe.Detalle.SelectMany(l => l.Retenciones)
+                             .GroupBy(r => r.Codigo))
+                {
+                    w.WriteStartElement("RetencPercep", NsUri);
+                    El(w, "CodRet", grupo.Key);
+                    El(w, "ValRetPerc", M2(grupo.Sum(r => r.Valor)));
+                    w.WriteEndElement();
+                }
                 break;
 
             default:
@@ -290,16 +324,44 @@ public class CfeXmlBuilder : ICfeXmlBuilder
             El(w, "TpoCambio", CfeFormat.DecimalInvariant(cfe.TipoCambio.Value, "F3"));
     }
 
-    private static void EscribirLinea(XmlWriter w, LineaDetalle linea, int nro, Familia familia)
+    private static void EscribirLinea(XmlWriter w, LineaDetalle linea, int nro, FamiliaCfe familia)
     {
         w.WriteStartElement("Item", NsUri);
         El(w, "NroLinDet", nro.ToString(CultureInfo.InvariantCulture));
 
+        if (familia == FamiliaCfe.Resguardo)
+        {
+            foreach (var ret in linea.Retenciones)
+            {
+                w.WriteStartElement("RetencPercep", NsUri);
+                El(w, "CodRet", ret.Codigo);
+                if (ret.Tasa.HasValue)
+                    El(w, "Tasa", CfeFormat.DecimalInvariant(ret.Tasa.Value, "F3"));
+                El(w, "MntSujetoaRet", M2(ret.MontoSujeto));
+                if (!string.IsNullOrWhiteSpace(ret.InfoAdicional))
+                    El(w, "InfoAdicionalRet", ret.InfoAdicional);
+                El(w, "ValRetPerc", M2(ret.Valor));
+                w.WriteEndElement();
+            }
+            w.WriteEndElement();
+            return;
+        }
+
+        foreach (var cod in linea.Codigos)
+        {
+            w.WriteStartElement("CodItem", NsUri);
+            El(w, "TpoCod", cod.Tipo);
+            El(w, "Cod", cod.Codigo);
+            w.WriteEndElement();
+        }
+
         var unidad = string.IsNullOrWhiteSpace(linea.UnidadMedida) ? "N/A" : linea.UnidadMedida;
 
-        if (familia == Familia.Remito)
+        if (familia == FamiliaCfe.Remito)
         {
             El(w, "NomItem", linea.NombreItem);
+            if (!string.IsNullOrWhiteSpace(linea.Descripcion))
+                El(w, "DscItem", linea.Descripcion);
             El(w, "Cantidad", CfeFormat.DecimalInvariant(linea.Cantidad, "F3"));
             El(w, "UniMed", unidad);
             w.WriteEndElement();
@@ -307,37 +369,98 @@ public class CfeXmlBuilder : ICfeXmlBuilder
         }
 
         // Item_Rem_Exp no admite IndFact 10: en el e-Remito de exportación se omite.
-        if (familia != Familia.RemitoExp)
+        if (familia != FamiliaCfe.RemitoExportacion)
             El(w, "IndFact", IndFact(linea, familia));
         El(w, "NomItem", linea.NombreItem);
+        if (!string.IsNullOrWhiteSpace(linea.Descripcion))
+            El(w, "DscItem", linea.Descripcion);
         El(w, "Cantidad", CfeFormat.DecimalInvariant(linea.Cantidad, "F3"));
         El(w, "UniMed", unidad);
         El(w, "PrecioUnitario", CfeFormat.DecimalInvariant(linea.PrecioUnitario, "F6"));
 
-        if (linea.DescuentoMonto > 0 && familia != Familia.RemitoExp)
-            El(w, "DescuentoMonto", M2(linea.DescuentoMonto));
-
-        if (linea.RecargoMonto > 0 && familia != Familia.RemitoExp)
-            El(w, "RecargoMnt", M2(linea.RecargoMonto));
+        if (familia != FamiliaCfe.RemitoExportacion)
+        {
+            if (linea.DescuentoPorcentaje is > 0)
+                El(w, "DescuentoPct", CfeFormat.DecimalInvariant(linea.DescuentoPorcentaje.Value, "F3"));
+            if (linea.DescuentoEfectivo > 0)
+                El(w, "DescuentoMonto", M2(linea.DescuentoEfectivo));
+            if (linea.RecargoMonto > 0)
+                El(w, "RecargoMnt", M2(linea.RecargoMonto));
+        }
 
         El(w, "MontoItem", M2(linea.MontoTotal));
         w.WriteEndElement(); // Item
     }
 
     /// <summary>Indicador de facturación (<c>IndFact</c>) de la línea.</summary>
-    private static string IndFact(LineaDetalle linea, Familia familia)
+    private static string IndFact(LineaDetalle linea, FamiliaCfe familia)
     {
-        if (familia is Familia.FacturaExp or Familia.RemitoExp)
+        if (familia is FamiliaCfe.FacturaExportacion or FamiliaCfe.RemitoExportacion)
             return "10"; // Exportación y asimiladas
 
-        return linea.IndFactIva switch
+        return IndFact(linea.IndFactIva);
+    }
+
+    private static string IndFact(TipoIva iva) => iva switch
+    {
+        TipoIva.Exento => "1",
+        TipoIva.Minimo => "2",
+        TipoIva.Basico => "3",
+        TipoIva.Suspendido => "12", // IVA en suspenso
+        _ => throw new CfeValidationException([$"Indicador de IVA no soportado: {iva}."]),
+    };
+
+    private static void EscribirDescuentosRecargos(XmlWriter w, Cfe cfe, FamiliaCfe familia)
+    {
+        w.WriteStartElement("DscRcgGlobal", NsUri);
+        for (int i = 0; i < cfe.DescuentosRecargos.Count; i++)
         {
-            TipoIva.Exento => "1",
-            TipoIva.Minimo => "2",
-            TipoIva.Basico => "3",
-            TipoIva.Suspendido => "12", // IVA en suspenso
-            _ => throw new CfeValidationException([$"Indicador de IVA no soportado: {linea.IndFactIva}."]),
-        };
+            var d = cfe.DescuentosRecargos[i];
+            w.WriteStartElement("DRG_Item", NsUri);
+            El(w, "NroLinDR", (i + 1).ToString(CultureInfo.InvariantCulture));
+            El(w, "TpoMovDR", d.Tipo == TipoMovimientoGlobal.Descuento ? "D" : "R");
+            El(w, "TpoDR", "1"); // monto en pesos
+            if (d.Codigo.HasValue)
+                El(w, "CodDR", d.Codigo.Value.ToString(CultureInfo.InvariantCulture));
+            El(w, "GlosaDR", d.Glosa);
+            El(w, "ValorDR", M2(d.Monto));
+            El(w, "IndFactDR", familia == FamiliaCfe.FacturaExportacion ? "10" : IndFact(d.IndFact));
+            w.WriteEndElement();
+        }
+        w.WriteEndElement(); // DscRcgGlobal
+    }
+
+    private static void EscribirMediosPago(XmlWriter w, Cfe cfe)
+    {
+        w.WriteStartElement("MediosPago", NsUri);
+        for (int i = 0; i < cfe.MediosPago.Count; i++)
+        {
+            var m = cfe.MediosPago[i];
+            w.WriteStartElement("MedioPago", NsUri);
+            El(w, "NroLinMP", (i + 1).ToString(CultureInfo.InvariantCulture));
+            if (m.Codigo.HasValue)
+                El(w, "CodMP", m.Codigo.Value.ToString(CultureInfo.InvariantCulture));
+            El(w, "GlosaMP", m.Glosa);
+            if (m.Orden.HasValue)
+                El(w, "OrdenMP", m.Orden.Value.ToString(CultureInfo.InvariantCulture));
+            El(w, "ValorPago", M2(m.Valor));
+            w.WriteEndElement();
+        }
+        w.WriteEndElement(); // MediosPago
+    }
+
+    private static void EscribirComplementoFiscal(XmlWriter w, Cfe cfe)
+    {
+        var m = cfe.Mandante!;
+        w.WriteStartElement("Compl_Fiscal", NsUri);
+        w.WriteStartElement("Compl_Fiscal_Data", NsUri);
+        El(w, "RUCEmisor", cfe.RutEmisor);
+        El(w, "TipoDocMdte", TipoDocumentoDgi(m.TipoDocumento));
+        El(w, "Pais", m.CodigoPais.ToUpperInvariant());
+        El(w, "DocMdte", m.Documento);
+        El(w, "NombreMdte", m.Nombre);
+        w.WriteEndElement();
+        w.WriteEndElement();
     }
 
     private static void EscribirReferencia(XmlWriter w, RefCfe r, int nro)

@@ -15,7 +15,7 @@ public class QrCodeTests
             Numero = 100,
             Serie = "A",
             FechaEmision = new DateOnly(2025, 6, 15),
-            RutEmisor = "210000000012",
+            RutEmisor = "219999820013",
             RazonSocialEmisor = "Empresa Test S.A.",
             MontoTotal = 1220m,
         };

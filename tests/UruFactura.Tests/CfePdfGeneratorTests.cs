@@ -15,7 +15,7 @@ public class CfePdfGeneratorTests
 {
     private static UruFacturaConfig ConfigValida() => new()
     {
-        RutEmisor = "210000000012",
+        RutEmisor = "219999820013",
         RazonSocialEmisor = "Empresa Test S.A.",
         NombreComercialEmisor = "Comercio Test",
         DomicilioFiscal = "Av. 18 de Julio 1234",
@@ -29,7 +29,7 @@ public class CfePdfGeneratorTests
         Numero = 1,
         Serie = "A",
         FechaEmision = new DateOnly(2025, 6, 15),
-        RutEmisor = "210000000012",
+        RutEmisor = "219999820013",
         RazonSocialEmisor = "Empresa Test S.A.",
         MontoTotal = 1220m,
         MontoNetoBasico = 1000m,

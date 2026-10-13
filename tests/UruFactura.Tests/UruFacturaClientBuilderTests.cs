@@ -40,7 +40,7 @@ public class UruFacturaClientBuilderTests : IDisposable
 
     private UruFacturaConfig ConfigValida() => new()
     {
-        RutEmisor = "210000000012",
+        RutEmisor = "219999820013",
         RazonSocialEmisor = "Empresa Test S.A.",
         DomicilioFiscal = "Av. 18 de Julio 1234",
         Ciudad = "Montevideo",
@@ -180,6 +180,7 @@ public class UruFacturaClientBuilderTests : IDisposable
     {
         var pdfStub = new PdfGeneratorStub();
         using var client = UruFacturaClientBuilder.WithDefaults(ConfigValida())
+            .WithXmlBuilder(new XmlBuilderStub())
             .WithSigner(new FirmanteStub())
             .WithSoapClient(new SoapClientStub())
             .WithPdfGenerator(pdfStub)

@@ -50,38 +50,56 @@ internal static class TestData
             },
         };
 
-        if (tipo is TipoCfe.EFactura or TipoCfe.NotaCreditoEFactura or TipoCfe.NotaDebitoEFactura)
-            cfe.Receptor = new Receptor { Documento = "210000000012", RazonSocial = "Cliente S.A.", TipoDocumento = TipoDocumentoReceptor.Rut };
+        var familia = tipo.Familia();
 
-        if (Cfe.EsExportacion(tipo))
+        if (familia == FamiliaCfe.Factura)
+            cfe.Receptor = new Receptor { Documento = "214844360018", RazonSocial = "Cliente S.A.", TipoDocumento = TipoDocumentoReceptor.Rut };
+
+        if (tipo.EsExportacion())
         {
             cfe.Receptor = new Receptor
             {
                 Documento = "X1234567", TipoDocumento = TipoDocumentoReceptor.Pasaporte,
                 RazonSocial = "Importer Inc.", CodigoPais = "US", Pais = "Estados Unidos",
             };
-            cfe.ClausulaVenta = "FOB";
+            cfe.ClausulaVenta = familia == FamiliaCfe.RemitoExportacion ? null : "FOB";
             cfe.ModalidadVenta = 1;
             cfe.ViaTransporte = 1;
             cfe.Moneda = Moneda.DolarAmericano;
             cfe.TipoCambio = 40.5m;
         }
 
-        if (tipo is TipoCfe.ERemito or TipoCfe.ERemitoExportacion)
+        if (tipo.EsRemito())
             cfe.IndTraslado = IndTraslado.TrasladoPorVenta;
 
-        if (tipo is TipoCfe.NotaCreditoETicket or TipoCfe.NotaDebitoETicket
-            or TipoCfe.NotaCreditoEFactura or TipoCfe.NotaDebitoEFactura
-            or TipoCfe.NotaCreditoEFacturaExportacion or TipoCfe.NotaDebitoEFacturaExportacion)
+        if (familia == FamiliaCfe.Resguardo)
         {
+            cfe.Receptor = new Receptor { Documento = "214844360018", RazonSocial = "Proveedor S.A.", TipoDocumento = TipoDocumentoReceptor.Rut };
+            cfe.Detalle.Clear();
+            cfe.Detalle.Add(new LineaDetalle
+            {
+                Retenciones =
+                {
+                    new RetencionPercepcion { Codigo = "R1", Tasa = 12m, MontoSujeto = 1000m, Valor = 120m },
+                    new RetencionPercepcion { Codigo = "R2", MontoSujeto = 500m, Valor = 25m, InfoAdicional = "detalle" },
+                },
+            });
+        }
+
+        if (tipo.EsCuentaAjena())
+            cfe.Mandante = new Mandante { TipoDocumento = TipoDocumentoReceptor.Rut, CodigoPais = "UY", Documento = "214844360018", Nombre = "Mandante S.A." };
+
+        if (tipo.EsNotaCorreccion())
+        {
+            var referenciado = familia switch
+            {
+                FamiliaCfe.Factura => TipoCfe.EFactura,
+                FamiliaCfe.FacturaExportacion => TipoCfe.EFacturaExportacion,
+                _ => TipoCfe.ETicket,
+            };
             cfe.Referencias.Add(new RefCfe
             {
-                TipoCfe = tipo switch
-                {
-                    TipoCfe.NotaCreditoETicket or TipoCfe.NotaDebitoETicket => TipoCfe.ETicket,
-                    TipoCfe.NotaCreditoEFactura or TipoCfe.NotaDebitoEFactura => TipoCfe.EFactura,
-                    _ => TipoCfe.EFacturaExportacion,
-                },
+                TipoCfe = referenciado,
                 Serie = "A",
                 NroCfe = 10,
                 FechaCfe = new DateTime(2026, 6, 1),

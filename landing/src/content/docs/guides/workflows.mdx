@@ -180,7 +180,9 @@ classDiagram
     class UruFacturaClient {
         +Cae: ICaeManager
         +CrearETicket() Cfe
+        +AsignarCae(cfe)
         +EnviarCfeAsync(cfe) Task~RespuestaDgi~
+        +ConsultarEstadoEnvioAsync(envio, cfes) Task
         +GenerarYFirmar(cfe) string
         +GenerarPdfA4(cfe) byte[]
         +EnviarReporteDiarioAsync(...) Task
@@ -208,9 +210,10 @@ classDiagram
 
     class IDgiSoapClient {
         <<interface>>
-        +EnviarCfeAsync(xml) Task
-        +EnviarReporteDiarioAsync(...) Task
-        +ConsultarEstadoCfeAsync(...) Task
+        +EnviarSobreAsync(sobreXml) Task
+        +ConsultarEstadoEnvioAsync(idReceptor, token) Task
+        +ConsultarEstadoCfeAsync(tipo, serie, nro) Task
+        +EnviarReporteDiarioAsync(reporteXml) Task
     }
 
     class ICfePdfGenerator {

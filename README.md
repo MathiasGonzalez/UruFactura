@@ -68,7 +68,7 @@ UruFactura/
 var config = new UruFacturaConfig
 {
     // Obligatorios
-    RutEmisor           = "210000000012",       // 12 dígitos, sin puntos ni guión
+    RutEmisor           = "219999820013",       // 12 dígitos, sin puntos ni guión
     RazonSocialEmisor   = "Mi Empresa S.A.",
     DomicilioFiscal     = "Av. 18 de Julio 1234",
     Ciudad              = "Montevideo",
@@ -84,6 +84,12 @@ var config = new UruFacturaConfig
     OmitirValidacionSsl   = true,               // solo en Homologación con CA no confiable
     CodigoSucursal        = 1,                  // CdgDGISucur asignado por la DGI (default: 1)
     AlgoritmoFirma        = AlgoritmoFirma.Sha256, // o Sha1 si la DGI rechaza SHA-256 en tu ambiente
+
+    TelefonosEmisor       = ["29001234"],       // opcional, hasta 2
+    CorreoEmisor          = "ventas@empresa.com.uy",
+    ValorUnidadIndexada   = 6.2m,               // opcional: valida el tope de 5.000 UI para e-Tickets sin receptor
+    FechaIncorporacionEmisor = "01/01/2020",    // leyenda "Fecha emisor" de la representación impresa (o "Res. N/año")
+    UrlVerificacionEmisor = "www.miempresa.com.uy", // leyenda de verificación de e-Tickets (por defecto www.dgi.gub.uy)
 
     // En Producción son obligatorias (la DGI las entrega al habilitar el ambiente).
     // En Homologación se usan por defecto los servicios de prueba de la DGI.
@@ -164,6 +170,8 @@ Console.WriteLine(estado.Exitoso
 > un comprobante suelto con `ConsultarEstadoCfeAsync(cfe)`.
 
 ### 3. Generar PDF
+
+El PDF incluye el QR y los datos del pie exigidos por la DGI (código de seguridad, CAE, rango y vencimiento). `GenerarPdfA4`/`GenerarPdfTermico` firman el CFE si todavía no lo está, porque el QR lleva el código de seguridad de la firma.
 
 ```csharp
 // PDF A4
@@ -257,6 +265,62 @@ var remito = client.CrearERemito();
 remito.IndTraslado = IndTraslado.TrasladoPorVenta; // se informa como TipoTraslado 1 (venta) o 2 (traslado interno)
 ```
 
+### 8. Descuentos globales, medios de pago, retenciones y otros datos
+
+```csharp
+// Descuento o recargo global (en monto, sin IVA) sobre la base de un tipo de IVA: cambia el IVA y el total
+cfe.DescuentosRecargos.Add(new DescuentoRecargoGlobal
+{
+    Tipo = TipoMovimientoGlobal.Descuento, Glosa = "Promoción", Monto = 50m, IndFact = TipoIva.Basico,
+});
+
+// Medios de pago (hasta 40)
+cfe.MediosPago.Add(new MedioPago { Glosa = "Efectivo", Valor = 500m, Orden = 1 });
+
+// Datos opcionales del comprobante, del receptor y de las líneas
+cfe.NroInterno = "PED-1234";
+cfe.FormaPago = FormaPago.Credito;
+cfe.FechaVencimiento = new DateOnly(2026, 7, 31);
+cfe.InfoAdicional = "Orden de compra 77";
+cfe.Receptor.CodigoPostal = "11200";
+cfe.Detalle[0].Codigos.Add(new CodigoItem { Tipo = "EAN13", Codigo = "7730000000001" });
+cfe.Detalle[0].Descripcion = "Descripción ampliada";
+cfe.Detalle[0].DescuentoPorcentaje = 10m;   // se calcula el monto si no se informa DescuentoMonto
+
+// e-Resguardo: las retenciones van en las líneas
+var resguardo = client.CrearEResguardo();
+resguardo.Receptor = new Receptor { Documento = "214844360018", RazonSocial = "Proveedor S.A." };
+resguardo.Detalle.Add(new LineaDetalle
+{
+    Retenciones = { new RetencionPercepcion { Codigo = "R1", Tasa = 12m, MontoSujeto = 1000m, Valor = 120m } },
+});
+
+// Venta por cuenta ajena: datos del mandante
+var cuentaAjena = client.Crear(TipoCfe.ETicketCuentaAjena);
+cuentaAjena.Mandante = new Mandante { Documento = "214844360018", Nombre = "Mandante S.A." };
+```
+
+### 9. Persistencia de CAE al iniciar
+
+```csharp
+using var client = UruFacturaClientBuilder.WithDefaults(config)
+    .WithCaeRepository(miRepositorio)
+    .Build();
+
+await client.CargarCaesAsync();            // al iniciar: carga los CAE con su último número usado
+await client.RegistrarCaeAsync(nuevoCae);  // alta de un CAE: lo registra y lo guarda
+await client.AsignarCaeAsync(cfe);         // cada emisión persiste el número usado
+```
+
+### 10. Validaciones locales
+
+`cfe.Validar()` (que también ejecuta `GenerarXml`) detecta antes de enviar: RUT del emisor y del receptor con
+dígito verificador inválido, serie y número fuera del rango del CAE, longitudes máximas del esquema, receptor
+faltante en e-Factura/e-Resguardo, datos de exportación y de remito, mandante en cuenta ajena, referencias de las
+notas, descuentos y medios de pago mal formados y, si configurás `ValorUnidadIndexada`, e-Tickets sobre 5.000 UI sin
+identificar al receptor. Las reglas que dependen de datos de la DGI (por ejemplo, si el emisor está habilitado) solo
+las valida la DGI al recibir el sobre.
+
 ---
 
 ## 📄 Tipos de CFE soportados
@@ -274,11 +338,16 @@ remito.IndTraslado = IndTraslado.TrasladoPorVenta; // se informa como TipoTrasla
 | 123 | Nota de Débito e-Factura Exportación | `CrearNotaDebitoEFacturaExportacion()` |
 | 124 | e-Remito de Exportación | `CrearERemitoExportacion()` |
 | 181 | e-Remito | `CrearERemito()` |
+| 182 | e-Resguardo | `CrearEResguardo()` |
+| 131-133 | e-Ticket y sus notas, venta por cuenta ajena | `Crear(TipoCfe.ETicketCuentaAjena)` … |
+| 141-143 | e-Factura y sus notas, venta por cuenta ajena | `Crear(TipoCfe.EFacturaCuentaAjena)` … |
+| 201-203, 211-213, 221-224, 231-233, 241-243, 281, 282 | Comprobantes de contingencia (CFC) | `Crear(TipoCfe.ETicketContingencia)` … |
 
-> ℹ️ Los códigos son los del formato CFE de la DGI. El **e-Resguardo (182)** existe en el SDK
-> (`CrearEResguardo()`) pero todavía no se puede emitir: requiere retenciones/percepciones que el
-> modelo aún no incluye y `Validar()` lo informa. Los e-Remitos no tienen notas de crédito/débito.
-> Los tipos 131-133 (venta por cuenta ajena), 141-143 y 151-153 (e-Boleta de entrada) no están soportados.
+> ℹ️ Los códigos son los del formato CFE de la DGI. Los tipos sin método propio se crean con
+> `client.Crear(TipoCfe.…)`. Las **ventas por cuenta ajena** exigen `cfe.Mandante`; el **e-Resguardo**
+> informa las retenciones en `LineaDetalle.Retenciones` (la línea no lleva nombre ni precio). Los
+> e-Remitos no tienen notas de crédito/débito. **No soportados:** e-Boleta de entrada (151-153 y 251-253),
+> la adenda, y los descuentos/recargos globales en porcentaje (solo en monto).
 
 ---
 
@@ -396,7 +465,7 @@ lo que la DGI rechazaría por duplicado.
 UruFactura separa la gestión en memoria (`ICaeManager`) de la persistencia (`ICaeRepository`):
 
 ```
-Al iniciar la app:   repo.CargarTodosAsync() → manager.RegistrarCaes()
+Al iniciar la app:   await client.CargarCaesAsync()   (repo.CargarTodosAsync() → manager.RegistrarCaes())
 Al emitir un CFE:    await client.AsignarCaeAsync(cfe)   (toma el número y llama a repo.ActualizarUltimoNroUsadoAsync)
 ```
 

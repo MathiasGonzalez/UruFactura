@@ -143,7 +143,9 @@ Todas las dependencias internas del cliente tienen interfaces para facilitar el 
 | `ICfeQrGenerator` | `CfeQrGenerator` | Generación del código QR DGI |
 | `ICfeFirmante` | `CfeFirmante` | Firma XML Signature enveloped (CFE y reporte) |
 | `ICfeXmlBuilder` | `CfeXmlBuilder` | Serialización del XML según esquema DGI |
-| `IDgiSoapClient` | `DgiSoapClient` | Transporte SOAP hacia DGI |
+| `IDgiSoapClient` | `DgiSoapClient` | Transporte SOAP hacia DGI (`EnviarSobreAsync`, `ConsultarEstadoEnvioAsync`, `ConsultarEstadoCfeAsync`, `EnviarReporteDiarioAsync`) con WS-Security |
+
+Los métodos públicos de las clases por defecto son `virtual`, por lo que se pueden extender por herencia.
 
 ---
 
@@ -155,10 +157,27 @@ Clase base de todos los comprobantes. No se instancia directamente — usá los 
 
 | Propiedad | Tipo | Descripción |
 |-----------|------|-------------|
-| `Numero` | `long` | Número del comprobante (dentro del rango CAE) |
+| `Numero` | `long` | Número del comprobante (dentro del rango CAE, 1-9999999). Lo completa `AsignarCae` |
+| `Serie` | `string?` | Serie (`A`, `AB` o `1A`). Lo completa `AsignarCae` |
+| `CaeData` | `CaeData?` | Datos del CAE (`CAE_ID`, rango y vencimiento) que van en el bloque `CAEData`. Lo completa `AsignarCae` |
+| `CodigoSucursal` | `int` | `CdgDGISucur` del emisor (viene de la configuración) |
 | `FechaEmision` | `DateOnly` | Fecha de emisión (default: `DateOnly.FromDateTime(DateTime.Today)`) |
 | `Detalle` | `List<LineaDetalle>` | Líneas de detalle del comprobante |
 | `Referencias` | `List<RefCfe>` | Referencias a comprobantes (para NC/ND) |
+| `ClausulaVenta` | `string?` | Incoterm (1-3 letras) o `N/A`; obligatoria en e-Factura de exportación |
+| `ModalidadVenta` | `int?` | `ModVenta` (1 régimen general, 2 consignación, …); obligatoria en exportación |
+| `ViaTransporte` | `int?` | `ViaTransp` (1 marítimo, 2 aéreo, 3 terrestre, 9 otro); obligatoria en exportación |
+| `NroInterno` | `string?` | Número interno del emisor (hasta 50 caracteres) |
+| `FechaVencimiento` | `DateOnly?` | Vencimiento del pago (`FchVenc`) |
+| `InfoAdicional` | `string?` | Información adicional del comprobante (hasta 150 caracteres) |
+| `Mandante` | `Mandante?` | Obligatorio en las ventas por cuenta ajena |
+| `DescuentosRecargos` | `List<DescuentoRecargoGlobal>` | Descuentos/recargos globales en monto (hasta 20); cambian la base del IVA |
+| `MediosPago` | `List<MedioPago>` | Medios de pago (hasta 40) |
+| `TelefonosEmisor`, `CorreoEmisor`, `SucursalEmisor`, `InfoAdicionalEmisor` | — | Datos opcionales del emisor (los completa la configuración) |
+| `MontoRetenido` | `decimal` | Total retenido (e-Resguardo) |
+| `FechaFirma` / `CodigoSeguridad` | `DateTimeOffset?` / `string?` | Los completa `FirmarCfe`; van en el QR de la representación impresa |
+| `IdReceptorDgi` / `TokenDgi` | `string?` | Datos del acuse del sobre, para consultar el estado |
+| `AceptadoPorDgi` | `bool` | `true` solo si la consulta de estado informó `AE` |
 
 ### `LineaDetalle`
 
@@ -184,11 +203,13 @@ Datos del receptor del comprobante (requerido para e-Factura).
 | `Documento` | `string?` | ✅ | RUT u otro documento del receptor |
 | `TipoDocumento` | `TipoDocumentoReceptor` | ✅ | Tipo de documento del receptor |
 | `RazonSocial` | `string?` | ✅ | Razón social del receptor |
+| `CodigoPostal` / `InfoAdicional` / `CompraId` / `LugarDestinoEntrega` | `string?` | — | Datos opcionales del receptor (el código postal es numérico de hasta 5 dígitos) |
 | `Direccion` | `string?` | — | Domicilio del receptor |
 | `Ciudad` | `string?` | — | Ciudad del receptor |
 | `Departamento` | `string?` | — | Departamento del receptor |
 | `Pais` | `string?` | — | País del receptor (para exportación) |
-| `Email` | `string?` | — | Email del receptor |
+| `Email` | `string?` | — | Email del receptor (no se incluye en el XML) |
+| `CodigoPais` | `string` | — | País del documento (ISO alfa-2, default `UY`); si no es `UY` el documento va como documento extranjero |
 
 ### `Cae`
 
@@ -222,13 +243,17 @@ Referencia a otro comprobante (usado en notas de crédito/débito).
 
 ### `RespuestaDgi`
 
-Respuesta del servidor DGI tras el envío de un CFE.
+Respuesta de la DGI a un envío o consulta (acuse `ACKSobre`, `ACKCFE` o `ACKRepDiario`).
 
 | Propiedad | Tipo | Descripción |
 |-----------|------|-------------|
-| `Exitoso` | `bool` | `true` si el código es `00` o `01` |
-| `Codigo` | `string` | Código de respuesta DGI |
-| `Mensaje` | `string` | Descripción de la respuesta |
+| `Exitoso` | `bool` | `true` si el sobre/reporte fue recibido (`AS`/`AR`) o, en la consulta del envío, todos los comprobantes están en `AE` |
+| `Codigo` | `string` | Estado DGI (`AS`, `BS`, `BA`, `AR`, `BR`, `AE`, `BE`, `CE`, `FE`), `SOAP_FAULT` o el código HTTP |
+| `Mensaje` | `string` | Descripción, incluidos los motivos de rechazo |
+| `IdReceptor` | `string?` | Número asignado por la DGI al envío |
+| `Token` | `string?` | Token para consultar el resultado del envío |
+| `ConsultarDesde` | `DateTimeOffset?` | Desde cuándo se puede consultar el resultado |
+| `Comprobantes` | `List<EstadoComprobante>` | Estado por comprobante (tipo, serie, número, estado y motivos) |
 | `FechaRespuesta` | `DateTime` | Timestamp UTC de la respuesta |
 | `XmlRespuesta` | `string?` | XML de respuesta en bruto (opcional) |
 

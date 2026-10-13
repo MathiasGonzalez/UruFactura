@@ -227,7 +227,7 @@ public class CfeModelTests
     {
         var cfe = CrearCfeValido();
         cfe.Tipo = TipoCfe.EFactura;
-        cfe.Receptor = new Receptor { Documento = "210000000013", TipoDocumento = TipoDocumentoReceptor.Rut };
+        cfe.Receptor = new Receptor { Documento = "214844360018", TipoDocumento = TipoDocumentoReceptor.Rut };
         var errores = cfe.Validar();
         Assert.DoesNotContain(errores, e => e.Contains("receptor"));
     }
