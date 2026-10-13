@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>UruFactura</RootNamespace>
     <AssemblyName>UruFactura</AssemblyName>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <Authors>MathiasGonzalez</Authors>
     <Description>SDK .Net C# para facturación electrónica DGI Uruguay (e-Factura / CFE)</Description>
     <PackageTags>dgi;uruguay;efactura;cfe;facturacion-electronica</PackageTags>
@@ -23,6 +23,10 @@
 
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="UruFactura.Tests" />
   </ItemGroup>
 
   <ItemGroup>

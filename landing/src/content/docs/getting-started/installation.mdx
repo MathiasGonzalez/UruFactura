@@ -103,7 +103,7 @@ Deberías ver algo como:
    ```csharp
    var config = new UruFacturaConfig
    {
-       RutEmisor           = "210000000012",      // 12 dígitos, sin puntos ni guión
+       RutEmisor           = "219999820013",      // 12 dígitos, sin puntos ni guión
        RazonSocialEmisor   = "Mi Empresa S.A.",
        DomicilioFiscal     = "Av. 18 de Julio 1234",
        Ciudad              = "Montevideo",
@@ -197,7 +197,7 @@ builder.Services.AddSingleton<IUruFacturaClient>(sp =>
 // appsettings.json
 {
   "UruFactura": {
-    "RutEmisor": "210000000012",
+    "RutEmisor": "219999820013",
     "RazonSocial": "Mi Empresa S.A.",
     "Domicilio": "Av. 18 de Julio 1234",
     "Ciudad": "Montevideo",

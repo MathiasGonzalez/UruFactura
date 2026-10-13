@@ -224,12 +224,12 @@ Si estás usando otra librería .NET de facturación electrónica uruguaya:
   var respuesta = await client.EnviarCfeAsync(cfe);
 
   // respuesta.Exitoso: bool
-  // respuesta.Codigo: string ("00", "01", "05", ...)
+  // respuesta.Codigo: string ("AS", "BS", "AE", "BE", ... — ver Códigos DGI)
   // respuesta.Mensaje: string (descripción DGI)
 
   if (respuesta.Exitoso)
   {
-      // CFE aceptado (código 00 o 01)
+      // Sobre recibido (AS): consultar luego el estado del comprobante con ConsultarEstadoEnvioAsync
   }
   else
   {

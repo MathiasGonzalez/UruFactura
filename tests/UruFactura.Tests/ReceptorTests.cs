@@ -19,15 +19,21 @@ public class ReceptorTests
     }
 
     [Fact]
-    public void TipoDocumentoReceptor_Pasaporte_EsValorCuatro()
+    public void TipoDocumentoReceptor_Otro_EsValorCuatro()
     {
-        Assert.Equal(4, (int)TipoDocumentoReceptor.Pasaporte);
+        Assert.Equal(4, (int)TipoDocumentoReceptor.Otro);
     }
 
     [Fact]
-    public void TipoDocumentoReceptor_DocumentoExterior_EsValorCinco()
+    public void TipoDocumentoReceptor_Pasaporte_EsValorCinco()
     {
-        Assert.Equal(5, (int)TipoDocumentoReceptor.DocumentoExterior);
+        Assert.Equal(5, (int)TipoDocumentoReceptor.Pasaporte);
+    }
+
+    [Fact]
+    public void TipoDocumentoReceptor_DocumentoExterior_EsAliasDeOtro()
+    {
+        Assert.Equal((int)TipoDocumentoReceptor.Otro, (int)TipoDocumentoReceptor.DocumentoExterior);
     }
 
     [Fact]

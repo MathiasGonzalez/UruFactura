@@ -227,7 +227,7 @@ public class CfeModelTests
     {
         var cfe = CrearCfeValido();
         cfe.Tipo = TipoCfe.EFactura;
-        cfe.Receptor = new Receptor { Documento = "210000000013", TipoDocumento = TipoDocumentoReceptor.Rut };
+        cfe.Receptor = new Receptor { Documento = "214844360018", TipoDocumento = TipoDocumentoReceptor.Rut };
         var errores = cfe.Validar();
         Assert.DoesNotContain(errores, e => e.Contains("receptor"));
     }
@@ -271,6 +271,23 @@ public class CfeModelTests
         cfe.IndTraslado = null;
         var errores = cfe.Validar();
         Assert.Contains(errores, e => e.Contains("traslado") || e.Contains("IndTraslado"));
+    }
+
+    [Fact]
+    public void Validar_ERemitoSinDireccionOCiudadDelReceptor_RetornaError()
+    {
+        var cfe = TestData.CfeValido(TipoCfe.ERemito);
+        cfe.Receptor = new Receptor
+        {
+            Documento = "214844360018",
+            TipoDocumento = TipoDocumentoReceptor.Rut,
+            RazonSocial = "Cliente S.A.",
+            Direccion = null,
+            Ciudad = null,
+        };
+        var errores = cfe.Validar();
+        Assert.Contains(errores, e => e.Contains("e-Remito requiere dirección"));
+        Assert.Contains(errores, e => e.Contains("e-Remito requiere ciudad"));
     }
 
     [Fact]

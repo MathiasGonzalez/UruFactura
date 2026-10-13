@@ -16,7 +16,7 @@ public class CaeManager : ICaeManager
     private readonly Lock _lock = new();
 
     /// <summary>
-    /// Registra un CAE en el gestor.
+    /// Registra un CAE en el gestor. Si ya hay uno con la misma serie, tipo y rango, lo reemplaza.
     /// </summary>
     /// <param name="cae">CAE a registrar.</param>
     public virtual void RegistrarCae(Models.Cae cae)
@@ -57,7 +57,14 @@ public class CaeManager : ICaeManager
         if (!_caesPorTipo.TryGetValue(cae.TipoCfe, out var lista))
             _caesPorTipo[cae.TipoCfe] = lista = [];
 
-        lista.Add(cae);
+        // Registrar dos veces el mismo CAE (misma serie, tipo y rango) lo reemplaza en vez de duplicarlo:
+        // así es seguro volver a cargar los CAEs desde el repositorio.
+        var existente = lista.FindIndex(c =>
+            c.NroSerie == cae.NroSerie && c.RangoDesde == cae.RangoDesde && c.RangoHasta == cae.RangoHasta);
+        if (existente >= 0)
+            lista[existente] = cae;
+        else
+            lista.Add(cae);
     }
 
     /// <summary>

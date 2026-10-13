@@ -1,6 +1,7 @@
 using FluentReport;
 using FluentReport.Core;
 using FluentReport.Styling;
+using System.Globalization;
 using SkiaSharp;
 using UruFactura.Configuration;
 using UruFactura.Enums;
@@ -115,20 +116,62 @@ public class CfePdfGenerator : ICfePdfGenerator
         return data.ToArray();
     }
 
-    private static string ConstruirContenidoQr(Cfe cfe, Ambiente ambiente)
-    {
-        // Formato de URL de verificación DGI Uruguay
-        var baseUrl = ambiente == Ambiente.Produccion
-            ? "https://efactura.dgi.gub.uy/efactura/valida"
-            : "https://efacturahomologacion.dgi.gub.uy/efactura/valida";
+    /// <summary>URL de consulta del QR según el formato CFE de la DGI (zona "Pie del comprobante").</summary>
+    internal const string UrlConsultaQr = "https://www.efactura.dgi.gub.uy/consultaQR/cfe";
 
-        return $"{baseUrl}?" +
-               $"ruc={Uri.EscapeDataString(cfe.RutEmisor)}" +
-               $"&tipoCfe={(int)cfe.Tipo}" +
-               $"&serie={Uri.EscapeDataString(cfe.Serie ?? string.Empty)}" +
-               $"&nro={cfe.Numero}" +
-               $"&fecha={CfeFormat.DateCompact(cfe.FechaEmision)}" +
-               $"&monto={CfeFormat.DecimalInvariant(cfe.MontoTotal, "F2")}";
+    /// <summary>
+    /// Contenido del QR: <c>https://www.efactura.dgi.gub.uy/consultaQR/cfe?ruc,tipoCFE,serie,nroCFE,monto,fecha,hash</c>,
+    /// con la fecha de firma en dd/MM/yyyy y el código de seguridad (hash de la firma). Si el CFE todavía
+    /// no fue firmado la fecha es la de emisión y el hash queda vacío (solo para vista previa).
+    /// </summary>
+    internal static string ConstruirContenidoQr(Cfe cfe, Ambiente ambiente)
+    {
+        var fecha = cfe.FechaFirma is { } firma
+            ? firma.ToOffset(TimeSpan.FromHours(-3)).ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)
+            : cfe.FechaEmision.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+
+        return $"{UrlConsultaQr}?" + string.Join(",",
+            cfe.RutEmisor,
+            ((int)cfe.Tipo).ToString(CultureInfo.InvariantCulture),
+            cfe.Serie ?? string.Empty,
+            cfe.Numero.ToString(CultureInfo.InvariantCulture),
+            CfeFormat.DecimalInvariant(MontoQr(cfe), "F2"),
+            fecha,
+            Uri.EscapeDataString(cfe.CodigoSeguridad ?? string.Empty));
+    }
+
+    /// <summary>Monto que se informa en el QR: e-Remito 0, e-Resguardo el total retenido, resto el total a pagar.</summary>
+    private static decimal MontoQr(Cfe cfe) => cfe.Tipo.Familia() switch
+    {
+        FamiliaCfe.Remito => 0m,
+        FamiliaCfe.Resguardo => cfe.MontoRetenido,
+        FamiliaCfe.RemitoExportacion => cfe.MontoExportacion,
+        _ => cfe.MontoTotal,
+    };
+
+    /// <summary>Primeros 6 caracteres del código de seguridad, para imprimir bajo el QR.</summary>
+    private static string CodigoSeguridadCorto(Cfe cfe) =>
+        string.IsNullOrEmpty(cfe.CodigoSeguridad) ? "------" : cfe.CodigoSeguridad[..Math.Min(6, cfe.CodigoSeguridad.Length)];
+
+    /// <summary>Líneas del pie del comprobante: leyenda del emisor, verificación, CAE, rango y vencimiento.</summary>
+    private static List<string> LineasSello(Cfe cfe, UruFacturaConfig config)
+    {
+        var lineas = new List<string>();
+        if (!string.IsNullOrWhiteSpace(config.FechaIncorporacionEmisor))
+            lineas.Add($"Fecha emisor: {config.FechaIncorporacionEmisor}");
+
+        var esTicket = cfe.Tipo.Familia() == FamiliaCfe.Ticket;
+        lineas.Add(esTicket && !string.IsNullOrWhiteSpace(config.UrlVerificacionEmisor)
+            ? $"Puede verificar comprobante en {config.UrlVerificacionEmisor}"
+            : "Puede verificar comprobante en www.dgi.gub.uy");
+
+        if (cfe.CaeData is { } cae)
+        {
+            lineas.Add($"CAE Nº {cae.NumeroAutorizacion}");
+            lineas.Add($"Serie {cfe.Serie}, del {cae.RangoDesde} al {cae.RangoHasta}");
+            lineas.Add($"Fecha de vencimiento: {cae.FechaVencimiento:dd/MM/yyyy}");
+        }
+        return lineas;
     }
 
     private static byte[] GenerarDocumentoA4(Cfe cfe, UruFacturaConfig config, byte[] qrBytes)
@@ -159,7 +202,7 @@ public class CfePdfGenerator : ICfePdfGenerator
                             tipoDoc.Item().Border(1).Padding(8).AlignCenter().Column(c =>
                             {
                                 c.Item().Text(ObtenerNombreTipo(cfe)).Bold().FontSize(12);
-                                c.Item().Text($"N° {cfe.Serie}{cfe.Numero:D8}").Bold().FontSize(11);
+                                c.Item().Text($"Serie {cfe.Serie} N° {cfe.Numero}").Bold().FontSize(11);
                                 c.Item().Text($"Fecha: {cfe.FechaEmision:dd/MM/yyyy}").FontSize(9);
                             });
                         });
@@ -230,20 +273,51 @@ public class CfePdfGenerator : ICfePdfGenerator
                             tot.Item().Text($"Neto IVA 22%: {CfeFormat.MonetaryPdf(cfe.MontoNetoBasico)}").FontSize(9);
                             tot.Item().Text($"IVA 22%: {CfeFormat.MonetaryPdf(cfe.IvaBasico)}").FontSize(9);
                         }
-                        tot.Item().Text($"TOTAL: {CfeFormat.MonetaryPdf(cfe.MontoTotal)}").Bold().FontSize(12);
+                        foreach (var d in cfe.DescuentosRecargos)
+                            tot.Item().Text($"{(d.Tipo == TipoMovimientoGlobal.Descuento ? "Descuento" : "Recargo")} {d.Glosa}: {CfeFormat.MonetaryPdf(d.Monto)}").FontSize(9);
+                        if (cfe.Tipo.Familia() == FamiliaCfe.Resguardo)
+                            tot.Item().Text($"TOTAL RETENIDO: {CfeFormat.MonetaryPdf(cfe.MontoRetenido)}").Bold().FontSize(12);
+                        else
+                            tot.Item().Text($"TOTAL{(cfe.Moneda == Moneda.PesoUruguayo ? "" : $" ({cfe.Moneda})")}: {CfeFormat.MonetaryPdf(cfe.Tipo.EsExportacion() ? cfe.MontoExportacion : cfe.MontoTotal)}").Bold().FontSize(12);
                     });
+
+                    if (cfe.MediosPago.Count > 0)
+                    {
+                        col.Item().PaddingTop(8).Column(mp =>
+                        {
+                            mp.Item().Text("Medios de pago:").Bold().FontSize(9);
+                            foreach (var m in cfe.MediosPago.OrderBy(m => m.Orden ?? 0))
+                                mp.Item().Text($"{m.Glosa}: {CfeFormat.MonetaryPdf(m.Valor)}").FontSize(9);
+                        });
+                    }
+
+                    if (cfe.Mandante is { } mandante)
+                    {
+                        col.Item().PaddingTop(8).Column(md =>
+                        {
+                            md.Item().Text("Venta por cuenta ajena - Mandante:").Bold().FontSize(9);
+                            md.Item().Text($"{mandante.Nombre} ({mandante.Documento})").FontSize(9);
+                        });
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(cfe.InfoAdicional))
+                        col.Item().PaddingTop(8).Text(cfe.InfoAdicional).FontSize(8);
 
                     col.Item().PaddingTop(20).Row(row =>
                     {
-                        row.FixedItem(80).Image(qrBytes);
+                        row.FixedItem(80).Column(sello =>
+                        {
+                            sello.Item().Image(qrBytes);
+                            sello.Item().AlignCenter().Text($"Código de seguridad: {CodigoSeguridadCorto(cfe)}").FontSize(6);
+                        });
 
                         row.RelativeItem().PaddingLeft(10).Column(qrInfo =>
                         {
-                            qrInfo.Item().Text("Representación impresa de CFE").Italic().FontSize(8);
-                            qrInfo.Item().Text("Verifique la vigencia en: efactura.dgi.gub.uy").FontSize(8);
+                            foreach (var linea in LineasSello(cfe, config))
+                                qrInfo.Item().Text(linea).FontSize(8);
                             qrInfo.Item().Text($"Ambiente: {config.Ambiente}").FontSize(8);
                             if (cfe.AceptadoPorDgi)
-                                qrInfo.Item().Text("✅ Aceptado por DGI").FontSize(8).Color("#388E3C");
+                                qrInfo.Item().Text("Aceptado por DGI").FontSize(8).Color("#388E3C");
                         });
                     });
                 });
@@ -282,7 +356,7 @@ public class CfePdfGenerator : ICfePdfGenerator
                     col.Item().Line(0.5f);
 
                     col.Item().AlignCenter().Text(ObtenerNombreTipoTermico(cfe)).Bold().FontSize(8);
-                    col.Item().AlignCenter().Text($"N° {cfe.Serie}{cfe.Numero:D8}").Bold().FontSize(7);
+                    col.Item().AlignCenter().Text($"Serie {cfe.Serie} N° {cfe.Numero}").Bold().FontSize(7);
                     col.Item().AlignCenter().Text($"Fecha: {cfe.FechaEmision:dd/MM/yyyy}").FontSize(7);
                     col.Item().Line(0.5f);
 
@@ -311,11 +385,25 @@ public class CfePdfGenerator : ICfePdfGenerator
                     if (cfe.IvaBasico > 0)
                         col.Item().Row(r => { r.RelativeItem().Text("IVA 22%:").FontSize(7); r.Item().AlignRight().Text(CfeFormat.MonetaryPdf(cfe.IvaBasico)).FontSize(7); });
 
+                    foreach (var d in cfe.DescuentosRecargos)
+                        col.Item().Row(r =>
+                        {
+                            r.RelativeItem().Text(d.Tipo == TipoMovimientoGlobal.Descuento ? $"Desc. {d.Glosa}:" : $"Rec. {d.Glosa}:").FontSize(7);
+                            r.Item().AlignRight().Text(CfeFormat.MonetaryPdf(d.Monto)).FontSize(7);
+                        });
+
                     col.Item().Row(r =>
                     {
                         r.RelativeItem().Text("TOTAL:").Bold().FontSize(7);
-                        r.Item().AlignRight().Text(CfeFormat.MonetaryPdf(cfe.MontoTotal)).Bold().FontSize(7);
+                        r.Item().AlignRight().Text(CfeFormat.MonetaryPdf(cfe.Tipo.EsExportacion() ? cfe.MontoExportacion : cfe.MontoTotal)).Bold().FontSize(7);
                     });
+
+                    foreach (var m in cfe.MediosPago.OrderBy(m => m.Orden ?? 0))
+                        col.Item().Row(r =>
+                        {
+                            r.RelativeItem().Text($"{m.Glosa}:").FontSize(7);
+                            r.Item().AlignRight().Text(CfeFormat.MonetaryPdf(m.Valor)).FontSize(7);
+                        });
 
                     col.Item().Line(0.5f);
 
@@ -323,33 +411,38 @@ public class CfePdfGenerator : ICfePdfGenerator
                     {
                         row.FixedItem(70).Image(qrBytes);
                     });
-                    col.Item().AlignCenter().Text("Verifique en efactura.dgi.gub.uy").FontSize(6);
+                    col.Item().AlignCenter().Text($"Código de seguridad: {CodigoSeguridadCorto(cfe)}").FontSize(6);
+                    foreach (var linea in LineasSello(cfe, config))
+                        col.Item().AlignCenter().Text(linea).FontSize(6);
                 });
             });
         }).GeneratePdf();
     }
 
-    private static string ObtenerNombreTipo(Cfe cfe) => cfe.Tipo switch
-    {
-        TipoCfe.ETicket => "e-Ticket",
-        TipoCfe.NotaCreditoETicket => "Nota de Crédito e-Ticket",
-        TipoCfe.NotaDebitoETicket => "Nota de Débito e-Ticket",
-        TipoCfe.EFactura => "e-Factura",
-        TipoCfe.NotaCreditoEFactura => "Nota de Crédito e-Factura",
-        TipoCfe.NotaDebitoEFactura => "Nota de Débito e-Factura",
-        TipoCfe.EFacturaExportacion => "e-Factura Exportación",
-        TipoCfe.ERemito => "e-Remito",
-        _ => $"CFE Tipo {(int)cfe.Tipo}",
-    };
+    private static string ObtenerNombreTipo(Cfe cfe) => NombreCompleto(cfe.Tipo);
 
-    private static string ObtenerNombreTipoTermico(Cfe cfe) => cfe.Tipo switch
+    private static string ObtenerNombreTipoTermico(Cfe cfe) => NombreCompleto(cfe.Tipo);
+
+    /// <summary>Nombre del comprobante para la representación impresa.</summary>
+    internal static string NombreCompleto(TipoCfe tipo)
     {
-        TipoCfe.ETicket => "e-Ticket",
-        TipoCfe.EFactura => "e-Factura",
-        TipoCfe.NotaCreditoETicket => "NC e-Ticket",
-        TipoCfe.NotaDebitoETicket => "ND e-Ticket",
-        _ => $"CFE {(int)cfe.Tipo}",
-    };
+        var baseNombre = tipo.Familia() switch
+        {
+            FamiliaCfe.Ticket => "e-Ticket",
+            FamiliaCfe.Factura => "e-Factura",
+            FamiliaCfe.FacturaExportacion => "e-Factura de Exportación",
+            FamiliaCfe.Remito => "e-Remito",
+            FamiliaCfe.RemitoExportacion => "e-Remito de Exportación",
+            _ => "e-Resguardo",
+        };
+
+        var nombre = tipo.EsNotaCorreccion()
+            ? $"{(tipo.EsNotaCredito() ? "Nota de Crédito" : "Nota de Débito")} {baseNombre}"
+            : baseNombre;
+        if (tipo.EsCuentaAjena()) nombre += " Cuenta Ajena";
+        if (tipo.EsContingencia()) nombre += " (Contingencia)";
+        return nombre;
+    }
 
     private static string ObtenerEtiquetaIva(TipoIva iva) => iva switch
     {

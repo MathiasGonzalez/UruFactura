@@ -188,10 +188,10 @@ public class SobreYReporteTests : IDisposable
     [Fact]
     public void Reporte_ConTipoNoSoportado_LanzaUruFacturaException()
     {
-        var resguardo = TestData.CfeValido();
-        resguardo.Tipo = TipoCfe.EResguardo;
+        var desconocido = TestData.CfeValido();
+        desconocido.Tipo = (TipoCfe)999;
 
         Assert.Throws<UruFacturaException>(() =>
-            ReporteDiarioBuilder.Generar("219999820013", Dia, 0, null, DateTimeOffset.UtcNow, [resguardo]));
+            ReporteDiarioBuilder.Generar("219999820013", Dia, 0, null, DateTimeOffset.UtcNow, [desconocido]));
     }
 }

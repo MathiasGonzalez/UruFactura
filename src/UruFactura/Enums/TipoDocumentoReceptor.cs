@@ -1,7 +1,8 @@
 namespace UruFactura.Enums;
 
 /// <summary>
-/// Tipos de documento del receptor según la normativa DGI de Uruguay.
+/// Tipos de documento del receptor según el DocType del XSD de la DGI.
+/// Valores oficiales: 2 RUC, 3 CI, 4 Otro, 5 Pasaporte, 6 DNI, 7 NIFE.
 /// </summary>
 public enum TipoDocumentoReceptor
 {
@@ -11,9 +12,18 @@ public enum TipoDocumentoReceptor
     /// <summary>Cédula de Identidad — 3</summary>
     CedulaIdentidad = 3,
 
-    /// <summary>Pasaporte — 4</summary>
-    Pasaporte = 4,
+    /// <summary>Otro — 4</summary>
+    Otro = 4,
 
-    /// <summary>Documento de identidad del exterior — 5</summary>
-    DocumentoExterior = 5,
+    /// <summary>Pasaporte — 5</summary>
+    Pasaporte = 5,
+
+    /// <summary>Alias de compatibilidad para el valor 4 ("Otro").</summary>
+    DocumentoExterior = 4,
+
+    /// <summary>DNI — 6</summary>
+    Dni = 6,
+
+    /// <summary>NIFE — 7</summary>
+    Nife = 7,
 }

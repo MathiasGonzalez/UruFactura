@@ -2,51 +2,60 @@ name: Normativa DGI — Recordatorio mensual
 
 on:
   schedule:
-    # Corre el primer día de cada mes a las 09:00 UTC
-    - cron: '0 9 1 * *'
+    # Primer día de cada mes a las 12:00 UTC (09:00 en Montevideo)
+    - cron: '0 12 1 * *'
   workflow_dispatch:
     inputs:
       dry_run:
         description: 'Solo mostrar el issue que se crearía (sin crearlo)'
         required: false
-        default: 'false'
+        default: false
         type: boolean
+
+concurrency:
+  group: normativa-dgi-check
+  cancel-in-progress: false
 
 jobs:
   crear-issue-recordatorio:
     name: Crear issue de revisión normativa DGI
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
+      contents: read
       issues: write
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Obtener versión CFE implementada
         id: version
         run: |
-          # Busca la constante de versión CFE en el XML builder.
-          # El formato esperado es: WriteAttributeString("version", "XX.XX")
-          VERSION=$(grep -oP 'WriteAttributeString\("version",\s*"\K[^"]+' \
-            src/UruFactura/Xml/CfeXmlBuilder.cs || echo "desconocida")
-          echo "cfe_version=${VERSION}" >> "$GITHUB_OUTPUT"
+          # Primer WriteAttributeString("version", "X.Y") del XML builder.
+          VERSION=$(grep -m1 -oP 'WriteAttributeString\("version",\s*"\K[^"]+' \
+            src/UruFactura/Xml/CfeXmlBuilder.cs || true)
+          echo "cfe_version=${VERSION:-desconocida}" >> "$GITHUB_OUTPUT"
 
       - name: Crear issue de recordatorio
-        if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        env:
+          CFE_VERSION: ${{ steps.version.outputs.cfe_version }}
+          DRY_RUN: ${{ inputs.dry_run }}
         with:
           script: |
-            const hoy = new Date().toISOString().slice(0, 10);
-            const version = '${{ steps.version.outputs.cfe_version }}';
-            const mes = new Date().toLocaleString('es', { month: 'long', year: 'numeric', timeZone: 'America/Montevideo' });
+            const version = process.env.CFE_VERSION;
+            const dryRun = process.env.DRY_RUN === 'true';
+            const { owner, repo } = context.repo;
+            const ahora = new Date();
+            const hoy = ahora.toISOString().slice(0, 10);
+            const anio = ahora.getFullYear();
+            const mes = ahora.toLocaleString('es', { month: 'long', year: 'numeric', timeZone: 'America/Montevideo' });
+            const runbook = `https://github.com/${owner}/${repo}/blob/main/docs/NORMATIVA_DGI_UPDATE.md`;
+            const label = 'normativa-dgi';
+            const title = `📋 Revisión normativa DGI — ${mes}`;
 
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `📋 Revisión normativa DGI — ${mes}`,
-              labels: ['normativa-dgi', 'maintenance'],
-              body: `## Revisión mensual de normativa DGI
+            const body = `## Revisión mensual de normativa DGI
 
             Este issue es generado automáticamente el primer día de cada mes para recordar revisar si la DGI publicó cambios en el formato CFE u otras normativas que requieran actualizar el SDK.
 
@@ -57,13 +66,13 @@ jobs:
 
             ## Instrucciones para el agente o desarrollador
 
-            Ejecutar el runbook [docs/NORMATIVA_DGI_UPDATE.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/docs/NORMATIVA_DGI_UPDATE.md) siguiendo estos pasos:
+            Ejecutar el runbook [docs/NORMATIVA_DGI_UPDATE.md](${runbook}) siguiendo estos pasos:
 
             ### 1. Buscar cambios recientes en la DGI
 
             Buscar en la web con las siguientes consultas:
-            - \`DGI Uruguay CFE formato versión ${new Date().getFullYear()} cambios\`
-            - \`DGI Uruguay factura electrónica nueva normativa ${new Date().getFullYear()}\`
+            - \`DGI Uruguay CFE formato versión ${anio} cambios\`
+            - \`DGI Uruguay factura electrónica nueva normativa ${anio}\`
             - Revisar: https://www.dgi.gub.uy/wdgi/page?2,factura-electronica,index,O,es,0,
 
             ### 2. Evaluar si hay cambios
@@ -81,14 +90,31 @@ jobs:
 
             ---
 
-            > 💡 Para más detalles sobre qué revisar y cómo implementar los cambios, ver [docs/NORMATIVA_DGI_UPDATE.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/docs/NORMATIVA_DGI_UPDATE.md).
-            `
-            });
+            > 💡 Para más detalles sobre qué revisar y cómo implementar los cambios, ver [docs/NORMATIVA_DGI_UPDATE.md](${runbook}).
+            `.replace(/^ {12}/gm, '');
 
-      - name: Dry run — mostrar issue
-        if: ${{ github.event.inputs.dry_run == 'true' }}
-        run: |
-          echo "=== DRY RUN: Issue que se crearía ==="
-          echo "Título: Revisión normativa DGI — $(date +'%B %Y')"
-          echo "Versión CFE implementada: ${{ steps.version.outputs.cfe_version }}"
-          echo "======================================"
+            if (dryRun) {
+              core.info('=== DRY RUN: issue que se crearía ===');
+              core.info(`Título: ${title}`);
+              core.info(body);
+              return;
+            }
+
+            // Evitar acumular recordatorios: si hay uno abierto, comentar en él.
+            const { data: abiertos } = await github.rest.issues.listForRepo({
+              owner, repo, labels: label, state: 'open', per_page: 1,
+            });
+            if (abiertos.length > 0) {
+              await github.rest.issues.createComment({
+                owner, repo,
+                issue_number: abiertos[0].number,
+                body: `⏰ Sigue pendiente la revisión de ${mes}. Versión CFE implementada: \`${version}\`.`,
+              });
+              core.info(`Ya existe el issue abierto #${abiertos[0].number}; se agregó un comentario.`);
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner, repo, title, body,
+              labels: [label, 'maintenance'],
+            });

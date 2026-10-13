@@ -25,7 +25,7 @@ public class UruFacturaClientTests
 
     private static UruFacturaConfig ConfigValida() => new()
     {
-        RutEmisor = "210000000012",
+        RutEmisor = "219999820013",
         RazonSocialEmisor = "Empresa Test S.A.",
         DomicilioFiscal = "Av. 18 de Julio 1234",
         Ciudad = "Montevideo",
@@ -104,7 +104,7 @@ public class UruFacturaClientTests
 
         var cfe = client.CrearETicket();
 
-        Assert.Equal("210000000012", cfe.RutEmisor);
+        Assert.Equal("219999820013", cfe.RutEmisor);
         Assert.Equal("Empresa Test S.A.", cfe.RazonSocialEmisor);
         Assert.Equal("Comercio X", cfe.NombreComercialEmisor);
         Assert.Equal("Venta de servicios", cfe.Giro);
@@ -298,7 +298,7 @@ public class UruFacturaClientTests
         doc.LoadXml(soapStub.UltimoSobre!);
         Assert.Equal("EnvioCFE", doc.DocumentElement!.LocalName);
         Assert.Equal("1", doc.GetElementsByTagName("CantCFE")[0]!.InnerText);
-        Assert.Equal("210000000012", doc.GetElementsByTagName("RUCEmisor")[0]!.InnerText);
+        Assert.Equal("219999820013", doc.GetElementsByTagName("RUCEmisor")[0]!.InnerText);
         Assert.Equal("214844360018", doc.GetElementsByTagName("RutReceptor")[0]!.InnerText);
         Assert.Equal(Convert.ToBase64String(new byte[] { 1, 2, 3 }), doc.GetElementsByTagName("X509Certificate")[0]!.InnerText);
         Assert.Single(doc.GetElementsByTagName("Firmado"));
@@ -538,6 +538,58 @@ public class UruFacturaClientTests
 
         var guardado = (await repo.CargarTodosAsync()).Single();
         Assert.Equal(10, guardado.UltimoNroUsado);
+    }
+
+    [Fact]
+    public async Task CargarCaesAsync_RegistraLosDelRepositorioConSuUltimoNumero()
+    {
+        var repo = new InMemoryCaeRepository();
+        var cae = NuevoCae();
+        await repo.GuardarCaeAsync(cae);
+        await repo.ActualizarUltimoNroUsadoAsync(cae.NroSerie, 14);
+        using var client = new UruFacturaClient(
+            ConfigValida(), new XmlBuilderStub(), new FirmanteStub(), new CaeManager(), new SoapClientStub(), null, repo);
+
+        var cargados = await client.CargarCaesAsync();
+        var cfe = client.CrearETicket();
+        client.AsignarCae(cfe);
+
+        Assert.Equal(1, cargados);
+        Assert.Equal(15, cfe.Numero); // continúa donde quedó, sin repetir números
+    }
+
+    [Fact]
+    public async Task CargarCaesAsync_EsIdempotente()
+    {
+        var repo = new InMemoryCaeRepository();
+        await repo.GuardarCaeAsync(NuevoCae());
+        using var client = new UruFacturaClient(
+            ConfigValida(), new XmlBuilderStub(), new FirmanteStub(), new CaeManager(), new SoapClientStub(), null, repo);
+
+        await client.CargarCaesAsync();
+        await client.CargarCaesAsync();
+
+        Assert.Single(client.Cae.ObtenerTodosLosCaes());
+    }
+
+    [Fact]
+    public async Task CargarCaesAsync_SinRepositorio_RetornaCero()
+    {
+        using var client = CrearCliente();
+        Assert.Equal(0, await client.CargarCaesAsync());
+    }
+
+    [Fact]
+    public async Task RegistrarCaeAsync_LoGuardaEnElRepositorio()
+    {
+        var repo = new InMemoryCaeRepository();
+        using var client = new UruFacturaClient(
+            ConfigValida(), new XmlBuilderStub(), new FirmanteStub(), new CaeManager(), new SoapClientStub(), null, repo);
+
+        await client.RegistrarCaeAsync(NuevoCae());
+
+        Assert.Single(client.Cae.ObtenerTodosLosCaes());
+        Assert.Single(await repo.CargarTodosAsync());
     }
 
     [Fact]

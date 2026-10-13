@@ -18,10 +18,13 @@ description: Referencia de todos los tipos de comprobantes fiscales electrónico
 | 123 | ND e-Factura de Exportación | `NotaDebitoEFacturaExportacion` | `CrearNotaDebitoEFacturaExportacion()` | ✅ Sí |
 | 124 | e-Remito de Exportación | `ERemitoExportacion` | `CrearERemitoExportacion()` | Condicional |
 | 181 | e-Remito | `ERemito` | `CrearERemito()` | Condicional |
-| 182 | e-Resguardo | `EResguardo` | `CrearEResguardo()` | ✅ Sí — **aún no emitible** (falta soporte de retenciones) |
+| 182 | e-Resguardo | `EResguardo` | `CrearEResguardo()` | ✅ Sí |
+| 131-133 | e-Ticket y notas, cuenta ajena | `ETicketCuentaAjena`… | `Crear(TipoCfe.…)` | No (exige `Mandante`) |
+| 141-143 | e-Factura y notas, cuenta ajena | `EFacturaCuentaAjena`… | `Crear(TipoCfe.…)` | ✅ Sí (exige `Mandante`) |
+| 2xx | Contingencia (CFC) de cada tipo | `ETicketContingencia`… | `Crear(TipoCfe.…)` | Igual que el tipo que sustituye |
 
-Los códigos son los del formato CFE de la DGI. No están soportados los tipos 131-133 y 141-143
-(venta por cuenta ajena) ni 151-153 (e-Boleta de entrada). Los e-Remitos no tienen notas de crédito/débito.
+Los códigos son los del formato CFE de la DGI. **No están soportados:** la e-Boleta de entrada (151-153 y 251-253),
+la adenda y los descuentos/recargos globales en porcentaje (solo en monto). Los e-Remitos no tienen notas de crédito/débito.
 
 ---
 
@@ -88,8 +91,29 @@ remito.IndTraslado = IndTraslado.TrasladoPropio;
 ```
 
 ### e-Resguardo (182)
-Para documentar **retenciones de IVA** realizadas a proveedores. Todavía no se puede emitir con el SDK:
-el modelo no incluye retenciones/percepciones y `Validar()` lo informa.
+Para documentar **retenciones y percepciones** realizadas a proveedores. La línea no lleva nombre, cantidad ni precio:
+solo de 1 a 5 `Retenciones` (código de la tabla de la DGI, tasa, monto sujeto y valor). El total retenido sale de la suma.
+
+```csharp
+var resguardo = client.CrearEResguardo();
+resguardo.Receptor = new Receptor { Documento = "214844360018", RazonSocial = "Proveedor S.A." };
+resguardo.Detalle.Add(new LineaDetalle
+{
+    Retenciones = { new RetencionPercepcion { Codigo = "R1", Tasa = 12m, MontoSujeto = 1000m, Valor = 120m } },
+});
+```
+
+### Venta por cuenta ajena (131-133, 141-143)
+Se emite en nombre de un tercero. Hay que informar el mandante:
+
+```csharp
+var cfe = client.Crear(TipoCfe.EFacturaCuentaAjena);
+cfe.Mandante = new Mandante { Documento = "214844360018", Nombre = "Mandante S.A.", CodigoPais = "UY" };
+```
+
+### Comprobantes de contingencia (2xx)
+Tienen la misma estructura que el CFE que sustituyen (`client.Crear(TipoCfe.EFacturaContingencia)`) y se
+resumen en el reporte diario en su propio bloque.
 
 ---
 

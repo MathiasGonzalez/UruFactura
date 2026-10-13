@@ -9,7 +9,7 @@ public class UruFacturaConfigTests
 {
     private static UruFacturaConfig ConfigValida() => new()
     {
-        RutEmisor = "210000000012",
+        RutEmisor = "219999820013",
         RazonSocialEmisor = "Empresa Test S.A.",
         DomicilioFiscal = "Av. 18 de Julio 1234",
         Ciudad = "Montevideo",

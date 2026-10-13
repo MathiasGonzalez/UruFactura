@@ -54,6 +54,33 @@ public record UruFacturaConfig
     /// </summary>
     public int CodigoSucursal { get; init; } = 1;
 
+    /// <summary>Teléfonos del emisor que se informan en cada CFE (hasta 2, de hasta 20 caracteres).</summary>
+    public IReadOnlyList<string> TelefonosEmisor { get; init; } = [];
+
+    /// <summary>Correo electrónico del emisor que se informa en cada CFE (opcional).</summary>
+    public string? CorreoEmisor { get; init; }
+
+    /// <summary>Nombre o identificación de la sucursal (<c>EmiSucursal</c>, hasta 20 caracteres, opcional).</summary>
+    public string? SucursalEmisor { get; init; }
+
+    /// <summary>
+    /// Valor de la Unidad Indexada (en pesos) vigente. Si se informa, el SDK valida que los e-Tickets con
+    /// monto neto superior a 5.000 UI identifiquen al receptor (obligación del formato CFE). Opcional.
+    /// </summary>
+    public decimal? ValorUnidadIndexada { get; init; }
+
+    /// <summary>
+    /// Leyenda "Fecha emisor" de la representación impresa: fecha de incorporación al régimen
+    /// (dd/MM/yyyy) o, si se incorporó por resolución, "Res. N/año". Opcional.
+    /// </summary>
+    public string? FechaIncorporacionEmisor { get; init; }
+
+    /// <summary>
+    /// URL de verificación de la empresa para e-Tickets ("Puede verificar comprobante en …").
+    /// Si se omite, se imprime la de la DGI (www.dgi.gub.uy).
+    /// </summary>
+    public string? UrlVerificacionEmisor { get; init; }
+
     /// <summary>Algoritmo de firma del CFE y de WS-Security (por defecto SHA-256).</summary>
     public AlgoritmoFirma AlgoritmoFirma { get; init; } = AlgoritmoFirma.Sha256;
 
@@ -114,6 +141,15 @@ public record UruFacturaConfig
 
         if (CodigoSucursal is < 1 or > 9999)
             errors.Add("CodigoSucursal debe estar entre 1 y 9999.");
+
+        if (!string.IsNullOrWhiteSpace(RutEmisor) && !Models.Rut.EsValido(RutEmisor))
+            errors.Add("RutEmisor debe tener 12 dígitos y un dígito verificador válido.");
+
+        if (TelefonosEmisor.Count > 2 || TelefonosEmisor.Any(t => string.IsNullOrWhiteSpace(t) || t.Length > 20))
+            errors.Add("TelefonosEmisor admite hasta 2 teléfonos de hasta 20 caracteres.");
+
+        if (ValorUnidadIndexada is <= 0)
+            errors.Add("ValorUnidadIndexada debe ser mayor a cero.");
 
         if (Ambiente == Ambiente.Produccion
             && (string.IsNullOrWhiteSpace(UrlEnvio) || string.IsNullOrWhiteSpace(UrlConsultas)))

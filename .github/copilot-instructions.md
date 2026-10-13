@@ -2,7 +2,7 @@
 
 ## Contexto del proyecto
 
-UruFactura es una librería .NET 10 C# para integrar sistemas con la facturación electrónica de la DGI (Dirección General Impositiva) de Uruguay. Implementa el formato CFE (Comprobante Fiscal Electrónico) v25.2.
+UruFactura es una librería .NET 10 C# para integrar sistemas con la facturación electrónica de la DGI (Dirección General Impositiva) de Uruguay. Implementa el formato CFE (Comprobante Fiscal Electrónico) v25.2 (XSD 1.44.2; el atributo `version` del XML es `1.0`). Los XSD/WSDL oficiales están en `tests/UruFactura.Tests/Schemas/dgi` y los tests validan el XML generado contra ellos.
 
 ---
 
@@ -12,7 +12,7 @@ Sigue el runbook en [`docs/NORMATIVA_DGI_UPDATE.md`](docs/NORMATIVA_DGI_UPDATE.m
 
 **Pasos mínimos:**
 1. Busca en la web cambios recientes en el formato CFE o normativas DGI Uruguay.
-2. Compara con la versión implementada (ver `src/UruFactura/Xml/CfeXmlBuilder.cs` — atributo `version`).
+2. Compara con la versión implementada (paquete XSD en `tests/UruFactura.Tests/Schemas/dgi/version.txt`).
 3. Si no hay cambios: responde "Sin cambios detectados" y no modifiques código.
 4. Si hay cambios: implementa según el runbook, actualiza los docs, y corre `dotnet test UruFactura.slnx`.
 

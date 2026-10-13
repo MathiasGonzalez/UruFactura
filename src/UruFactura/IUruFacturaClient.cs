@@ -17,6 +17,9 @@ public interface IUruFacturaClient : IDisposable
     // Generación de CFE
     // -----------------------------------------------------------------------
 
+    /// <summary>Crea un CFE de cualquier tipo soportado (contingencia, cuenta ajena, ...).</summary>
+    Cfe Crear(Enums.TipoCfe tipo);
+
     Cfe CrearETicket();
     Cfe CrearEFactura();
     Cfe CrearERemito();
@@ -33,6 +36,12 @@ public interface IUruFacturaClient : IDisposable
     // -----------------------------------------------------------------------
     // XML y Firma
     // -----------------------------------------------------------------------
+
+    /// <summary>Carga en el gestor los CAE guardados en el repositorio configurado (llamar al iniciar la app).</summary>
+    Task<int> CargarCaesAsync();
+
+    /// <summary>Registra un CAE nuevo y lo guarda en el repositorio configurado (si hay uno).</summary>
+    Task RegistrarCaeAsync(Models.Cae cae);
 
     /// <summary>Toma el próximo número del CAE vigente y completa Numero, Serie y CaeData.</summary>
     void AsignarCae(Cfe cfe);
