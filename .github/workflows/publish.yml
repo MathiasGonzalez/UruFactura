@@ -7,28 +7,74 @@ on:
 
 jobs:
   publish:
+    if: github.actor != 'github-actions[bot]'
     name: Build, Pack & Publish NuGet
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
 
-      - name: Extract versions from csproj
+      - name: Bump package version
         id: version
+        shell: bash
         run: |
-          VERSION=$(grep -oP '(?<=<Version>)[^<]+' src/UruFactura/UruFactura.csproj)
-          VERSION_LITE=$(grep -oP '(?<=<Version>)[^<]+' src/UruFactura.Lite/UruFactura.Lite.csproj)
+          eval "$(python - <<'PY'
+          import os, re
+          from pathlib import Path
+
+          files = [
+              Path('src/UruFactura/UruFactura.csproj'),
+              Path('src/UruFactura.Lite/UruFactura.Lite.csproj'),
+          ]
+
+          versions = []
+          for path in files:
+              text = path.read_text(encoding='utf-8-sig')
+              match = re.search(r'<Version>([^<]+)</Version>', text)
+              if not match:
+                  raise RuntimeError(f'No se encontró la etiqueta <Version> en {path}')
+
+              version = match.group(1)
+              nums = [int(part) for part in version.split('.')]
+              if len(nums) < 3:
+                  raise RuntimeError(f'Formato de versión no soportado: {version} en {path}')
+
+              nums[2] += 1
+              new_version = '.'.join(str(v) for v in nums)
+              text = text.replace(f'<Version>{version}</Version>', f'<Version>{new_version}</Version>', 1)
+              path.write_text(text, encoding='utf-8')
+              versions.append(new_version)
+
+          print(f'VERSION={versions[0]}')
+          print(f'VERSION_LITE={versions[1]}')
+          PY
+          )"
+
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
           echo "VERSION_LITE=$VERSION_LITE" >> "$GITHUB_OUTPUT"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/UruFactura/UruFactura.csproj src/UruFactura.Lite/UruFactura.Lite.csproj
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: bump package versions to ${VERSION}"
+          fi
+
+      - name: Push bumped version commit
+        if: github.event_name == 'push'
+        run: |
+          git push origin HEAD:${{ github.ref_name }}
 
       - name: Restore dependencies
         run: dotnet restore UruFactura.slnx
