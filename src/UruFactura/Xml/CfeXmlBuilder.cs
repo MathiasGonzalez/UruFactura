@@ -230,6 +230,9 @@ public class CfeXmlBuilder : ICfeXmlBuilder
         TipoDocumentoReceptor.Rut => "2",
         TipoDocumentoReceptor.CedulaIdentidad => "3",
         TipoDocumentoReceptor.Pasaporte => "5",
+        TipoDocumentoReceptor.Otro or TipoDocumentoReceptor.DocumentoExterior => "4",
+        TipoDocumentoReceptor.Dni => "6",
+        TipoDocumentoReceptor.Nife => "7",
         _ => "4",
     };
 

@@ -219,8 +219,8 @@ public class CfeXmlBuilderTests
     [Theory]
     [InlineData(TipoDocumentoReceptor.Rut, "2")]
     [InlineData(TipoDocumentoReceptor.CedulaIdentidad, "3")]
+    [InlineData(TipoDocumentoReceptor.Otro, "4")]
     [InlineData(TipoDocumentoReceptor.Pasaporte, "5")]
-    [InlineData(TipoDocumentoReceptor.DocumentoExterior, "4")]
     public void Generar_TipoDocumentoReceptor_UsaLosCodigosDeLaDgi(TipoDocumentoReceptor tipo, string codigo)
     {
         var cfe = TestData.CfeValido();
@@ -229,6 +229,17 @@ public class CfeXmlBuilderTests
         var doc = Cargar(_builder.Generar(cfe));
 
         Assert.Equal(codigo, Texto(doc, "//c:Receptor/c:TipoDocRecep"));
+    }
+
+    [Fact]
+    public void Generar_TipoDocumentoReceptor_DocumentoExterior_SeMapeaComoOtro()
+    {
+        var cfe = TestData.CfeValido();
+        cfe.Receptor = new Receptor { Documento = "1234567", TipoDocumento = TipoDocumentoReceptor.DocumentoExterior };
+
+        var doc = Cargar(_builder.Generar(cfe));
+
+        Assert.Equal("4", Texto(doc, "//c:Receptor/c:TipoDocRecep"));
     }
 
     [Fact]
