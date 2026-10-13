@@ -171,6 +171,8 @@ exportacion.Receptor = new Receptor
     Pais          = "Estados Unidos",
     CodigoPais    = "US",
     Documento     = "TX-123456",                       // documento extranjero (opcional)
+    // La DGI usa 4 = Otro para documentos de exterior; DocumentoExterior es un alias
+    // de compatibilidad del SDK para mantener el código anterior sin cambiar el XML emitido.
     TipoDocumento = TipoDocumentoReceptor.DocumentoExterior,
 };
 exportacion.Detalle.Add(new LineaDetalle
