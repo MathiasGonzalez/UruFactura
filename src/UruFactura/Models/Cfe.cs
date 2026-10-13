@@ -546,6 +546,10 @@ public class Cfe
             errors.Add("La razón social del receptor admite hasta 150 caracteres.");
         if (familia == FamiliaCfe.Remito && string.IsNullOrWhiteSpace(r.RazonSocial))
             errors.Add("El receptor de un e-Remito requiere razón social.");
+        if (familia == FamiliaCfe.Remito && string.IsNullOrWhiteSpace(r.Direccion))
+            errors.Add("El receptor de un e-Remito requiere dirección.");
+        if (familia == FamiliaCfe.Remito && string.IsNullOrWhiteSpace(r.Ciudad))
+            errors.Add("El receptor de un e-Remito requiere ciudad.");
         if (r.Direccion is { Length: > 70 })
             errors.Add("La dirección del receptor admite hasta 70 caracteres.");
         if (r.Ciudad is { Length: > 30 } || r.Departamento is { Length: > 30 } || r.Pais is { Length: > 30 })

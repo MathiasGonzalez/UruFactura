@@ -274,6 +274,23 @@ public class CfeModelTests
     }
 
     [Fact]
+    public void Validar_ERemitoSinDireccionOCiudadDelReceptor_RetornaError()
+    {
+        var cfe = TestData.CfeValido(TipoCfe.ERemito);
+        cfe.Receptor = new Receptor
+        {
+            Documento = "214844360018",
+            TipoDocumento = TipoDocumentoReceptor.Rut,
+            RazonSocial = "Cliente S.A.",
+            Direccion = null,
+            Ciudad = null,
+        };
+        var errores = cfe.Validar();
+        Assert.Contains(errores, e => e.Contains("e-Remito requiere dirección"));
+        Assert.Contains(errores, e => e.Contains("e-Remito requiere ciudad"));
+    }
+
+    [Fact]
     public void Validar_ERemitoConIndTrasladoFueraDeRango_RetornaError()
     {
         var cfe = CrearCfeValido();

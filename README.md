@@ -314,12 +314,12 @@ await client.AsignarCaeAsync(cfe);         // cada emisión persiste el número 
 
 ### 10. Validaciones locales
 
-`cfe.Validar()` (que también ejecuta `GenerarXml`) detecta antes de enviar: RUT del emisor y del receptor con
-dígito verificador inválido, serie y número fuera del rango del CAE, longitudes máximas del esquema, receptor
-faltante en e-Factura/e-Resguardo, datos de exportación y de remito, mandante en cuenta ajena, referencias de las
-notas, descuentos y medios de pago mal formados y, si configurás `ValorUnidadIndexada`, e-Tickets sobre 5.000 UI sin
-identificar al receptor. Las reglas que dependen de datos de la DGI (por ejemplo, si el emisor está habilitado) solo
-las valida la DGI al recibir el sobre.
+`cfe.Validar()` detecta antes de enviar: RUT del emisor y del receptor con dígito verificador inválido, serie y
+número fuera del rango del CAE, longitudes máximas del esquema, receptor faltante en e-Factura/e-Resguardo, datos
+de exportación y de remito, mandante en cuenta ajena, referencias de las notas, descuentos y medios de pago mal
+formados y, si configurás `ValorUnidadIndexada`, e-Tickets sobre 5.000 UI sin identificar al receptor. `CfeXmlBuilder`
+`Generar()` ejecuta `Validar()` internamente antes de serializar el XML. Las reglas que dependen de datos de la DGI
+(por ejemplo, si el emisor está habilitado) solo las valida la DGI al recibir el sobre.
 
 ---
 
