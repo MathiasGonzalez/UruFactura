@@ -27,7 +27,7 @@
 
   <!-- Only .NET built-in security packages; no QuestPDF, SkiaSharp or ZXing -->
   <ItemGroup>
-    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.10" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
   </ItemGroup>
 
