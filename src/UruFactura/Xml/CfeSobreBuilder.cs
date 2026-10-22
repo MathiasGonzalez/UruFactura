@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using System.Xml;
 using UruFactura.Exceptions;
 
@@ -41,7 +40,9 @@ public static class CfeSobreBuilder
         if (idEmisor is < 0 or > 9_999_999_999)
             throw new UruFacturaException("El Idemisor del sobre debe tener hasta 10 dígitos.");
 
-        var doc = new XmlDocument();
+        // PreserveWhitespace: los CFE ya están firmados y cualquier espacio que se pierda al
+        // guardar el sobre invalidaría su firma.
+        var doc = new XmlDocument { PreserveWhitespace = true };
         doc.AppendChild(doc.CreateXmlDeclaration("1.0", "UTF-8", null));
 
         var envio = doc.CreateElement("EnvioCFE", CfeXmlBuilder.NsUri);
@@ -64,17 +65,7 @@ public static class CfeSobreBuilder
             envio.AppendChild(doc.ImportNode(cfeDoc.DocumentElement!, true));
         }
 
-        using var ms = new MemoryStream();
-        using (var writer = XmlWriter.Create(ms, new XmlWriterSettings
-               {
-                   Encoding = new UTF8Encoding(false),
-                   Indent = false,
-               }))
-        {
-            doc.Save(writer);
-        }
-
-        return Encoding.UTF8.GetString(ms.ToArray());
+        return XmlCfe.Escribir(doc.Save);
     }
 
     private static XmlElement AddEl(XmlDocument doc, XmlElement parent, string name, string? text)

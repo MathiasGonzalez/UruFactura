@@ -1,10 +1,10 @@
 using System.Globalization;
-using System.Text;
 using System.Xml;
 using UruFactura.Enums;
 using UruFactura.Exceptions;
 using UruFactura.Formatting;
 using UruFactura.Models;
+using static UruFactura.Xml.XmlCfe;
 
 namespace UruFactura.Xml;
 
@@ -85,8 +85,7 @@ public static class ReporteDiarioBuilder
             throw new UruFacturaException(
                 $"El reporte diario no soporta los tipos: {string.Join(", ", noSoportados)}.");
 
-        using var ms = new MemoryStream();
-        using (var w = XmlWriter.Create(ms, new XmlWriterSettings { Encoding = new UTF8Encoding(false), Indent = false }))
+        return Escribir(w =>
         {
             w.WriteStartDocument();
             w.WriteStartElement("Reporte", CfeXmlBuilder.NsUri);
@@ -112,17 +111,23 @@ public static class ReporteDiarioBuilder
                 El(w, "TipoComp", ((int)tipo).ToString(CultureInfo.InvariantCulture));
                 w.WriteStartElement("RsmnData", CfeXmlBuilder.NsUri);
                 EscribirMontos(w, grupo, clase);
-                El(w, "CantDocsUtil", grupo.Count.ToString(CultureInfo.InvariantCulture));
-                EscribirRangos(w, grupo);
+                if (tipo.EsContingencia())
+                {
+                    // Los CFC (RsmnData_*_Cont) no informan rangos: solo la cantidad emitida.
+                    El(w, "CantCFCEmi", grupo.Count.ToString(CultureInfo.InvariantCulture));
+                }
+                else
+                {
+                    El(w, "CantDocsUtil", grupo.Count.ToString(CultureInfo.InvariantCulture));
+                    EscribirRangos(w, grupo);
+                }
                 w.WriteEndElement(); // RsmnData
                 w.WriteEndElement(); // Rsmn_*
             }
 
             w.WriteEndElement(); // Reporte
             w.WriteEndDocument();
-        }
-
-        return Encoding.UTF8.GetString(ms.ToArray());
+        });
     }
 
     private static void EscribirMontos(XmlWriter w, List<Cfe> grupo, Resumen clase)
@@ -131,19 +136,19 @@ public static class ReporteDiarioBuilder
             .GroupBy(c => (c.FechaEmision, c.CodigoSucursal))
             .OrderBy(g => g.Key.FechaEmision).ThenBy(g => g.Key.CodigoSucursal);
 
+        var item = clase switch
+        {
+            Resumen.FacturaYTicket => "Mnts_FyT_Item",
+            Resumen.Exportacion => "Mnts_FExp_Item",
+            Resumen.Remito => "Mnts_Rem_Item",
+            Resumen.Resguardo => "Mnts_Res_Item",
+            _ => "Mnts_Rem_Exp_Item",
+        };
+
         w.WriteStartElement("Montos", CfeXmlBuilder.NsUri);
         foreach (var g in porDiaYSucursal)
         {
-            var nombre = clase switch
-            {
-                Resumen.FacturaYTicket => "Mnts_FyT_Item",
-                Resumen.Exportacion => "Mnts_FExp_Item",
-                Resumen.Remito => "Mnts_Rem_Item",
-                Resumen.Resguardo => "Mnts_Res_Item",
-                _ => "Mnts_Rem_Exp_Item",
-            };
-
-            w.WriteStartElement(nombre, CfeXmlBuilder.NsUri);
+            w.WriteStartElement(item, CfeXmlBuilder.NsUri);
             El(w, "Fecha", CfeFormat.DateIso(g.Key.FechaEmision));
             El(w, "CodSuc", g.Key.CodigoSucursal.ToString(CultureInfo.InvariantCulture));
 
@@ -187,36 +192,20 @@ public static class ReporteDiarioBuilder
         w.WriteStartElement("RngDocsUtil", CfeXmlBuilder.NsUri);
         foreach (var serie in grupo.GroupBy(c => c.Serie).OrderBy(g => g.Key, StringComparer.Ordinal))
         {
-            var numeros = serie.Select(c => c.Numero).Distinct().OrderBy(n => n).ToList();
-            var desde = numeros[0];
-            var hasta = desde;
-            for (int i = 1; i <= numeros.Count; i++)
-            {
-                if (i < numeros.Count && numeros[i] == hasta + 1)
-                {
-                    hasta = numeros[i];
-                    continue;
-                }
+            // En una lista ordenada y sin repetidos, los números consecutivos comparten (número − posición).
+            var rangos = serie.Select(c => c.Numero).Distinct().Order()
+                .Select((numero, i) => (numero, tramo: numero - i))
+                .GroupBy(x => x.tramo, x => x.numero);
 
+            foreach (var rango in rangos)
+            {
                 w.WriteStartElement("RDU_Item", CfeXmlBuilder.NsUri);
                 El(w, "Serie", serie.Key ?? string.Empty);
-                El(w, "NroDesde", desde.ToString(CultureInfo.InvariantCulture));
-                El(w, "NroHasta", hasta.ToString(CultureInfo.InvariantCulture));
+                El(w, "NroDesde", rango.First().ToString(CultureInfo.InvariantCulture));
+                El(w, "NroHasta", rango.Last().ToString(CultureInfo.InvariantCulture));
                 w.WriteEndElement();
-
-                if (i < numeros.Count)
-                    desde = hasta = numeros[i];
             }
         }
         w.WriteEndElement();
     }
-
-    private static void El(XmlWriter w, string name, string value)
-    {
-        w.WriteStartElement(name, CfeXmlBuilder.NsUri);
-        w.WriteString(value);
-        w.WriteEndElement();
-    }
-
-    private static string M2(decimal v) => CfeFormat.DecimalInvariant(v, "F2");
 }

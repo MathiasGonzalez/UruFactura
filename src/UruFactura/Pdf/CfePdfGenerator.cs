@@ -127,7 +127,7 @@ public class CfePdfGenerator : ICfePdfGenerator
     internal static string ConstruirContenidoQr(Cfe cfe, Ambiente ambiente)
     {
         var fecha = cfe.FechaFirma is { } firma
-            ? firma.ToOffset(TimeSpan.FromHours(-3)).ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)
+            ? firma.ToOffset(HoraUruguay.Offset).ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)
             : cfe.FechaEmision.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
 
         return $"{UrlConsultaQr}?" + string.Join(",",
@@ -145,8 +145,7 @@ public class CfePdfGenerator : ICfePdfGenerator
     {
         FamiliaCfe.Remito => 0m,
         FamiliaCfe.Resguardo => cfe.MontoRetenido,
-        FamiliaCfe.RemitoExportacion => cfe.MontoExportacion,
-        _ => cfe.MontoTotal,
+        _ => cfe.MontoTotal, // en exportación, igual al monto de exportación
     };
 
     /// <summary>Primeros 6 caracteres del código de seguridad, para imprimir bajo el QR.</summary>
@@ -201,7 +200,7 @@ public class CfePdfGenerator : ICfePdfGenerator
                         {
                             tipoDoc.Item().Border(1).Padding(8).AlignCenter().Column(c =>
                             {
-                                c.Item().Text(ObtenerNombreTipo(cfe)).Bold().FontSize(12);
+                                c.Item().Text(NombreCompleto(cfe.Tipo)).Bold().FontSize(12);
                                 c.Item().Text($"Serie {cfe.Serie} N° {cfe.Numero}").Bold().FontSize(11);
                                 c.Item().Text($"Fecha: {cfe.FechaEmision:dd/MM/yyyy}").FontSize(9);
                             });
@@ -242,11 +241,8 @@ public class CfePdfGenerator : ICfePdfGenerator
 
                         table.Header(h =>
                         {
-                            h.Cell().Background("#EEEEEE").Padding(4).AlignCenter().Text("Cant.").Bold().FontSize(9);
-                            h.Cell().Background("#EEEEEE").Padding(4).AlignCenter().Text("Descripción").Bold().FontSize(9);
-                            h.Cell().Background("#EEEEEE").Padding(4).AlignCenter().Text("P.Unit.").Bold().FontSize(9);
-                            h.Cell().Background("#EEEEEE").Padding(4).AlignCenter().Text("IVA").Bold().FontSize(9);
-                            h.Cell().Background("#EEEEEE").Padding(4).AlignCenter().Text("Total").Bold().FontSize(9);
+                            foreach (var titulo in (string[])["Cant.", "Descripción", "P.Unit.", "IVA", "Total"])
+                                h.Cell().Background("#EEEEEE").Padding(4).AlignCenter().Text(titulo).Bold().FontSize(9);
                         });
 
                         foreach (var linea in cfe.Detalle)
@@ -278,7 +274,7 @@ public class CfePdfGenerator : ICfePdfGenerator
                         if (cfe.Tipo.Familia() == FamiliaCfe.Resguardo)
                             tot.Item().Text($"TOTAL RETENIDO: {CfeFormat.MonetaryPdf(cfe.MontoRetenido)}").Bold().FontSize(12);
                         else
-                            tot.Item().Text($"TOTAL{(cfe.Moneda == Moneda.PesoUruguayo ? "" : $" ({cfe.Moneda})")}: {CfeFormat.MonetaryPdf(cfe.Tipo.EsExportacion() ? cfe.MontoExportacion : cfe.MontoTotal)}").Bold().FontSize(12);
+                            tot.Item().Text($"TOTAL{(cfe.Moneda == Moneda.PesoUruguayo ? "" : $" ({cfe.Moneda})")}: {CfeFormat.MonetaryPdf(cfe.MontoTotal)}").Bold().FontSize(12);
                     });
 
                     if (cfe.MediosPago.Count > 0)
@@ -355,7 +351,7 @@ public class CfePdfGenerator : ICfePdfGenerator
                     col.Item().AlignCenter().Text(config.DomicilioFiscal).FontSize(7);
                     col.Item().Line(0.5f);
 
-                    col.Item().AlignCenter().Text(ObtenerNombreTipoTermico(cfe)).Bold().FontSize(8);
+                    col.Item().AlignCenter().Text(NombreCompleto(cfe.Tipo)).Bold().FontSize(8);
                     col.Item().AlignCenter().Text($"Serie {cfe.Serie} N° {cfe.Numero}").Bold().FontSize(7);
                     col.Item().AlignCenter().Text($"Fecha: {cfe.FechaEmision:dd/MM/yyyy}").FontSize(7);
                     col.Item().Line(0.5f);
@@ -378,32 +374,29 @@ public class CfePdfGenerator : ICfePdfGenerator
 
                     col.Item().Line(0.5f);
 
-                    if (cfe.MontoNetoExento > 0)
-                        col.Item().Row(r => { r.RelativeItem().Text("Exento:").FontSize(7); r.Item().AlignRight().Text(CfeFormat.MonetaryPdf(cfe.MontoNetoExento)).FontSize(7); });
-                    if (cfe.IvaMinimo > 0)
-                        col.Item().Row(r => { r.RelativeItem().Text("IVA 10%:").FontSize(7); r.Item().AlignRight().Text(CfeFormat.MonetaryPdf(cfe.IvaMinimo)).FontSize(7); });
-                    if (cfe.IvaBasico > 0)
-                        col.Item().Row(r => { r.RelativeItem().Text("IVA 22%:").FontSize(7); r.Item().AlignRight().Text(CfeFormat.MonetaryPdf(cfe.IvaBasico)).FontSize(7); });
-
-                    foreach (var d in cfe.DescuentosRecargos)
-                        col.Item().Row(r =>
-                        {
-                            r.RelativeItem().Text(d.Tipo == TipoMovimientoGlobal.Descuento ? $"Desc. {d.Glosa}:" : $"Rec. {d.Glosa}:").FontSize(7);
-                            r.Item().AlignRight().Text(CfeFormat.MonetaryPdf(d.Monto)).FontSize(7);
-                        });
-
-                    col.Item().Row(r =>
+                    // Fila "etiqueta ........ monto" del ticket.
+                    void Fila(string etiqueta, decimal monto, bool negrita = false) => col.Item().Row(r =>
                     {
-                        r.RelativeItem().Text("TOTAL:").Bold().FontSize(7);
-                        r.Item().AlignRight().Text(CfeFormat.MonetaryPdf(cfe.Tipo.EsExportacion() ? cfe.MontoExportacion : cfe.MontoTotal)).Bold().FontSize(7);
+                        var izquierda = r.RelativeItem().Text(etiqueta).FontSize(7);
+                        var derecha = r.Item().AlignRight().Text(CfeFormat.MonetaryPdf(monto)).FontSize(7);
+                        if (negrita)
+                        {
+                            izquierda.Bold();
+                            derecha.Bold();
+                        }
                     });
 
+                    if (cfe.MontoNetoExento > 0)
+                        Fila("Exento:", cfe.MontoNetoExento);
+                    if (cfe.IvaMinimo > 0)
+                        Fila("IVA 10%:", cfe.IvaMinimo);
+                    if (cfe.IvaBasico > 0)
+                        Fila("IVA 22%:", cfe.IvaBasico);
+                    foreach (var d in cfe.DescuentosRecargos)
+                        Fila(d.Tipo == TipoMovimientoGlobal.Descuento ? $"Desc. {d.Glosa}:" : $"Rec. {d.Glosa}:", d.Monto);
+                    Fila("TOTAL:", cfe.MontoTotal, negrita: true);
                     foreach (var m in cfe.MediosPago.OrderBy(m => m.Orden ?? 0))
-                        col.Item().Row(r =>
-                        {
-                            r.RelativeItem().Text($"{m.Glosa}:").FontSize(7);
-                            r.Item().AlignRight().Text(CfeFormat.MonetaryPdf(m.Valor)).FontSize(7);
-                        });
+                        Fila($"{m.Glosa}:", m.Valor);
 
                     col.Item().Line(0.5f);
 
@@ -418,10 +411,6 @@ public class CfePdfGenerator : ICfePdfGenerator
             });
         }).GeneratePdf();
     }
-
-    private static string ObtenerNombreTipo(Cfe cfe) => NombreCompleto(cfe.Tipo);
-
-    private static string ObtenerNombreTipoTermico(Cfe cfe) => NombreCompleto(cfe.Tipo);
 
     /// <summary>Nombre del comprobante para la representación impresa.</summary>
     internal static string NombreCompleto(TipoCfe tipo)

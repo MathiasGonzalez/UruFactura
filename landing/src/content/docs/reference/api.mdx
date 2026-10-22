@@ -43,7 +43,7 @@ La fachada principal de UruFactura. Punto de entrada para todas las operaciones.
 | Método | Firma | Descripción |
 |--------|-------|-------------|
 | `GenerarXml` | `string GenerarXml(Cfe cfe)` | Genera el XML sin firmar y lo guarda en `cfe.XmlSinFirmar`. |
-| `AsignarCae` / `AsignarCaeAsync` | `void AsignarCae(Cfe cfe)` / `Task AsignarCaeAsync(Cfe cfe)` | Toma el próximo número del CAE vigente y completa `Numero`, `Serie` y `CaeData`. La variante async además persiste el último número usado en el `ICaeRepository` configurado. |
+| `AsignarCae` / `AsignarCaeAsync` | `void AsignarCae(Cfe cfe)` / `Task AsignarCaeAsync(Cfe cfe, CancellationToken cancellationToken = default)` | Toma el próximo número del CAE vigente y completa `Numero`, `Serie` y `CaeData`. La variante async además persiste el último número usado en el `ICaeRepository` configurado; si es un `ICaeRepositoryCompartido`, reserva el número en la base (varias instancias) y la variante sincrónica lanza `InvalidOperationException`. |
 | `FirmarCfe` | `string FirmarCfe(Cfe cfe)` | Firma el CFE (XML Signature enveloped) y guarda el resultado en `cfe.XmlFirmado`. |
 | `GenerarYFirmar` | `string GenerarYFirmar(Cfe cfe)` | Genera XML y lo firma. Retorna el XML firmado. |
 | `EnviarCfeAsync` | `Task<RespuestaDgi> EnviarCfeAsync(Cfe cfe, CancellationToken cancellationToken = default)` | Genera, firma y envía el CFE a DGI dentro de un sobre `EnvioCFE`. Devuelve el acuse del sobre (`AS`/`BS`). |
@@ -51,6 +51,8 @@ La fachada principal de UruFactura. Punto de entrada para todas las operaciones.
 | `ConsultarEstadoEnvioAsync` | `Task<RespuestaDgi> ConsultarEstadoEnvioAsync(RespuestaDgi envio, IEnumerable<Cfe>? cfes = null, CancellationToken cancellationToken = default)` | Consulta el resultado de un sobre enviado (`AE`/`BE`/`CE` por comprobante) y actualiza `AceptadoPorDgi` de los CFE indicados. |
 | `ConsultarEstadoCfeAsync` | `Task<RespuestaDgi> ConsultarEstadoCfeAsync(Cfe cfe, CancellationToken cancellationToken = default)` | Consulta el estado de un CFE por tipo, serie y número. |
 | `EnviarReporteDiarioAsync` | `Task<RespuestaReporteDiario> EnviarReporteDiarioAsync(DateTime fecha, IEnumerable<Cfe> cfes, CancellationToken cancellationToken = default)` | Envía el reporte diario (resumen firmado: montos, cantidades y rangos por tipo) de los CFE emitidos en la fecha. Hay una sobrecarga con `secEnvio`. |
+| `EnviarReporteDiarioAsync` (desde la base) | `Task<RespuestaReporteDiario> EnviarReporteDiarioAsync(DateOnly fecha, int secEnvio = 0, CancellationToken cancellationToken = default)` | Igual, con los CFE del `ICfeRepository` configurado (los de todas las instancias). |
+| `RegistrarCfesAsync` | `Task RegistrarCfesAsync(IEnumerable<Cfe> cfes, CancellationToken cancellationToken = default)` | Guarda CFE emitidos en el `ICfeRepository` (para los que no se envían en el momento). `EnviarCfesAsync` ya lo hace. |
 | `GenerarPdfA4` | `byte[] GenerarPdfA4(Cfe cfe)` | Genera representación impresa A4 en PDF. Requiere `ICfePdfGenerator` configurado. |
 | `GenerarPdfTermico` | `byte[] GenerarPdfTermico(Cfe cfe)` | Genera representación térmica 80mm en PDF. Requiere `ICfePdfGenerator` configurado. |
 
@@ -144,6 +146,9 @@ Todas las dependencias internas del cliente tienen interfaces para facilitar el 
 | `ICfeFirmante` | `CfeFirmante` | Firma XML Signature enveloped (CFE y reporte) |
 | `ICfeXmlBuilder` | `CfeXmlBuilder` | Serialización del XML según esquema DGI |
 | `IDgiSoapClient` | `DgiSoapClient` | Transporte SOAP hacia DGI (`EnviarSobreAsync`, `ConsultarEstadoEnvioAsync`, `ConsultarEstadoCfeAsync`, `EnviarReporteDiarioAsync`) con WS-Security |
+| `ICaeRepository` | `InMemoryCaeRepository`, `EfCaeRepository<T>` | Persistencia de CAE y su último número usado |
+| `ICaeRepositoryCompartido` | `EfCaeRepository<T>` (paquete EF) | Numeración atómica de CFE y de envíos entre varias instancias |
+| `ICfeRepository` | `EfCfeRepository<T>` (paquete EF) | Registro de CFE emitidos; fuente del reporte diario |
 
 Los métodos públicos de las clases por defecto son `virtual`, por lo que se pueden extender por herencia.
 

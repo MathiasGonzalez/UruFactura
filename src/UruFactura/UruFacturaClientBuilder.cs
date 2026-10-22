@@ -1,6 +1,7 @@
 using UruFactura.Cae;
 using UruFactura.Configuration;
 using UruFactura.Pdf;
+using UruFactura.Persistence;
 using UruFactura.Signature;
 using UruFactura.Soap;
 using UruFactura.Xml;
@@ -27,22 +28,21 @@ namespace UruFactura;
 public sealed partial class UruFacturaClientBuilder
 {
     private readonly UruFacturaConfig _config;
-    private ICfeXmlBuilder _xmlBuilder;
-    private ICfeFirmante _firmante;
-    private ICaeManager _caeManager;
-    private IDgiSoapClient _soapClient;
+    // Las dependencias no reemplazadas se crean en Build(): así no se lee el certificado ni se crea
+    // un HttpClient que después se descartarían sin liberar, y cada cliente construido tiene las suyas.
+    private ICfeXmlBuilder? _xmlBuilder;
+    private ICfeFirmante? _firmante;
+    private ICaeManager? _caeManager;
+    private IDgiSoapClient? _soapClient;
     private ICfePdfGenerator? _pdfGenerator;
     private ICaeRepository? _caeRepository;
+    private ICfeRepository? _cfeRepository;
     private HttpClient? _httpClient;
 
     private UruFacturaClientBuilder(UruFacturaConfig config)
     {
         config.Validate();
         _config = config;
-        _xmlBuilder = new CfeXmlBuilder();
-        _firmante   = new CfeFirmante(config.RutaCertificado, config.PasswordCertificado, config.AlgoritmoFirma);
-        _caeManager = new CaeManager();
-        _soapClient = new DgiSoapClient(config);
     }
 
     /// <summary>
@@ -84,6 +84,28 @@ public sealed partial class UruFacturaClientBuilder
     }
 
     /// <summary>
+    /// Configura el repositorio donde <see cref="UruFacturaClient.AsignarCaeAsync"/> persiste el
+    /// último número usado de cada CAE. Si implementa <see cref="ICaeRepositoryCompartido"/>, la
+    /// numeración se reserva en el almacenamiento compartido y el cliente es seguro con varias instancias.
+    /// </summary>
+    public UruFacturaClientBuilder WithCaeRepository(ICaeRepository? caeRepository)
+    {
+        _caeRepository = caeRepository;
+        return this;
+    }
+
+    /// <summary>
+    /// Configura el registro durable de los CFE emitidos: el cliente los guarda al enviarlos y al
+    /// consultar su estado, y <see cref="UruFacturaClient.EnviarReporteDiarioAsync(DateOnly, int, CancellationToken)"/>
+    /// arma el reporte con los de todas las instancias.
+    /// </summary>
+    public UruFacturaClientBuilder WithCfeRepository(ICfeRepository? cfeRepository)
+    {
+        _cfeRepository = cfeRepository;
+        return this;
+    }
+
+    /// <summary>
     /// Usa el <see cref="HttpClient"/> provisto en lugar de crear uno interno.
     /// <para>
     /// <b>Recomendado en APIs de alto tráfico:</b> registre el SDK como singleton e inyecte
@@ -111,16 +133,6 @@ public sealed partial class UruFacturaClientBuilder
     /// </code>
     /// </example>
     /// </summary>
-    /// <summary>
-    /// Configura el repositorio donde <see cref="UruFacturaClient.AsignarCaeAsync"/> persiste el
-    /// último número usado de cada CAE.
-    /// </summary>
-    public UruFacturaClientBuilder WithCaeRepository(ICaeRepository? caeRepository)
-    {
-        _caeRepository = caeRepository;
-        return this;
-    }
-
     public UruFacturaClientBuilder WithHttpClient(HttpClient httpClient)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
@@ -140,9 +152,31 @@ public sealed partial class UruFacturaClientBuilder
     /// </summary>
     public UruFacturaClient Build()
     {
-        if (_httpClient is not null)
-            _soapClient = _soapClient.WithHttpClient(_httpClient);
+        var firmante = _firmante
+            ?? new CfeFirmante(_config.RutaCertificado, _config.PasswordCertificado, _config.AlgoritmoFirma);
 
-        return new(_config, _xmlBuilder, _firmante, _caeManager, _soapClient, _pdfGenerator, _caeRepository);
+        IDgiSoapClient soapClient;
+        try
+        {
+            soapClient = _soapClient is null
+                ? new DgiSoapClient(_config, _httpClient)
+                : _httpClient is null ? _soapClient : _soapClient.WithHttpClient(_httpClient);
+        }
+        catch
+        {
+            if (_firmante is null)
+                firmante.Dispose();
+            throw;
+        }
+
+        return new(
+            _config,
+            _xmlBuilder ?? new CfeXmlBuilder(),
+            firmante,
+            _caeManager ?? new CaeManager(),
+            soapClient,
+            _pdfGenerator,
+            _caeRepository,
+            _cfeRepository);
     }
 }

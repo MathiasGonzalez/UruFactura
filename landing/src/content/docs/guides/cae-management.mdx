@@ -99,6 +99,38 @@ CAE CAE2025-EF (EFactura): rango 1-500, usado hasta 45, vence 2026-06-30 → ✅
   `CaeManager` es **thread-safe**: podés usarlo desde múltiples hilos concurrentes (p. ej., en una API ASP.NET Core con requests simultáneos) sin necesidad de sincronización adicional.
 </Aside>
 
+<Aside type="caution">
+  `CaeManager` numera **en memoria**: con dos o más instancias de la aplicación (réplicas, blue/green, API + worker) cada una tendría su propio contador y se repetirían números. En ese caso usá un `ICaeRepositoryCompartido` (ver abajo).
+</Aside>
+
+### Varias instancias: numeración en la base de datos
+
+El paquete `UruFactura.EntityFrameworkCore` (o `UruFactura.Lite.EntityFrameworkCore`) reserva cada número con un `UPDATE` condicional (compare-and-swap) en la tabla `UruFacturaCaes`, de modo que dos instancias nunca obtienen el mismo número. También registra los CFE emitidos (`UruFacturaCfes`) para que el reporte diario incluya los de todas las instancias.
+
+```csharp
+builder.Services.AddDbContextFactory<UruFacturaDbContext>(o => o.UseSqlServer(connectionString));
+
+builder.Services.AddSingleton(sp =>
+{
+    var db = sp.GetRequiredService<IDbContextFactory<UruFacturaDbContext>>();
+    return UruFacturaClientBuilder.WithDefaults(config)
+        .WithCaeRepository(new EfCaeRepository<UruFacturaDbContext>(db))
+        .WithCfeRepository(new EfCfeRepository<UruFacturaDbContext>(db))
+        .Build();
+});
+
+// Alta de un CAE (una vez, desde cualquier instancia)
+await client.RegistrarCaeAsync(nuevoCae);
+
+// Emisión: el número se reserva en la base
+await client.AsignarCaeAsync(cfe);
+
+// Reporte diario con los CFE de todas las instancias
+await client.EnviarReporteDiarioAsync(HoraUruguay.Hoy().AddDays(-1));
+```
+
+Con un repositorio compartido, `AsignarCae` (sincrónico) lanza `InvalidOperationException`: usá siempre `AsignarCaeAsync`. Si tu app ya tiene un `DbContext`, llamá a `modelBuilder.ApplyUruFacturaModel()` en `OnModelCreating` y generá la migración con tu proveedor.
+
 ### En ASP.NET Core con Hosted Service
 
 ```csharp

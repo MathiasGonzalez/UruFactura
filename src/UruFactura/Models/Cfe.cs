@@ -1,4 +1,5 @@
 using UruFactura.Enums;
+using UruFactura.Formatting;
 
 namespace UruFactura.Models;
 
@@ -28,8 +29,8 @@ public class Cfe
     /// <summary>Código de sucursal DGI del emisor (<c>CdgDGISucur</c>).</summary>
     public int CodigoSucursal { get; set; } = 1;
 
-    /// <summary>Fecha de emisión del comprobante.</summary>
-    public DateOnly FechaEmision { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+    /// <summary>Fecha de emisión del comprobante (por defecto, la fecha actual en Uruguay).</summary>
+    public DateOnly FechaEmision { get; set; } = HoraUruguay.Hoy();
 
     /// <summary>Número interno asignado por el emisor (<c>NroInterno</c>, hasta 50 caracteres, opcional).</summary>
     public string? NroInterno { get; set; }
@@ -214,73 +215,42 @@ public class Cfe
     /// </summary>
     public virtual void CalcularTotales()
     {
-        MontoNetoExento = 0;
-        MontoNetoSuspendido = 0;
-        MontoNetoMinimo = 0;
-        MontoNetoBasico = 0;
-        MontoExportacion = 0;
-        IvaMinimo = 0;
-        IvaBasico = 0;
-        MontoRetenido = 0;
+        MontoNetoExento = MontoNetoSuspendido = MontoNetoMinimo = MontoNetoBasico = 0;
+        MontoExportacion = IvaMinimo = IvaBasico = MontoRetenido = 0;
 
-        var familia = Tipo.Familia();
-
-        if (familia == FamiliaCfe.Resguardo)
+        if (Tipo.Familia() == FamiliaCfe.Resguardo)
         {
-            MontoRetenido = Math.Round(Detalle.SelectMany(l => l.Retenciones).Sum(r => r.Valor), 2);
+            // Cada retención se escribe con 2 decimales: el total es la suma de los valores escritos.
+            MontoRetenido = Detalle.SelectMany(l => l.Retenciones).Sum(r => CfeFormat.Redondear(r.Valor));
             MontoTotal = 0;
             return;
         }
 
-        var ajusteGlobal = DescuentosRecargos
-            .Where(d => d.Monto > 0)
-            .ToList();
-
-        decimal Ajuste(TipoIva iva) => ajusteGlobal
-            .Where(d => d.IndFact == iva)
-            .Sum(d => d.Tipo == TipoMovimientoGlobal.Descuento ? -d.Monto : d.Monto);
+        // ValorDR se escribe con 2 decimales: el ajuste usa ese mismo valor.
+        var ajustes = DescuentosRecargos.Where(d => d.Monto > 0).ToList();
+        static decimal Ajuste(DescuentoRecargoGlobal d) =>
+            d.Tipo == TipoMovimientoGlobal.Descuento ? -CfeFormat.Redondear(d.Monto) : CfeFormat.Redondear(d.Monto);
 
         if (Tipo.EsExportacion())
         {
             // Exportación y asimiladas: todo el detalle es IndFact 10, sin IVA.
-            var neto = Detalle.Sum(l => l.MontoTotal)
-                     + ajusteGlobal.Sum(d => d.Tipo == TipoMovimientoGlobal.Descuento ? -d.Monto : d.Monto);
-            MontoExportacion = Math.Round(neto, 2);
-            MontoTotal = MontoExportacion;
+            MontoExportacion = MontoTotal = CfeFormat.Redondear(Detalle.Sum(l => l.MontoTotal) + ajustes.Sum(Ajuste));
             return;
         }
 
-        foreach (var linea in Detalle)
-        {
-            switch (linea.IndFactIva)
-            {
-                case TipoIva.Exento:
-                    MontoNetoExento += linea.MontoTotal;
-                    break;
-                case TipoIva.Suspendido:
-                    MontoNetoSuspendido += linea.MontoTotal;
-                    break;
-                case TipoIva.Minimo:
-                    MontoNetoMinimo += linea.MontoTotal;
-                    break;
-                case TipoIva.Basico:
-                    MontoNetoBasico += linea.MontoTotal;
-                    break;
-            }
-        }
+        decimal Neto(TipoIva iva) => CfeFormat.Redondear(
+            Detalle.Where(l => l.IndFactIva == iva).Sum(l => l.MontoTotal)
+            + ajustes.Where(d => d.IndFact == iva).Sum(Ajuste));
 
-        MontoNetoExento = Math.Round(MontoNetoExento + Ajuste(TipoIva.Exento), 2);
-        MontoNetoSuspendido = Math.Round(MontoNetoSuspendido + Ajuste(TipoIva.Suspendido), 2);
-        MontoNetoMinimo = Math.Round(MontoNetoMinimo + Ajuste(TipoIva.Minimo), 2);
-        MontoNetoBasico = Math.Round(MontoNetoBasico + Ajuste(TipoIva.Basico), 2);
+        MontoNetoExento = Neto(TipoIva.Exento);
+        MontoNetoSuspendido = Neto(TipoIva.Suspendido);
+        MontoNetoMinimo = Neto(TipoIva.Minimo);
+        MontoNetoBasico = Neto(TipoIva.Basico);
+        IvaMinimo = CfeFormat.Redondear(MontoNetoMinimo * 0.10m);
+        IvaBasico = CfeFormat.Redondear(MontoNetoBasico * 0.22m);
 
-        IvaMinimo = Math.Round(MontoNetoMinimo * 0.10m, 2);
-        IvaBasico = Math.Round(MontoNetoBasico * 0.22m, 2);
-
-        MontoTotal = MontoNetoExento + MontoNetoSuspendido
-                   + MontoNetoMinimo + IvaMinimo
-                   + MontoNetoBasico + IvaBasico;
-        MontoTotal = Math.Round(MontoTotal, 2);
+        // Todos los sumandos ya tienen 2 decimales.
+        MontoTotal = MontoNetoExento + MontoNetoSuspendido + MontoNetoMinimo + IvaMinimo + MontoNetoBasico + IvaBasico;
     }
 
     /// <summary>Indica si el tipo es de exportación (detalle sin IVA, <c>IndFact</c> 10).</summary>

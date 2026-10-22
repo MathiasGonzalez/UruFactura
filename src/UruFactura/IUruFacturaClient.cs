@@ -47,7 +47,7 @@ public interface IUruFacturaClient : IDisposable
     void AsignarCae(Cfe cfe);
 
     /// <summary>Como <see cref="AsignarCae"/> y persiste el número usado en el repositorio de CAE (si hay uno).</summary>
-    Task AsignarCaeAsync(Cfe cfe);
+    Task AsignarCaeAsync(Cfe cfe, CancellationToken cancellationToken = default);
 
     string GenerarXml(Cfe cfe);
     string FirmarCfe(Cfe cfe);
@@ -63,6 +63,9 @@ public interface IUruFacturaClient : IDisposable
     /// <summary>Envía de 1 a 250 CFE en un único sobre.</summary>
     Task<RespuestaDgi> EnviarCfesAsync(IEnumerable<Cfe> cfes, CancellationToken cancellationToken = default);
 
+    /// <summary>Guarda los CFE emitidos en el repositorio de CFE configurado (para los que no se envían en el momento).</summary>
+    Task RegistrarCfesAsync(IEnumerable<Cfe> cfes, CancellationToken cancellationToken = default);
+
     /// <summary>Consulta el resultado de un sobre enviado y actualiza el estado de los CFE indicados.</summary>
     Task<RespuestaDgi> ConsultarEstadoEnvioAsync(RespuestaDgi envio, IEnumerable<Cfe>? cfes = null, CancellationToken cancellationToken = default);
 
@@ -74,6 +77,9 @@ public interface IUruFacturaClient : IDisposable
 
     /// <summary>Igual que el anterior indicando la secuencia del envío del día (0, 1, ...).</summary>
     Task<RespuestaReporteDiario> EnviarReporteDiarioAsync(DateTime fecha, IEnumerable<Cfe> cfes, int secEnvio, CancellationToken cancellationToken = default);
+
+    /// <summary>Envía el reporte diario con los CFE del repositorio de CFE configurado (los de todas las instancias).</summary>
+    Task<RespuestaReporteDiario> EnviarReporteDiarioAsync(DateOnly fecha, int secEnvio = 0, CancellationToken cancellationToken = default);
 
     // -----------------------------------------------------------------------
     // PDF

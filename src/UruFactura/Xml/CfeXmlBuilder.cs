@@ -1,10 +1,10 @@
 using System.Globalization;
-using System.Text;
 using System.Xml;
 using UruFactura.Enums;
 using UruFactura.Exceptions;
 using UruFactura.Formatting;
 using UruFactura.Models;
+using static UruFactura.Xml.XmlCfe;
 
 namespace UruFactura.Xml;
 
@@ -32,23 +32,7 @@ public class CfeXmlBuilder : ICfeXmlBuilder
         if (errores.Count > 0)
             throw new CfeValidationException(errores);
 
-        // MemoryStream + UTF8 sin BOM: la declaración dice encoding="utf-8" y el resultado
-        // se puede cargar directamente con XmlDocument.LoadXml.
-        using var ms = new MemoryStream();
-        var settings = new XmlWriterSettings
-        {
-            Encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
-            Indent = false,
-            OmitXmlDeclaration = false,
-        };
-
-        using (var writer = XmlWriter.Create(ms, settings))
-        {
-            EscribirCfe(writer, cfe);
-            writer.Flush();
-        }
-
-        return Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
+        return Escribir(w => EscribirCfe(w, cfe));
     }
 
     private static string ElementoRaiz(FamiliaCfe f) => f switch
@@ -111,7 +95,7 @@ public class CfeXmlBuilder : ICfeXmlBuilder
 
     /// <summary>Fecha/hora con el offset de Uruguay (UTC-03:00, sin horario de verano).</summary>
     internal static string TimestampUruguay(DateTimeOffset instante) =>
-        instante.ToOffset(TimeSpan.FromHours(-3))
+        instante.ToOffset(HoraUruguay.Offset)
                 .ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture);
 
     private static void EscribirIdDoc(XmlWriter w, Cfe cfe, FamiliaCfe familia)
@@ -285,7 +269,7 @@ public class CfeXmlBuilder : ICfeXmlBuilder
                 {
                     w.WriteStartElement("RetencPercep", NsUri);
                     El(w, "CodRet", grupo.Key);
-                    El(w, "ValRetPerc", M2(grupo.Sum(r => r.Valor)));
+                    El(w, "ValRetPerc", M2(grupo.Sum(r => CfeFormat.Redondear(r.Valor))));
                     w.WriteEndElement();
                 }
                 break;
@@ -355,40 +339,33 @@ public class CfeXmlBuilder : ICfeXmlBuilder
             w.WriteEndElement();
         }
 
-        var unidad = string.IsNullOrWhiteSpace(linea.UnidadMedida) ? "N/A" : linea.UnidadMedida;
+        // Item_Rem no lleva IndFact ni montos; Item_Rem_Exp no admite IndFact 10 ni descuentos/recargos.
+        var esRemito = familia == FamiliaCfe.Remito;
+        var conIndFact = familia is not (FamiliaCfe.Remito or FamiliaCfe.RemitoExportacion);
 
-        if (familia == FamiliaCfe.Remito)
-        {
-            El(w, "NomItem", linea.NombreItem);
-            if (!string.IsNullOrWhiteSpace(linea.Descripcion))
-                El(w, "DscItem", linea.Descripcion);
-            El(w, "Cantidad", CfeFormat.DecimalInvariant(linea.Cantidad, "F3"));
-            El(w, "UniMed", unidad);
-            w.WriteEndElement();
-            return;
-        }
-
-        // Item_Rem_Exp no admite IndFact 10: en el e-Remito de exportación se omite.
-        if (familia != FamiliaCfe.RemitoExportacion)
+        if (conIndFact)
             El(w, "IndFact", IndFact(linea, familia));
         El(w, "NomItem", linea.NombreItem);
         if (!string.IsNullOrWhiteSpace(linea.Descripcion))
             El(w, "DscItem", linea.Descripcion);
         El(w, "Cantidad", CfeFormat.DecimalInvariant(linea.Cantidad, "F3"));
-        El(w, "UniMed", unidad);
-        El(w, "PrecioUnitario", CfeFormat.DecimalInvariant(linea.PrecioUnitario, "F6"));
+        El(w, "UniMed", string.IsNullOrWhiteSpace(linea.UnidadMedida) ? "N/A" : linea.UnidadMedida);
 
-        if (familia != FamiliaCfe.RemitoExportacion)
+        if (!esRemito)
         {
-            if (linea.DescuentoPorcentaje is > 0)
-                El(w, "DescuentoPct", CfeFormat.DecimalInvariant(linea.DescuentoPorcentaje.Value, "F3"));
-            if (linea.DescuentoEfectivo > 0)
-                El(w, "DescuentoMonto", M2(linea.DescuentoEfectivo));
-            if (linea.RecargoMonto > 0)
-                El(w, "RecargoMnt", M2(linea.RecargoMonto));
+            El(w, "PrecioUnitario", CfeFormat.DecimalInvariant(linea.PrecioUnitario, "F6"));
+            if (conIndFact)
+            {
+                if (linea.DescuentoPorcentaje is > 0)
+                    El(w, "DescuentoPct", CfeFormat.DecimalInvariant(linea.DescuentoPorcentaje.Value, "F3"));
+                if (linea.DescuentoEfectivo > 0)
+                    El(w, "DescuentoMonto", M2(linea.DescuentoEfectivo));
+                if (linea.RecargoMonto > 0)
+                    El(w, "RecargoMnt", M2(linea.RecargoMonto));
+            }
+            El(w, "MontoItem", M2(linea.MontoTotal));
         }
 
-        El(w, "MontoItem", M2(linea.MontoTotal));
         w.WriteEndElement(); // Item
     }
 
@@ -494,17 +471,8 @@ public class CfeXmlBuilder : ICfeXmlBuilder
 
     // -------------------------------------------------------------------------
 
-    private static void El(XmlWriter w, string name, string value)
-    {
-        w.WriteStartElement(name, NsUri);
-        w.WriteString(value);
-        w.WriteEndElement();
-    }
-
     private static string Int(Enum value) =>
         Convert.ToInt32(value, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture);
-
-    private static string M2(decimal value) => CfeFormat.DecimalInvariant(value, "F2");
 
     private static string Cant(Cfe cfe) => cfe.Detalle.Count.ToString(CultureInfo.InvariantCulture);
 

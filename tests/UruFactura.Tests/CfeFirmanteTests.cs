@@ -125,6 +125,16 @@ public class CfeFirmanteTests : IDisposable
         Assert.False(CfeFirmante.VerificarFirma(XmlSinFirmar()));
 
     [Fact]
+    public void VerificarFirma_XmlConDtd_RetornaFalse()
+    {
+        using var firmante = new CfeFirmante(_certificadoTest);
+        var xml = firmante.Firmar(XmlSinFirmar());
+        var conDtd = xml.Replace("?>", "?><!DOCTYPE CFE [<!ENTITY x \"x\">]>");
+
+        Assert.False(CfeFirmante.VerificarFirma(conDtd));
+    }
+
+    [Fact]
     public void VerificarFirma_XmlNoValido_RetornaFalse() =>
         Assert.False(CfeFirmante.VerificarFirma("no es xml"));
 

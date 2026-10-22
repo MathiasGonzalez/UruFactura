@@ -24,6 +24,8 @@ Sigue el runbook en [`docs/NORMATIVA_DGI_UPDATE.md`](docs/NORMATIVA_DGI_UPDATE.m
 - **Modelo CFE:** el modelo principal es `Cfe` en `src/UruFactura/Models/Cfe.cs`. Siempre agregar validaciones en `Cfe.Validar()` cuando un campo se vuelve obligatorio.
 - **XML builder:** `CfeXmlBuilder.cs` usa `XmlWriter` (no interpolación de strings) para evitar vulnerabilidades XSS.
 - **Serialización XML:** usar `MemoryStream` + `UTF8Encoding(false)` (sin BOM). No usar `StringBuilder` para la salida XML.
+- **Fechas fiscales:** usar `HoraUruguay.Hoy()` / `HoraUruguay.Ahora()`, nunca `DateTime.Today` ni `DateTime.Now` (los servidores suelen estar en UTC).
+- **Lite:** `UruFactura.Lite` y `UruFactura.Lite.EntityFrameworkCore` compilan las mismas fuentes enlazadas; al agregar una carpeta o un archivo en la raíz de `src/UruFactura`, enlazarlo en `UruFactura.Lite.csproj`.
 - **Tests:** cada nueva funcionalidad debe tener tests en `tests/UruFactura.Tests/`. Usar xUnit.
 - **Build y tests:** `dotnet test UruFactura.slnx` corre todo.
 
@@ -38,5 +40,8 @@ Sigue el runbook en [`docs/NORMATIVA_DGI_UPDATE.md`](docs/NORMATIVA_DGI_UPDATE.m
 | `src/UruFactura/Models/RefCfe.cs` | Modelo de referencias (notas de crédito/débito) |
 | `src/UruFactura/Configuration/UruFacturaConfig.cs` | Config del emisor + validaciones |
 | `src/UruFactura/Enums/TipoCfe.cs` | Tipos de comprobante |
+| `src/UruFactura/Cae/ICaeRepositoryCompartido.cs` | Numeración atómica entre instancias |
+| `src/UruFactura/Persistence/ICfeRepository.cs` | Registro de CFE emitidos (fuente del reporte diario) |
+| `src/UruFactura.EntityFrameworkCore/` | Implementación EF Core (CAS sobre `UruFacturaCaes`, tablas `UruFacturaCfes` y `UruFacturaSecuencias`) |
 | `docs/NORMATIVA_DGI_UPDATE.md` | Runbook de actualización normativa |
 | `docs/FACTURACION_URUGUAY.md` | Guía de facturación con ejemplos |

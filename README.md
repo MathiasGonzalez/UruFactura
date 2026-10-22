@@ -24,6 +24,7 @@ UruFactura es una librería open-source **.NET 10 C#** de alto nivel diseñada p
 | **Firma Digital** | Firma XML Signature *enveloped* del CFE y firma **WS-Security** de cada mensaje SOAP, usando certificados estándar `.p12` / `.pfx`. |
 | **Comunicación SOAP** | Cliente de los servicios web de la DGI (`ws_efactura` y `ws_consultas`): envío de sobres `EnvioCFE`, consulta del estado del envío y del comprobante, y Reporte Diario. |
 | **Gestión de CAE** | Control inteligente de Constancias de Autorización de Emisión con alertas de vencimiento y rango. |
+| **Varias instancias** | Con `UruFactura.EntityFrameworkCore`, la numeración de CFE y de envíos se reserva de forma atómica en la base y el reporte diario incluye los CFE de todas las instancias. |
 | **Representación Impresa** | Generador de PDFs (A4 y térmico 80mm) con código QR y sellos de seguridad según normativa. |
 
 ---
@@ -46,14 +47,20 @@ UruFactura/
 │   │   ├── Soap/                       # DgiSoapClient / IDgiSoapClient (comunicación con DGI)
 │   │   ├── Cae/                        # CaeManager / ICaeManager (gestión de CAE)
 │   │   │                               # InMemoryCaeRepository / ICaeRepository (persistencia)
+│   │   │                               # ICaeRepositoryCompartido (numeración atómica entre instancias)
+│   │   ├── Persistence/                # ICfeRepository (registro de CFE emitidos)
 │   │   ├── Pdf/                        # CfePdfGenerator / ICfePdfGenerator (PDF A4 y térmico)
 │   │   │                               # CfeQrGenerator / ICfeQrGenerator (código QR)
+│   │   ├── HoraUruguay.cs              # Fecha/hora de Uruguay (UTC−03:00) para fechas fiscales
 │   │   ├── IUruFacturaClient.cs        # Interfaz pública (para mocking en tests)
 │   │   ├── UruFacturaClient.cs         # Fachada principal
 │   │   ├── UruFacturaClientBuilder.cs  # Builder fluido con WithDefaults()
 │   │   └── UruFacturaClientBuilderPdf.cs # Extensión del builder para PDF (solo paquete completo)
-│   └── UruFactura.Lite/             # Paquete Lite (sin FluentReport/SkiaSharp/ZXing)
-│       └── UruFacturaClient.cs         # Constructores de conveniencia (sin PDF por defecto)
+│   ├── UruFactura.Lite/             # Paquete Lite (sin FluentReport/SkiaSharp/ZXing)
+│   │   └── UruFacturaClient.cs         # Constructores de conveniencia (sin PDF por defecto)
+│   ├── UruFactura.EntityFrameworkCore/      # Persistencia EF Core: EfCaeRepository, EfCfeRepository,
+│   │                                        # UruFacturaDbContext y ApplyUruFacturaModel()
+│   └── UruFactura.Lite.EntityFrameworkCore/ # Las mismas fuentes, compiladas contra UruFactura.Lite
 └── tests/
     └── UruFactura.Tests/            # Tests unitarios xUnit
 ```
@@ -242,9 +249,18 @@ var estado = await client.ConsultarEstadoEnvioAsync(envio, [cfe1, cfe2, cfe3]);
 
 // Reporte Diario: resumen firmado (montos, cantidad y rangos de números por tipo) de los
 // CFE emitidos en la fecha. No contiene los comprobantes, solo el resumen.
-var reporte = await client.EnviarReporteDiarioAsync(DateTime.Today, cfesDelDia);
+var ayer = HoraUruguay.Hoy().AddDays(-1);
+var reporte = await client.EnviarReporteDiarioAsync(ayer.ToDateTime(TimeOnly.MinValue), cfesDelDia);
 Console.WriteLine($"{reporte.CantidadCfe} CFE → {reporte.Respuesta.Codigo} {reporte.Respuesta.Mensaje}");
+
+// Con un ICfeRepository configurado (ver "Varias instancias"), el reporte sale de la base
+// e incluye los CFE de todas las instancias:
+var reporteDesdeLaBase = await client.EnviarReporteDiarioAsync(ayer);
 ```
+
+> Los CFE que se pasan al reporte pueden venir de la base sin `Detalle`: si solo tienen los totales
+> guardados, se usan esos (no se recalculan). Las fechas fiscales (`FechaEmision` por defecto, vigencia
+> del CAE, `TmstFirma`) usan la hora de Uruguay (`HoraUruguay`), no la del servidor.
 
 ### 7. Exportación y remitos
 
@@ -318,7 +334,9 @@ await client.AsignarCaeAsync(cfe);         // cada emisión persiste el número 
 número fuera del rango del CAE, longitudes máximas del esquema, receptor faltante en e-Factura/e-Resguardo, datos
 de exportación y de remito, mandante en cuenta ajena, referencias de las notas, descuentos y medios de pago mal
 formados y, si configurás `ValorUnidadIndexada`, e-Tickets sobre 5.000 UI sin identificar al receptor. `CfeXmlBuilder`
-`Generar()` ejecuta `Validar()` internamente antes de serializar el XML. Las reglas que dependen de datos de la DGI
+`Generar()` ejecuta `Validar()` internamente antes de serializar el XML. Los montos se calculan con la
+misma precisión con que se escriben en el XML (cantidad con 3 decimales, precio con 6, montos con 2) y con
+redondeo comercial (la mitad hacia arriba), para que `MontoItem` y los totales coincidan con lo que recalcula la DGI. Las reglas que dependen de datos de la DGI
 (por ejemplo, si el emisor está habilitado) solo las valida la DGI al recibir el sobre.
 
 ---
@@ -526,6 +544,59 @@ public class MiCaeRepository : ICaeRepository
 > repetirá ese número. En escenarios críticos, usá transacciones de base de datos o
 > idempotencia en el endpoint de la DGI.
 
+> ⚠️ Un `ICaeRepository` común **no** alcanza con varias instancias: cada una numera con su
+> `CaeManager` en memoria y dos instancias emitirían el mismo número. Para eso está
+> `ICaeRepositoryCompartido` (siguiente sección).
+
+### Varias instancias con Entity Framework Core
+
+Con más de una instancia (réplicas, deploy blue/green, una API y un worker, etc.) la base pasa a ser
+la fuente de verdad. El paquete `UruFactura.EntityFrameworkCore` (o `UruFactura.Lite.EntityFrameworkCore`)
+trae el modelo y las implementaciones:
+
+| Tabla | Para qué |
+|---|---|
+| `UruFacturaCaes` | CAE con su `UltimoNroUsado`. Cada número se reserva con un `UPDATE` condicional (compare-and-swap) que se reintenta si otra instancia ganó. |
+| `UruFacturaCfes` | CFE emitidos: numeración (única por tipo/serie/número), totales, XML firmado y estado ante la DGI. De acá sale el reporte diario. |
+| `UruFacturaSecuencias` | Número de envío del emisor (`Idemisor`), único entre instancias. |
+
+```csharp
+// Program.cs (ASP.NET Core): el proveedor lo elegís vos (SQL Server, PostgreSQL, SQLite, ...)
+builder.Services.AddDbContextFactory<UruFacturaDbContext>(o => o.UseNpgsql(connectionString));
+
+builder.Services.AddSingleton(sp =>
+{
+    var db = sp.GetRequiredService<IDbContextFactory<UruFacturaDbContext>>();
+    return UruFacturaClientBuilder.WithDefaults(config)
+        .WithCaeRepository(new EfCaeRepository<UruFacturaDbContext>(db))  // numeración atómica
+        .WithCfeRepository(new EfCfeRepository<UruFacturaDbContext>(db))  // registro de CFE
+        .Build();
+});
+
+// Emisión (en cualquier instancia)
+var cfe = client.CrearETicket();
+// ... detalle ...
+await client.AsignarCaeAsync(cfe);   // reserva el número en la base (AsignarCae sincrónico queda deshabilitado)
+await client.EnviarCfeAsync(cfe);    // guarda el CFE como emitido y luego la respuesta de la DGI
+
+// Reporte diario (una sola instancia, p. ej. un job después de medianoche)
+await client.EnviarReporteDiarioAsync(HoraUruguay.Hoy().AddDays(-1));
+```
+
+- Si ya tenés tu propio `DbContext`, llamá a `modelBuilder.ApplyUruFacturaModel()` en `OnModelCreating`
+  y usá `EfCaeRepository<MiContexto>` / `EfCfeRepository<MiContexto>`.
+- Las migraciones se generan en tu aplicación (`dotnet ef migrations add UruFactura`), con tu proveedor.
+- Las claves `Id` son `Guid` generados en la aplicación y ordenados por tiempo, para que el índice primario
+  no se fragmente: UUID v7 y, en SQL Server, el GUID secuencial de EF Core (SQL Server ordena
+  `uniqueidentifier` por los últimos bytes, así que un v7 llegaría desordenado al índice).
+- `FechaFirma` se guarda en UTC (PostgreSQL/Npgsql no admite otro offset en `timestamp with time zone`).
+- Los CFE que se emiten sin enviarse en el momento se registran con `client.RegistrarCfesAsync([cfe])`
+  para que entren en el reporte diario.
+- Las entidades son públicas: para listar CFE pendientes o buscar por `NroInterno`, consultá
+  `db.Cfes` directamente y usá `entidad.ToCfe()` para pasarlos al cliente (p. ej. a `ConsultarEstadoCfeAsync`).
+- `client.Cae.ObtenerAdvertencias()` usa el estado en memoria de esa instancia; para un panel global,
+  consultá `db.Caes`.
+
 ---
 
 ## ⚠️ Excepciones tipadas
@@ -564,6 +635,8 @@ public class MiCaeRepository : ICaeRepository
 |---------|--------------|
 | [`UruFactura`](https://www.nuget.org/packages/UruFactura/) | Uso general — incluye generación de PDF A4 y térmico (FluentReport + SkiaSharp + ZXing) |
 | [`UruFactura.Lite`](https://www.nuget.org/packages/UruFactura.Lite/) | Entornos donde el peso de las dependencias de PDF no es deseable (microservicios, Azure Functions, etc.). Podés inyectar tu propio `ICfePdfGenerator` si lo necesitás. |
+| [`UruFactura.EntityFrameworkCore`](https://www.nuget.org/packages/UruFactura.EntityFrameworkCore/) | Persistencia en base de datos con EF Core y soporte de varias instancias, para el paquete completo. |
+| [`UruFactura.Lite.EntityFrameworkCore`](https://www.nuget.org/packages/UruFactura.Lite.EntityFrameworkCore/) | Lo mismo, para `UruFactura.Lite`. |
 
 ```bash
 # Paquete completo
@@ -571,6 +644,10 @@ dotnet add package UruFactura
 
 # Paquete Lite (sin FluentReport / SkiaSharp / ZXing)
 dotnet add package UruFactura.Lite
+
+# Persistencia con EF Core (elegí el que corresponda a tu paquete) + tu proveedor
+dotnet add package UruFactura.EntityFrameworkCore        # o UruFactura.Lite.EntityFrameworkCore
+dotnet add package Npgsql.EntityFrameworkCore.PostgreSQL  # o Microsoft.EntityFrameworkCore.SqlServer, ...
 ```
 
 ---

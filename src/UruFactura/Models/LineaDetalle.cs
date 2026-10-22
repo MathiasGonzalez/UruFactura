@@ -1,4 +1,5 @@
 using UruFactura.Enums;
+using UruFactura.Formatting;
 
 namespace UruFactura.Models;
 
@@ -53,9 +54,15 @@ public class LineaDetalle
     /// <summary>Descuento efectivo de la línea (monto, o porcentaje sobre el bruto si no hay monto).</summary>
     public decimal DescuentoEfectivo =>
         DescuentoMonto > 0 || DescuentoPorcentaje is null or <= 0
-            ? DescuentoMonto
-            : Math.Round(Cantidad * PrecioUnitario * DescuentoPorcentaje.Value / 100m, 2);
+            ? CfeFormat.Redondear(DescuentoMonto)
+            : CfeFormat.Redondear(Bruto * CfeFormat.Redondear(DescuentoPorcentaje.Value, 3) / 100m);
 
-    /// <summary>Monto total neto de la línea (Cantidad × PrecioUnitario − Descuento + Recargo).</summary>
-    public decimal MontoTotal => Math.Round(Cantidad * PrecioUnitario - DescuentoEfectivo + RecargoMonto, 2);
+    /// <summary>
+    /// Monto total neto de la línea (Cantidad × PrecioUnitario − Descuento + Recargo), calculado con la
+    /// precisión con que se escriben en el XML (cantidad 3 decimales, precio 6, montos 2), para que
+    /// <c>MontoItem</c> coincida con lo que recalcula la DGI.
+    /// </summary>
+    public decimal MontoTotal => CfeFormat.Redondear(Bruto - DescuentoEfectivo + CfeFormat.Redondear(RecargoMonto));
+
+    private decimal Bruto => CfeFormat.Redondear(Cantidad, 3) * CfeFormat.Redondear(PrecioUnitario, 6);
 }

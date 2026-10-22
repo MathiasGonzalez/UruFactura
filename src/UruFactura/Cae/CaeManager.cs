@@ -109,69 +109,34 @@ public class CaeManager : ICaeManager
     /// <param name="porcentajeAlertaUso">Porcentaje de uso a partir del cual alertar.</param>
     public virtual IReadOnlyList<string> ObtenerAdvertencias(
         int diasAlertaVencimiento = 7,
-        decimal porcentajeAlertaUso = 80m)
-    {
-        List<Models.Cae> snapshot;
-        lock (_lock)
-        {
-            snapshot = _caesPorTipo.Values.SelectMany(l => l).ToList();
-        }
-
-        var advertencias = new List<string>();
-        foreach (var cae in snapshot)
-        {
-            var advertencia = cae.ObtenerAdvertencia(diasAlertaVencimiento, porcentajeAlertaUso);
-            if (advertencia != null)
-                advertencias.Add(advertencia);
-        }
-
-        return advertencias;
-    }
+        decimal porcentajeAlertaUso = 80m) =>
+        Todos()
+            .Select(c => c.ObtenerAdvertencia(diasAlertaVencimiento, porcentajeAlertaUso))
+            .OfType<string>()
+            .ToList();
 
     /// <summary>
     /// Retorna todos los CAEs registrados.
     /// </summary>
-    public virtual IReadOnlyList<Models.Cae> ObtenerTodosLosCaes()
-    {
-        lock (_lock)
-        {
-            return _caesPorTipo.Values.SelectMany(l => l).ToList();
-        }
-    }
+    public virtual IReadOnlyList<Models.Cae> ObtenerTodosLosCaes() => Todos();
 
     /// <summary>
     /// Retorna todos los CAEs vigentes con números disponibles.
     /// </summary>
-    public virtual IReadOnlyList<Models.Cae> ObtenerCaesActivos()
-    {
-        lock (_lock)
-        {
-            return _caesPorTipo.Values
-                .SelectMany(l => l)
-                .Where(c => c.EsVigente && c.TieneNumerosDisponibles)
-                .ToList();
-        }
-    }
+    public virtual IReadOnlyList<Models.Cae> ObtenerCaesActivos() =>
+        Todos().Where(c => c.EsVigente && c.TieneNumerosDisponibles).ToList();
 
     /// <summary>
     /// Retorna un resumen de estado de los CAEs.
     /// </summary>
     public virtual string ResumenEstado()
     {
-        Dictionary<TipoCfe, List<Models.Cae>> snapshot;
-        lock (_lock)
-        {
-            snapshot = _caesPorTipo.ToDictionary(
-                kvp => kvp.Key,
-                kvp => kvp.Value.ToList());
-        }
-
         var sb = new StringBuilder();
         sb.AppendLine("=== Estado de CAEs ===");
 
-        foreach (var (tipo, lista) in snapshot)
+        foreach (var lista in Todos().GroupBy(c => c.TipoCfe))
         {
-            sb.AppendLine($"\nTipo CFE: {tipo} ({(int)tipo})");
+            sb.AppendLine($"\nTipo CFE: {lista.Key} ({(int)lista.Key})");
             foreach (var cae in lista)
             {
                 var estado = cae.EsVigente
@@ -191,31 +156,17 @@ public class CaeManager : ICaeManager
     // Do not call from public methods without first acquiring the lock.
     private Models.Cae? ObtenerCaeActivoInterno(TipoCfe tipoCfe)
     {
-        if (!_caesPorTipo.TryGetValue(tipoCfe, out var lista))
-            return null;
+        // Primero el CAE con mayor fecha de vencimiento; a igual vencimiento, el que tenga más
+        // números disponibles (comparación lexicográfica de la tupla). Ante empate, el primero.
+        return _caesPorTipo.TryGetValue(tipoCfe, out var lista)
+            ? lista.Where(c => c.EsVigente && c.TieneNumerosDisponibles)
+                   .MaxBy(c => (c.FechaVencimiento, c.RangoHasta - c.UltimoNroUsado))
+            : null;
+    }
 
-        // Criterio de selección: primero el CAE con mayor fecha de vencimiento;
-        // en caso de empate, el que tenga más números disponibles.
-        // La comparación lexicográfica de ValueTuple codifica ambos criterios en una sola expresión.
-        static (DateOnly Vencimiento, long Disponibles) Prioridad(Models.Cae c) =>
-            (c.FechaVencimiento, c.RangoHasta - c.UltimoNroUsado);
-
-        Models.Cae? mejor = null;
-        (DateOnly, long) mejorPrioridad = default;
-
-        foreach (var cae in lista)
-        {
-            if (!cae.EsVigente || !cae.TieneNumerosDisponibles)
-                continue;
-
-            var prioridad = Prioridad(cae);
-            if (mejor is null || prioridad.CompareTo(mejorPrioridad) > 0)
-            {
-                mejor = cae;
-                mejorPrioridad = prioridad;
-            }
-        }
-
-        return mejor;
+    private List<Models.Cae> Todos()
+    {
+        lock (_lock)
+            return _caesPorTipo.Values.SelectMany(l => l).ToList();
     }
 }
