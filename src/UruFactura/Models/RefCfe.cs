@@ -1,41 +1,32 @@
-using UruFactura.Enums;
+namespace UruFactura;
 
-namespace UruFactura.Models;
-
-/// <summary>
-/// Referencia a otro CFE (para notas de crédito/débito).
-/// </summary>
-public class RefCfe
+/// <summary>Referencia a otro CFE (obligatoria en las notas de crédito y débito).</summary>
+public sealed record RefCfe
 {
-    /// <summary>Tipo de CFE al que se hace referencia.</summary>
-    public TipoCfe TipoCfe { get; set; }
+    /// <summary>Tipo del CFE referenciado.</summary>
+    public TipoCfe TipoCfe { get; init; }
 
-    /// <summary>Número de serie del CFE referenciado.</summary>
-    public string Serie { get; set; } = string.Empty;
+    /// <summary>Serie del CFE referenciado.</summary>
+    public string Serie { get; init; } = string.Empty;
 
     /// <summary>Número del CFE referenciado.</summary>
-    public long NroCfe { get; set; }
+    public long NroCfe { get; init; }
 
-    /// <summary>Fecha del CFE referenciado.</summary>
-    public DateTime FechaCfe { get; set; }
-
-    /// <summary>
-    /// Monto total del CFE referenciado (F-C8). Obligatorio en notas de crédito/débito
-    /// desde formato CFE v25.01. Debe ser ≥ 0 y ≤ al monto total del comprobante original.
-    /// </summary>
-    public decimal? MontoCfeRef { get; set; }
+    /// <summary>Fecha de emisión del CFE referenciado.</summary>
+    public DateOnly FechaCfe { get; init; }
 
     /// <summary>
-    /// Moneda del CFE referenciado (F-C9). Obligatorio cuando <see cref="MontoCfeRef"/> está presente.
+    /// Monto total del CFE referenciado (F-C8). Obligatorio en notas de crédito/débito desde el
+    /// formato CFE v25.01.
     /// </summary>
-    public Moneda? MonedaCfeRef { get; set; }
+    public decimal? MontoCfeRef { get; init; }
 
-    /// <summary>
-    /// Tipo de cambio del CFE referenciado (F-C10). Requerido cuando la moneda referenciada
-    /// es distinta al peso uruguayo. No debe informarse en referencias globales.
-    /// </summary>
-    public decimal? TipoCambioCfeRef { get; set; }
+    /// <summary>Moneda del CFE referenciado (F-C9). Obligatoria junto con <see cref="MontoCfeRef"/>.</summary>
+    public Moneda? MonedaCfeRef { get; init; }
 
-    /// <summary>Razón de la referencia.</summary>
-    public string? Razon { get; set; }
+    /// <summary>Tipo de cambio del CFE referenciado (F-C10), si la moneda no es el peso uruguayo.</summary>
+    public decimal? TipoCambioCfeRef { get; init; }
+
+    /// <summary>Motivo de la referencia.</summary>
+    public string? Razon { get; init; }
 }

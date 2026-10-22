@@ -1,4 +1,4 @@
-namespace UruFactura.Enums;
+namespace UruFactura;
 
 /// <summary>
 /// Indicadores de IVA según DGI.

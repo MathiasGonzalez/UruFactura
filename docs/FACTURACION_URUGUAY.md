@@ -54,32 +54,26 @@ La **adhesión es obligatoria** para todos los contribuyentes de IVA (incluido I
 
 ## Ejemplos por tipo de empresa
 
+Todos los ejemplos usan un `client` ya configurado (ver [README](../README.md)) con un CAE registrado para
+cada tipo de CFE. `EmitirAsync` valida el comprobante, le asigna el número, lo firma y lo registra;
+`EnviarAsync` lo manda a la DGI. Los precios del detalle son **sin IVA**: el SDK calcula el impuesto.
+
 ### 1. Comercio minorista (venta a consumidor final)
 
 **Escenario:** ferretería vende materiales a una persona física sin RUT.
 
 ```csharp
 // e-Ticket → consumidor final, sin datos del receptor
-var eticket = client.CrearETicket();
-client.AsignarCae(eticket);   // toma el próximo número del CAE
-eticket.Detalle.Add(new LineaDetalle
+var eticket = await client.EmitirAsync(new Cfe(TipoCfe.ETicket)
 {
-    NroLinea       = 1,
-    NombreItem     = "Pintura látex 20L",
-    Cantidad       = 2,
-    PrecioUnitario = 890m,           // precio sin IVA
-    IndFactIva     = TipoIva.Basico, // 22 %
-});
-eticket.Detalle.Add(new LineaDetalle
-{
-    NroLinea       = 2,
-    NombreItem     = "Rodillo 23cm",
-    Cantidad       = 1,
-    PrecioUnitario = 150m,
-    IndFactIva     = TipoIva.Basico,
+    Detalle =
+    [
+        new LineaDetalle { NombreItem = "Pintura látex 20L", Cantidad = 2, PrecioUnitario = 890m, IndFactIva = TipoIva.Basico },
+        new LineaDetalle { NombreItem = "Rodillo 23cm", Cantidad = 1, PrecioUnitario = 150m, IndFactIva = TipoIva.Basico },
+    ],
 });
 
-var respuesta = await client.EnviarCfeAsync(eticket);
+var acuse = await client.EnviarAsync(eticket);
 ```
 
 ---
@@ -90,25 +84,16 @@ var respuesta = await client.EnviarCfeAsync(eticket);
 
 ```csharp
 // e-Factura → receptor con RUT, puede deducir IVA
-var efactura = client.CrearEFactura();
-client.AsignarCae(efactura);   // toma el próximo número del CAE
-efactura.Receptor = new Receptor
+var efactura = await client.EmitirAsync(new Cfe(TipoCfe.EFactura)
 {
-    Documento       = "210012345678",
-    TipoDocumento   = TipoDocumentoReceptor.Rut,
-    RazonSocial     = "Importadora Sur S.A.",
-    Direccion       = "Rambla República de Chile 4030",
-};
-efactura.Detalle.Add(new LineaDetalle
-{
-    NroLinea       = 1,
-    NombreItem     = "Honorarios contables — Mayo 2025",
-    Cantidad       = 1,
-    PrecioUnitario = 15000m,
-    IndFactIva     = TipoIva.Basico, // 22 %
+    Receptor = new Receptor
+    {
+        Documento   = "211234560019",           // RUT con dígito verificador válido
+        RazonSocial = "Importadora Sur S.A.",
+        Direccion   = "Rambla República de Chile 4030",
+    },
+    Detalle = [new LineaDetalle { NombreItem = "Honorarios contables — Mayo 2025", Cantidad = 1, PrecioUnitario = 15000m }],
 });
-
-var respuesta = await client.EnviarCfeAsync(efactura);
 ```
 
 ---
@@ -118,37 +103,14 @@ var respuesta = await client.EnviarCfeAsync(efactura);
 **Escenario:** minimarket vende productos con tasas mixtas (básica y mínima).
 
 ```csharp
-var eticket = client.CrearETicket();
-client.AsignarCae(eticket);   // toma el próximo número del CAE
-
-// Producto con IVA básico (22 %)
-eticket.Detalle.Add(new LineaDetalle
+var eticket = await client.EmitirAsync(new Cfe(TipoCfe.ETicket)
 {
-    NroLinea       = 1,
-    NombreItem     = "Detergente 1L",
-    Cantidad       = 3,
-    PrecioUnitario = 85m,
-    IndFactIva     = TipoIva.Basico,
-});
-
-// Producto con IVA mínimo (10 %) — canasta básica
-eticket.Detalle.Add(new LineaDetalle
-{
-    NroLinea       = 2,
-    NombreItem     = "Aceite girasol 900ml",
-    Cantidad       = 2,
-    PrecioUnitario = 120m,
-    IndFactIva     = TipoIva.Minimo,
-});
-
-// Producto exento — medicamento
-eticket.Detalle.Add(new LineaDetalle
-{
-    NroLinea       = 3,
-    NombreItem     = "Ibuprofeno 400mg x20",
-    Cantidad       = 1,
-    PrecioUnitario = 210m,
-    IndFactIva     = TipoIva.Exento,
+    Detalle =
+    [
+        new LineaDetalle { NombreItem = "Detergente 1L", Cantidad = 3, PrecioUnitario = 85m, IndFactIva = TipoIva.Basico },          // 22 %
+        new LineaDetalle { NombreItem = "Aceite girasol 900ml", Cantidad = 2, PrecioUnitario = 120m, IndFactIva = TipoIva.Minimo },  // 10 %
+        new LineaDetalle { NombreItem = "Ibuprofeno 400mg x20", Cantidad = 1, PrecioUnitario = 210m, IndFactIva = TipoIva.Exento },  // exento
+    ],
 });
 ```
 
@@ -159,31 +121,23 @@ eticket.Detalle.Add(new LineaDetalle
 **Escenario:** software factory cobra a cliente del exterior por desarrollo a medida.
 
 ```csharp
-// e-Factura de Exportación → IVA 0 %, requiere datos del receptor extranjero
-var exportacion = client.CrearEFacturaExportacion();
-client.AsignarCae(exportacion);   // toma el próximo número del CAE
-exportacion.Moneda         = Moneda.DolarAmericano;
-exportacion.TipoCambio     = 40.5m;
-exportacion.ClausulaVenta  = "N/A";  // Incoterm de 1-3 letras, o "N/A" para servicios
-exportacion.ModalidadVenta = 90;     // Régimen general - exportación de servicios
-exportacion.ViaTransporte  = 9;      // Otro
-exportacion.Receptor = new Receptor
+// e-Factura de Exportación → sin IVA (el SDK informa IndFact 10), con datos del receptor extranjero
+var exportacion = await client.EmitirAsync(new Cfe(TipoCfe.EFacturaExportacion)
 {
-    RazonSocial   = "TechCorp LLC",
-    Pais          = "Estados Unidos",
-    CodigoPais    = "US",
-    Documento     = "TX-123456",                       // documento extranjero (opcional)
-    // La DGI usa 4 = Otro para documentos de exterior; DocumentoExterior es un alias
-    // de compatibilidad del SDK para mantener el código anterior sin cambiar el XML emitido.
-    TipoDocumento = TipoDocumentoReceptor.DocumentoExterior,
-};
-exportacion.Detalle.Add(new LineaDetalle
-{
-    NroLinea       = 1,
-    NombreItem     = "Desarrollo de software — Sprint 12",
-    Cantidad       = 1,
-    PrecioUnitario = 8000m,          // USD, moneda configurada aparte
-    // En exportación el IVA no aplica: el SDK informa IndFact 10 (exportación y asimiladas)
+    Moneda         = Moneda.DolarAmericano,
+    TipoCambio     = 40.5m,
+    ClausulaVenta  = "N/A",  // Incoterm de 1-3 letras, o "N/A" para servicios
+    ModalidadVenta = 90,     // Régimen general - exportación de servicios
+    ViaTransporte  = 9,      // Otro
+    Receptor = new Receptor
+    {
+        RazonSocial   = "TechCorp LLC",
+        Pais          = "Estados Unidos",
+        CodigoPais    = "US",
+        Documento     = "TX-123456",                 // documento extranjero
+        TipoDocumento = TipoDocumentoReceptor.Otro,  // la DGI usa 4 = Otro para documentos sin tipo propio
+    },
+    Detalle = [new LineaDetalle { NombreItem = "Desarrollo de software — Sprint 12", Cantidad = 1, PrecioUnitario = 8000m }],
 });
 ```
 
@@ -196,28 +150,23 @@ exportacion.Detalle.Add(new LineaDetalle
 > ⚠️ **Desde formato CFE v25.01 (obligatorio 3/3/2026):** las referencias en notas de crédito/débito deben incluir `MontoCfeRef` y `MonedaCfeRef` del comprobante original. La DGI aplica controles estrictos desde el 15/4/2026.
 
 ```csharp
-var nc = client.CrearNotaCreditoETicket();
-client.AsignarCae(nc);   // toma el próximo número del CAE
-nc.Referencias.Add(new RefCfe
+var nc = await client.EmitirAsync(new Cfe(TipoCfe.NotaCreditoETicket)
 {
-    TipoCfe      = TipoCfe.ETicket,
-    Serie        = "A",
-    NroCfe       = 125,                          // número del comprobante original
-    FechaCfe     = new DateTime(2025, 5, 10),
-    MontoCfeRef  = 1979.80m,                     // monto total del comprobante original (F-C8)
-    MonedaCfeRef = Moneda.PesoUruguayo,          // moneda del comprobante original (F-C9)
-    Razon        = "Devolución — producto dañado",
+    Referencias =
+    [
+        new RefCfe
+        {
+            TipoCfe      = TipoCfe.ETicket,
+            Serie        = "A",
+            NroCfe       = 125,                       // número del comprobante original
+            FechaCfe     = new DateOnly(2025, 5, 10),
+            MontoCfeRef  = 1979.80m,                  // monto total del comprobante original (F-C8)
+            MonedaCfeRef = Moneda.PesoUruguayo,       // moneda del comprobante original (F-C9)
+            Razon        = "Devolución — producto dañado",
+        },
+    ],
+    Detalle = [new LineaDetalle { NombreItem = "Pintura látex 20L (devolución)", Cantidad = 1, PrecioUnitario = 890m }],
 });
-nc.Detalle.Add(new LineaDetalle
-{
-    NroLinea       = 1,
-    NombreItem     = "Pintura látex 20L (devolución)",
-    Cantidad       = 1,
-    PrecioUnitario = 890m,
-    IndFactIva     = TipoIva.Basico,
-});
-
-var respuesta = await client.EnviarCfeAsync(nc);
 ```
 
 ---
@@ -227,17 +176,12 @@ var respuesta = await client.EnviarCfeAsync(nc);
 **Escenario:** distribuidora traslada productos entre depósitos propios.
 
 ```csharp
-var remito = client.CrearERemito();
-client.AsignarCae(remito);   // toma el próximo número del CAE
-remito.IndTraslado = IndTraslado.TrasladoPropio; // obligatorio; se informa como TipoTraslado 2 (traslado interno)
-                                                 // (TrasladoPorVenta se informa como 1 = venta)
-// El e-Remito no incluye precios; describe el traslado físico
-remito.Detalle.Add(new LineaDetalle
+// El e-Remito no incluye precios ni IVA: describe el traslado físico
+var remito = await client.EmitirAsync(new Cfe(TipoCfe.ERemito)
 {
-    NroLinea    = 1,
-    NombreItem  = "Cajas producto X",
-    Cantidad    = 50,
-    IndFactIva  = TipoIva.Exento,
+    IndTraslado = IndTraslado.TrasladoPropio,  // obligatorio; se informa como TipoTraslado 2 (traslado interno)
+                                               // (TrasladoPorVenta se informa como 1 = venta)
+    Detalle = [new LineaDetalle { NombreItem = "Cajas producto X", Cantidad = 50 }],
 });
 ```
 
@@ -245,18 +189,16 @@ remito.Detalle.Add(new LineaDetalle
 
 ## Reporte Diario
 
-La DGI exige enviar un **Reporte Diario** al finalizar cada jornada con el resumen de los CFE emitidos, aunque sea uno solo.
+La DGI exige enviar un **Reporte Diario** con el resumen de los CFE emitidos cada día, aunque sea uno solo.
 
 ```csharp
-// Envía un resumen firmado (montos, cantidades y rangos por tipo) de los CFE emitidos ese día.
-var resultado = await client.EnviarReporteDiarioAsync(
-    DateTime.Today,
-    new[] { eticket1, eticket2, efactura1 }
-);
+// Resumen firmado (montos, cantidades y rangos por tipo) de los CFE emitidos ese día, tomados del
+// almacenamiento. Usá la fecha de Uruguay (HoraUruguay), no DateTime.Today: el servidor puede estar en UTC.
+var reporte = await client.EnviarReporteDiarioAsync(HoraUruguay.Hoy().AddDays(-1));
 
-Console.WriteLine(resultado.Respuesta.Exitoso     // estado AR = reporte recibido
+Console.WriteLine(reporte.Recibido     // estado AR = reporte recibido
     ? "✅ Reporte diario enviado"
-    : $"❌ {resultado.Respuesta.Codigo}: {resultado.Respuesta.Mensaje}");
+    : $"❌ {reporte.Estado}: {reporte.Mensaje}");
 ```
 
 > Automatizá este envío con un job nocturno (ej: Hangfire, un Worker Service de .NET, o una GitHub Action programada).

@@ -9,79 +9,42 @@ import { Tabs, TabItem, Aside, Steps } from '@astrojs/starlight/components';
 
 ## Requisitos previos
 
-Antes de instalar el SDK, asegurate de tener:
-
 - **.NET 10 SDK** o superior ([descargar](https://dotnet.microsoft.com/download))
-- Un **certificado digital** en formato `.p12` / `.pfx` emitido por una CA reconocida por AGESIC
-- Un **CAE vigente** otorgado por DGI
+- Un **certificado digital** (`.p12` / `.pfx`) emitido por una CA reconocida por AGESIC y vinculado al RUT del emisor
+- Un **CAE vigente** otorgado por la DGI para cada tipo de CFE que vayas a emitir
 
 <Aside type="note">
-  ¿Todavía no tenés el certificado o CAE? Podés usar el ambiente de **Homologación** de DGI para hacer pruebas sin documentos reales. Consultá la [Guía de Certificación DGI](../guides/dgi-certification/).
+  ¿Todavía no tenés el certificado o el CAE? Podés usar el ambiente de **Homologación** de la DGI para hacer pruebas. Consultá la [Guía de Certificación DGI](../../guides/dgi-certification/).
 </Aside>
 
 ---
 
-## Elegir el paquete
+## Paquetes
 
-UruFactura se distribuye en dos variantes NuGet:
+| Paquete | Contenido | Cuándo |
+|---------|-----------|--------|
+| **`UruFactura`** | Emisión, firma, numeración con CAE, comunicación con la DGI y reporte diario. Sin dependencias de terceros | Siempre |
+| **`UruFactura.Pdf`** | PDF A4, térmico (80 mm) y QR (FluentReport + SkiaSharp + ZXing) | Si imprimís o enviás el PDF |
+| **`UruFactura.EntityFrameworkCore`** | Almacenamiento en base de datos: numeración durable y segura entre instancias, CFE emitidos para el reporte diario | En producción |
 
-| Paquete | Descripción | Cuándo usarlo |
-|---------|-------------|--------------|
-| **`UruFactura`** | Paquete completo con generación de PDF A4 y térmico (QuestPDF + SkiaSharp + ZXing) | Uso general |
-| **`UruFactura.Lite`** | Sin dependencias de PDF. Incluye `ICfePdfGenerator` para inyectar tu propio generador | Microservicios, Azure Functions, entornos con restricciones de peso |
-
----
-
-## Instalar el paquete NuGet
+Los paquetes de EF Core no traen proveedor: agregá el de tu base (`Npgsql.EntityFrameworkCore.PostgreSQL`, `Microsoft.EntityFrameworkCore.SqlServer`, …).
 
 <Tabs>
-  <TabItem label="Paquete completo">
+  <TabItem label="dotnet CLI">
   ```bash
   dotnet add package UruFactura
-  ```
-  </TabItem>
-  <TabItem label="Paquete Lite">
-  ```bash
-  dotnet add package UruFactura.Lite
-  ```
-  </TabItem>
-  <TabItem label="Package Manager Console">
-  ```powershell
-  Install-Package UruFactura
-  # o para la versión Lite:
-  Install-Package UruFactura.Lite
+  dotnet add package UruFactura.Pdf
+  dotnet add package UruFactura.EntityFrameworkCore
   ```
   </TabItem>
   <TabItem label="PackageReference (csproj)">
   ```xml
-  <!-- Paquete completo -->
-  <PackageReference Include="UruFactura" Version="*" />
-
-  <!-- Paquete Lite -->
-  <PackageReference Include="UruFactura.Lite" Version="*" />
+  <PackageReference Include="UruFactura" Version="2.0.0" />
+  <PackageReference Include="UruFactura.Pdf" Version="2.0.0" />
+  <PackageReference Include="UruFactura.EntityFrameworkCore" Version="2.0.0" />
   ```
   </TabItem>
 </Tabs>
-
-<Aside type="tip">
-  Para fijar una versión específica en producción, reemplazá `*` por el número de versión que encontrás en la página de NuGet, por ejemplo `Version="1.0.1"`.
-</Aside>
-
----
-
-## Verificar la instalación
-
-Después de instalar, verificá que el paquete esté disponible:
-
-```bash
-dotnet list package
-```
-
-Deberías ver algo como:
-
-```
-> UruFactura    1.0.1
-```
 
 ---
 
@@ -89,72 +52,52 @@ Deberías ver algo como:
 
 <Steps>
 
-1. **Importar los namespaces necesarios**
+1. **Importar el namespace** — todo lo público está en uno solo:
 
    ```csharp
    using UruFactura;
-   using UruFactura.Configuration;
-   using UruFactura.Models;
-   using UruFactura.Enums;
    ```
 
-2. **Crear la configuración del emisor**
+2. **Crear la configuración**
 
    ```csharp
    var config = new UruFacturaConfig
    {
-       RutEmisor           = "219999820013",      // 12 dígitos, sin puntos ni guión
-       RazonSocialEmisor   = "Mi Empresa S.A.",
-       DomicilioFiscal     = "Av. 18 de Julio 1234",
-       Ciudad              = "Montevideo",
-       Departamento        = "Montevideo",
-       Ambiente            = Ambiente.Homologacion, // ← Usar Homologacion para pruebas
+       Emisor = new Emisor
+       {
+           Rut             = "219999820013",      // 12 dígitos, sin puntos ni guión
+           RazonSocial     = "Mi Empresa S.A.",
+           DomicilioFiscal = "Av. 18 de Julio 1234",
+           Ciudad          = "Montevideo",
+           Departamento    = "Montevideo",
+       },
+       Ambiente            = Ambiente.Homologacion, // ← Homologación para pruebas
        RutaCertificado     = "/ruta/al/certificado.p12",
-       PasswordCertificado = Environment.GetEnvironmentVariable("CERT_PASSWORD")!,
+       PasswordCertificado = Environment.GetEnvironmentVariable("CERT_PASSWORD"),
    };
    ```
 
    <Aside type="caution">
-     Nunca almacenés `PasswordCertificado` en texto plano en el código fuente. Usá variables de entorno, user secrets de .NET, o un gestor de secretos como Azure Key Vault.
+     Nunca guardes `PasswordCertificado` en texto plano en el código fuente. Usá variables de entorno, user secrets o un gestor de secretos.
    </Aside>
 
-3. **Instanciar el cliente**
-
-   <Tabs>
-     <TabItem label="Constructor (paquete completo)">
-     ```csharp
-     // Todas las implementaciones predeterminadas, incluyendo PDF
-     using var client = new UruFacturaClient(config);
-     ```
-     </TabItem>
-     <TabItem label="Builder (recomendado)">
-     ```csharp
-     // Paquete completo con PDF
-     using var client = UruFacturaClientBuilder.WithDefaults(config)
-         .WithDefaultPdf()
-         .Build();
-
-     // Paquete Lite (sin PDF, o con generador personalizado)
-     using var client = UruFacturaClientBuilder.WithDefaults(config)
-         .Build();
-     ```
-     </TabItem>
-   </Tabs>
-
-   El cliente implementa `IDisposable`, por lo que se recomienda usarlo dentro de un bloque `using`.
-
-4. **Registrar un CAE**
+3. **Crear el cliente** — valida la configuración y carga el certificado (si algo está mal, falla acá y no al emitir):
 
    ```csharp
-   client.Cae.RegistrarCae(new Cae
+   using var client = new UruFacturaClient(config);
+   ```
+
+4. **Registrar los CAE**
+
+   ```csharp
+   await client.RegistrarCaeAsync(new Cae
    {
-       NroSerie         = "CAE2025001",
        NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
-       Serie            = "A",
-       TipoCfe          = TipoCfe.ETicket,
-       RangoDesde       = 1,
-       RangoHasta       = 1000,
-       FechaVencimiento = new DateOnly(2026, 12, 31),
+       TipoCfe            = TipoCfe.ETicket,
+       Serie              = "A",
+       RangoDesde         = 1,
+       RangoHasta         = 1000,
+       FechaVencimiento   = new DateOnly(2027, 12, 31),
    });
    ```
 
@@ -162,57 +105,33 @@ Deberías ver algo como:
 
 ---
 
-## Integración con ASP.NET Core / Dependency Injection
+## ASP.NET Core
 
-Si estás usando ASP.NET Core, podés registrar el cliente en el contenedor de DI:
+El cliente es thread-safe: registralo como singleton. En producción, con el almacenamiento de EF Core:
 
 ```csharp
 // Program.cs
-builder.Services.AddSingleton<UruFacturaConfig>(sp =>
-{
-    return new UruFacturaConfig
-    {
-        RutEmisor           = builder.Configuration["UruFactura:RutEmisor"]!,
-        RazonSocialEmisor   = builder.Configuration["UruFactura:RazonSocial"]!,
-        DomicilioFiscal     = builder.Configuration["UruFactura:Domicilio"]!,
-        Ciudad              = builder.Configuration["UruFactura:Ciudad"]!,
-        Departamento        = builder.Configuration["UruFactura:Departamento"]!,
-        Ambiente            = Enum.Parse<Ambiente>(builder.Configuration["UruFactura:Ambiente"]!),
-        RutaCertificado     = builder.Configuration["UruFactura:RutaCertificado"]!,
-        PasswordCertificado = builder.Configuration["UruFactura:PasswordCertificado"]!,
-    };
-});
+var config = builder.Configuration.GetSection("UruFactura").Get<UruFacturaConfig>()!;
 
-// Registrar como IUruFacturaClient para inyección por interfaz
-builder.Services.AddSingleton<IUruFacturaClient>(sp =>
-{
-    var config = sp.GetRequiredService<UruFacturaConfig>();
-    return UruFacturaClientBuilder.WithDefaults(config)
-        .WithDefaultPdf()   // omitir si usás UruFactura.Lite
-        .Build();
-});
+builder.Services.AddDbContextFactory<UruFacturaDbContext>(o => o.UseNpgsql(connectionString));
+builder.Services.AddSingleton<IUruFacturaClient>(sp => new UruFacturaClient(
+    config,
+    store: new EfUruFacturaStore<UruFacturaDbContext>(sp.GetRequiredService<IDbContextFactory<UruFacturaDbContext>>())));
 ```
 
 ```json
-// appsettings.json
+// appsettings.json (la contraseña, por User Secrets o la variable UruFactura__PasswordCertificado)
 {
   "UruFactura": {
-    "RutEmisor": "219999820013",
-    "RazonSocial": "Mi Empresa S.A.",
-    "Domicilio": "Av. 18 de Julio 1234",
-    "Ciudad": "Montevideo",
-    "Departamento": "Montevideo",
+    "Emisor": {
+      "Rut": "219999820013",
+      "RazonSocial": "Mi Empresa S.A.",
+      "DomicilioFiscal": "Av. 18 de Julio 1234",
+      "Ciudad": "Montevideo",
+      "Departamento": "Montevideo"
+    },
     "Ambiente": "Homologacion",
     "RutaCertificado": "/ruta/al/certificado.p12"
-  }
-}
-```
-
-```json
-// appsettings.Production.json (o secrets.json)
-{
-  "UruFactura": {
-    "PasswordCertificado": "tu_contraseña_segura"
   }
 }
 ```
@@ -221,5 +140,5 @@ builder.Services.AddSingleton<IUruFacturaClient>(sp =>
 
 ## Próximos pasos
 
-- [Uso Rápido →](quick-start/) — Emitir tu primer CFE
-- [Configuración →](configuration/) — Todas las opciones de configuración
+- [Uso Rápido →](../quick-start/) — Emitir tu primer CFE
+- [Configuración →](../configuration/) — Todas las opciones

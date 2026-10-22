@@ -1,9 +1,8 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/UruFactura/UruFactura.csproj" />
+    <Project Path="src/UruFactura.Pdf/UruFactura.Pdf.csproj" />
     <Project Path="src/UruFactura.EntityFrameworkCore/UruFactura.EntityFrameworkCore.csproj" />
-    <Project Path="src/UruFactura.Lite.EntityFrameworkCore/UruFactura.Lite.EntityFrameworkCore.csproj" />
-    <Project Path="src/UruFactura.Lite/UruFactura.Lite.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/UruFactura.Tests/UruFactura.Tests.csproj" />

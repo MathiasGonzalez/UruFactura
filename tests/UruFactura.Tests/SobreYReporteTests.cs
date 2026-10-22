@@ -1,35 +1,20 @@
 using System.Xml;
-using UruFactura.Enums;
-using UruFactura.Exceptions;
-using UruFactura.Models;
-using UruFactura.Signature;
 using UruFactura.Xml;
-using Xunit;
 
 namespace UruFactura.Tests;
 
 /// <summary>Tests del sobre EnvioCFE y del reporte diario, validados contra los XSD oficiales de la DGI.</summary>
-public class SobreYReporteTests : IDisposable
+public class SobreYReporteTests
 {
-    private readonly System.Security.Cryptography.X509Certificates.X509Certificate2 _cert = TestData.CertificadoAutofirmado();
-
-    public void Dispose() => _cert.Dispose();
-
-    private string Firmado(Cfe cfe)
-    {
-        // CfeFirmante es dueño del certificado y lo libera al disponerse: se comparte el de la clase.
-        var firmante = new CfeFirmante(_cert);
-        return firmante.Firmar(new CfeXmlBuilder().Generar(cfe));
-    }
+    private static readonly byte[] Cert = TestData.Certificado.RawData;
 
     // --------------------------------------------------------------- sobre
 
     [Fact]
     public void Sobre_Caratula_TieneLosCamposYElOrdenDelEsquema()
     {
-        var xml = CfeSobreBuilder.Generar(
-            "219999820013", 123, new DateTimeOffset(2026, 6, 15, 12, 30, 0, TimeSpan.Zero), _cert.RawData,
-            [Firmado(TestData.CfeValido())]);
+        var xml = CfeSobre.Generar(
+            "219999820013", 123, new DateTimeOffset(2026, 6, 15, 12, 30, 0, TimeSpan.Zero), Cert, [TestData.Emitido().Xml]);
 
         var doc = new XmlDocument();
         doc.LoadXml(xml);
@@ -46,16 +31,13 @@ public class SobreYReporteTests : IDisposable
         Assert.Equal("214844360018", caratula.SelectSingleNode("c:RutReceptor", nsm)!.InnerText);
         Assert.Equal("123", caratula.SelectSingleNode("c:Idemisor", nsm)!.InnerText);
         Assert.Equal("2026-06-15T09:30:00-03:00", caratula.SelectSingleNode("c:Fecha", nsm)!.InnerText);
-        Assert.Equal(Convert.ToBase64String(_cert.RawData), caratula.SelectSingleNode("c:X509Certificate", nsm)!.InnerText);
+        Assert.Equal(Convert.ToBase64String(Cert), caratula.SelectSingleNode("c:X509Certificate", nsm)!.InnerText);
     }
 
     [Fact]
     public void Sobre_ConservaLaFirmaDeCadaCfe_EmbebidoIntacto()
     {
-        var cfe1 = Firmado(TestData.CfeValido(numero: 1));
-        var cfe2 = Firmado(TestData.CfeValido(numero: 2));
-
-        var sobre = CfeSobreBuilder.Generar("219999820013", 1, DateTimeOffset.UtcNow, _cert.RawData, [cfe1, cfe2]);
+        var sobre = TestData.Sobre(TestData.Emitido(numero: 1), TestData.Emitido(numero: 2));
 
         var doc = new XmlDocument { PreserveWhitespace = true };
         doc.LoadXml(sobre);
@@ -67,85 +49,73 @@ public class SobreYReporteTests : IDisposable
         {
             var solo = new XmlDocument { PreserveWhitespace = true };
             solo.AppendChild(solo.ImportNode(nodo, true));
-            Assert.True(CfeFirmante.VerificarFirma(solo.OuterXml));
+            Assert.True(FirmaDigital.Verificar(solo.OuterXml));
         }
     }
 
     [Fact]
     public void Sobre_SinCfes_LanzaUruFacturaException() =>
-        Assert.Throws<UruFacturaException>(() =>
-            CfeSobreBuilder.Generar("219999820013", 1, DateTimeOffset.UtcNow, _cert.RawData, []));
+        Assert.Throws<UruFacturaException>(() => CfeSobre.Generar("219999820013", 1, DateTimeOffset.UtcNow, Cert, []));
 
     [Fact]
     public void Sobre_MasDe250Cfes_LanzaUruFacturaException()
     {
-        var cfe = Firmado(TestData.CfeValido());
+        var xml = TestData.Emitido().Xml;
         Assert.Throws<UruFacturaException>(() =>
-            CfeSobreBuilder.Generar("219999820013", 1, DateTimeOffset.UtcNow, _cert.RawData, Enumerable.Repeat(cfe, 251).ToList()));
+            CfeSobre.Generar("219999820013", 1, DateTimeOffset.UtcNow, Cert, Enumerable.Repeat(xml, 251).ToList()));
     }
 
     [Fact]
     public void Sobre_250Cfes_ValidaContraXsd()
     {
-        var cfe = Firmado(TestData.CfeValido());
-        var sobre = CfeSobreBuilder.Generar("219999820013", 1, DateTimeOffset.UtcNow, _cert.RawData, Enumerable.Repeat(cfe, 250).ToList());
-
-        Assert.Empty(TestData.ValidarContraXsd(sobre));
+        var xml = TestData.Emitido().Xml;
+        TestData.AssertValidoContraXsd(CfeSobre.Generar("219999820013", 1, DateTimeOffset.UtcNow, Cert, Enumerable.Repeat(xml, 250).ToList()));
     }
 
     [Fact]
     public void Sobre_IdEmisorFueraDeRango_LanzaUruFacturaException() =>
         Assert.Throws<UruFacturaException>(() =>
-            CfeSobreBuilder.Generar("219999820013", 10_000_000_000, DateTimeOffset.UtcNow, _cert.RawData, [Firmado(TestData.CfeValido())]));
+            CfeSobre.Generar("219999820013", 10_000_000_000, DateTimeOffset.UtcNow, Cert, [TestData.Emitido().Xml]));
 
     // --------------------------------------------------------------- reporte
 
-    private string ReporteFirmado(IReadOnlyCollection<Cfe> cfes, DateOnly fecha, int sec = 0)
-    {
-        var firmante = new CfeFirmante(_cert);
-        foreach (var c in cfes) c.CalcularTotales();
-        return firmante.Firmar(ReporteDiarioBuilder.Generar(
-            "219999820013", fecha, sec, 77, new DateTimeOffset(2026, 6, 16, 1, 0, 0, TimeSpan.Zero), cfes));
-    }
+    private static string Reporte(IReadOnlyCollection<CfeEmitido> cfes, int sec = 0) =>
+        ReporteDiario.Generar("219999820013", TestData.Dia, sec, 77, new DateTimeOffset(2026, 6, 16, 1, 0, 0, TimeSpan.Zero), cfes);
 
-    private static readonly DateOnly Dia = new(2026, 6, 15);
+    private static string ReporteFirmado(IReadOnlyCollection<CfeEmitido> cfes) =>
+        FirmaDigital.Firmar(Reporte(cfes), TestData.Certificado, AlgoritmoFirma.Sha256).Xml;
+
+    private static CfeEmitido Emitido(TipoCfe tipo, long numero, string serie = "A") =>
+        TestData.Emitido(TestData.CfeValido(tipo), numero, TestData.Cae(tipo, serie));
 
     [Fact]
-    public void Reporte_ConVariosTiposYSeries_ValidaContraXsd()
-    {
-        var cfes = new List<Cfe>
-        {
-            TestData.CfeValido(TipoCfe.ETicket, 1),
-            TestData.CfeValido(TipoCfe.ETicket, 2),
-            TestData.CfeValido(TipoCfe.ETicket, 5),
-            TestData.CfeValido(TipoCfe.NotaCreditoETicket, 3),
-            TestData.CfeValido(TipoCfe.EFactura, 4),
-            TestData.CfeValido(TipoCfe.EFacturaExportacion, 6),
-            TestData.CfeValido(TipoCfe.ERemito, 7),
-            TestData.CfeValido(TipoCfe.ERemitoExportacion, 8),
-        };
+    public void Reporte_ConVariosTiposYSeries_ValidaContraXsd() =>
+        TestData.AssertValidoContraXsd(ReporteFirmado(
+        [
+            Emitido(TipoCfe.ETicket, 1),
+            Emitido(TipoCfe.ETicket, 2),
+            Emitido(TipoCfe.ETicket, 5, "B"),
+            Emitido(TipoCfe.NotaCreditoETicket, 3),
+            Emitido(TipoCfe.EFactura, 4),
+            Emitido(TipoCfe.EFacturaExportacion, 6),
+            Emitido(TipoCfe.ERemito, 7),
+            Emitido(TipoCfe.ERemitoExportacion, 8),
+        ]));
 
-        var errores = TestData.ValidarContraXsd(ReporteFirmado(cfes, Dia));
-
-        Assert.True(errores.Count == 0, string.Join(Environment.NewLine, errores));
-    }
-
-    public static IEnumerable<object[]> TodosLosTipos() =>
-        Enum.GetValues<TipoCfe>().Select(t => new object[] { t });
+    public static IEnumerable<object[]> TodosLosTipos() => Enum.GetValues<TipoCfe>().Select(t => new object[] { t });
 
     [Theory]
     [MemberData(nameof(TodosLosTipos))]
-    public void Reporte_CadaTipoDeCfe_ValidaContraXsd(TipoCfe tipo)
-    {
-        var errores = TestData.ValidarContraXsd(ReporteFirmado([TestData.CfeValido(tipo)], Dia));
-        Assert.True(errores.Count == 0, string.Join(Environment.NewLine, errores));
-    }
+    public void Reporte_CadaTipoDeCfe_ValidaContraXsd(TipoCfe tipo) =>
+        TestData.AssertValidoContraXsd(ReporteFirmado([Emitido(tipo, 1)]));
+
+    [Fact]
+    public void Reporte_Vacio_ValidaContraXsd() => TestData.AssertValidoContraXsd(ReporteFirmado([]));
 
     [Fact]
     public void Reporte_Contingencia_InformaCantCfcEmiSinRangos()
     {
-        var reporte = ReporteDiarioBuilder.Generar("219999820013", Dia, 0, 77, DateTimeOffset.UtcNow,
-            [TestData.CfeValido(TipoCfe.ETicketContingencia, 1), TestData.CfeValido(TipoCfe.ETicketContingencia, 2)]);
+        var reporte = Reporte([Emitido(TipoCfe.ETicketContingencia, 1), Emitido(TipoCfe.ETicketContingencia, 2)]);
 
         Assert.Contains("<CantCFCEmi>2</CantCFCEmi>", reporte);
         Assert.DoesNotContain("CantDocsUtil", reporte);
@@ -153,26 +123,10 @@ public class SobreYReporteTests : IDisposable
     }
 
     [Fact]
-    public void Reporte_Vacio_ValidaContraXsd()
-    {
-        var errores = TestData.ValidarContraXsd(ReporteFirmado([], Dia));
-        Assert.True(errores.Count == 0, string.Join(Environment.NewLine, errores));
-    }
-
-    [Fact]
     public void Reporte_AgrupaMontosYCompactaRangos()
     {
-        var cfes = new List<Cfe>
-        {
-            TestData.CfeValido(TipoCfe.ETicket, 1),
-            TestData.CfeValido(TipoCfe.ETicket, 2),
-            TestData.CfeValido(TipoCfe.ETicket, 3),
-            TestData.CfeValido(TipoCfe.ETicket, 7),
-        };
-        foreach (var c in cfes) c.CalcularTotales();
-
         var doc = new XmlDocument();
-        doc.LoadXml(ReporteDiarioBuilder.Generar("219999820013", Dia, 0, null, DateTimeOffset.UtcNow, cfes));
+        doc.LoadXml(Reporte([Emitido(TipoCfe.ETicket, 1), Emitido(TipoCfe.ETicket, 2), Emitido(TipoCfe.ETicket, 3), Emitido(TipoCfe.ETicket, 7)]));
         var nsm = new XmlNamespaceManager(doc.NameTable);
         nsm.AddNamespace("c", "http://cfe.dgi.gub.uy");
 
@@ -189,12 +143,23 @@ public class SobreYReporteTests : IDisposable
     }
 
     [Fact]
+    public void Reporte_AgrupaMontosPorSucursal()
+    {
+        var central = Emitido(TipoCfe.ETicket, 1);
+        var otra = TestData.Emitido(TestData.CfeValido() with { Emisor = TestData.Emisor() with { CodigoSucursal = 2 } }, 2);
+
+        var reporte = Reporte([central, otra]);
+
+        Assert.Contains("<CodSuc>1</CodSuc>", reporte);
+        Assert.Contains("<CodSuc>2</CodSuc>", reporte);
+    }
+
+    [Fact]
     public void Reporte_IgnoraCfesDeOtraFecha()
     {
-        var otroDia = TestData.CfeValido(TipoCfe.ETicket, 9);
-        otroDia.FechaEmision = Dia.AddDays(-1);
+        var otroDia = TestData.Emitido(TestData.CfeValido() with { FechaEmision = TestData.Dia.AddDays(-1) }, 9);
 
-        var xml = ReporteDiarioBuilder.Generar("219999820013", Dia, 0, null, DateTimeOffset.UtcNow, [otroDia]);
+        var xml = Reporte([otroDia]);
 
         Assert.DoesNotContain("Rsmn_Tck", xml);
         Assert.Contains("<CantComprobantes>0</CantComprobantes>", xml);
@@ -204,16 +169,16 @@ public class SobreYReporteTests : IDisposable
     [InlineData(-1)]
     [InlineData(100)]
     public void Reporte_SecEnvioFueraDeRango_LanzaUruFacturaException(int sec) =>
-        Assert.Throws<UruFacturaException>(() =>
-            ReporteDiarioBuilder.Generar("219999820013", Dia, sec, null, DateTimeOffset.UtcNow, []));
+        Assert.Throws<UruFacturaException>(() => Reporte([], sec));
 
     [Fact]
     public void Reporte_ConTipoNoSoportado_LanzaUruFacturaException()
     {
-        var desconocido = TestData.CfeValido();
-        desconocido.Tipo = (TipoCfe)999;
+        // Un almacenamiento propio podría devolver un tipo que el formato del reporte no contempla.
+        var desconocido = new CfeEmitido(
+            new Cfe((TipoCfe)999) { FechaEmision = TestData.Dia, Emisor = TestData.Emisor() },
+            TestData.Cae(), 1, new Totales(), DateTimeOffset.UtcNow, "x", "<CFE/>");
 
-        Assert.Throws<UruFacturaException>(() =>
-            ReporteDiarioBuilder.Generar("219999820013", Dia, 0, null, DateTimeOffset.UtcNow, [desconocido]));
+        Assert.Throws<UruFacturaException>(() => Reporte([desconocido]));
     }
 }

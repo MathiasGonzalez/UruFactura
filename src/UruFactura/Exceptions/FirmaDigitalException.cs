@@ -1,4 +1,4 @@
-namespace UruFactura.Exceptions;
+namespace UruFactura;
 
 /// <summary>
 /// Error al firmar digitalmente el documento CFE.

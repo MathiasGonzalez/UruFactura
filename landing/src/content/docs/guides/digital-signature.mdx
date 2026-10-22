@@ -11,7 +11,7 @@ DGI exige que cada comprobante fiscal electrónico esté firmado digitalmente co
 
 El algoritmo es RSA-SHA256 por defecto; si la DGI rechaza SHA-256 en tu ambiente podés usar `AlgoritmoFirma = AlgoritmoFirma.Sha1`, que es el que usan los ejemplos de la documentación.
 
-UruFactura maneja **toda la complejidad de la firma de forma automática**. Solo necesitás configurar la ruta y contraseña del certificado.
+UruFactura maneja **toda la complejidad de la firma de forma automática**. Solo necesitás configurar el certificado: la ruta y la contraseña del `.p12`, o un `X509Certificate2` ya cargado.
 
 ---
 
@@ -34,59 +34,66 @@ El certificado debe estar emitido por una **Autoridad Certificante reconocida po
 
 ---
 
-## Firma automática al enviar
+## Cuándo se firma
 
-Cuando llamás a `EnviarCfeAsync`, el SDK:
-
-1. Genera el XML del CFE
-2. Firma el XML con XML Signature enveloped usando el certificado configurado
-3. Arma el sobre `EnvioCFE` (carátula con el certificado + los CFE firmados)
-4. Lo envía en un mensaje SOAP firmado con WS-Security al servicio `ws_efactura` de la DGI
+`EmitirAsync` firma el CFE al emitirlo; el resultado queda en `emitido.Xml`. Después, `EnviarAsync` arma el sobre `EnvioCFE` (carátula con el certificado + los CFE firmados) y lo envía en un mensaje SOAP firmado con WS-Security al servicio `ws_efactura`. El reporte diario también se firma.
 
 ```csharp
-// La firma ocurre automáticamente aquí
-var respuesta = await client.EnviarCfeAsync(eticket);
+var emitido = await client.EmitirAsync(cfe);   // XML firmado en emitido.Xml
+await client.EnviarAsync(emitido);             // sobre + WS-Security
 ```
+
+El código de seguridad que se imprime bajo el QR es el hash (`DigestValue`) de la firma: `emitido.CodigoSeguridad`.
+
+<Aside type="note">
+  La DGI exige conservar los XML firmados por al menos **5 años**. Con `UruFactura.EntityFrameworkCore` quedan guardados en la base; si no, guardá `emitido.Xml`.
+</Aside>
 
 ---
 
-## Firmar sin enviar
+## Certificado en Azure Key Vault o en un HSM
 
-Si necesitás el XML firmado para archivarlo o enviarlo por otro canal:
+En lugar de una ruta, podés pasar el certificado ya cargado (con su clave privada, que puede estar en un proveedor remoto). Se usa para firmar los CFE, el reporte, WS-Security y el TLS con la DGI:
 
 ```csharp
-string xmlFirmado = client.GenerarYFirmar(eticket);
+X509Certificate2 certificado = /* p. ej. CertificateClient.DownloadCertificate(...) de Azure.Security.KeyVault.Certificates */;
 
-// Guardar para archivo obligatorio
-await File.WriteAllTextAsync(
-    $"xml/eticket_{eticket.Numero:D8}.xml",
-    xmlFirmado,
-    System.Text.Encoding.UTF8
-);
+var config = new UruFacturaConfig
+{
+    Emisor      = emisor,
+    Certificado = certificado,   // el cliente no lo libera: es tuyo
+};
 ```
-
-<Aside type="note">
-  DGI exige conservar los XML firmados por al menos **5 años**. Considerá implementar un sistema de archivo automático.
-</Aside>
 
 ---
 
 ## Validar el certificado antes de operar
 
-Antes de emitir comprobantes en producción, verificá que el certificado es válido:
+El cliente carga y verifica el certificado al construirse, así que un problema aparece al iniciar la aplicación:
 
 ```csharp
 try
 {
     using var client = new UruFacturaClient(config);
-    // Si el certificado es inválido, el constructor lanzará una excepción
     Console.WriteLine("✅ Certificado cargado correctamente");
 }
-catch (UruFacturaException ex) when (ex.Message.Contains("certificado"))
+catch (FirmaDigitalException ex)   // archivo inexistente, contraseña incorrecta o sin clave privada
 {
-    Console.Error.WriteLine($"❌ Error con el certificado: {ex.Message}");
+    Console.Error.WriteLine($"❌ {ex.Message}");
 }
 ```
+
+---
+
+## Verificar la firma de un CFE
+
+Para verificar un CFE firmado (por ejemplo, uno recibido de un proveedor):
+
+```csharp
+bool valida = FirmaDigital.Verificar(xmlFirmado);
+```
+
+Comprueba que haya exactamente una firma, hija directa de la raíz, que referencie el documento completo y sea criptográficamente válida (no valida la cadena de confianza del certificado).
 
 ---
 

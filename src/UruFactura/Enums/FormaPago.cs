@@ -1,4 +1,4 @@
-namespace UruFactura.Enums;
+namespace UruFactura;
 
 /// <summary>
 /// Indicadores de forma de pago según DGI.

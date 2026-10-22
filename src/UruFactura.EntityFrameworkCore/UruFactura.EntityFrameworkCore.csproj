@@ -6,9 +6,9 @@
     <Nullable>enable</Nullable>
     <RootNamespace>UruFactura.EntityFrameworkCore</RootNamespace>
     <AssemblyName>UruFactura.EntityFrameworkCore</AssemblyName>
-    <Version>1.1.0</Version>
+    <Version>2.0.0</Version>
     <Authors>MathiasGonzalez</Authors>
-    <Description>Persistencia con Entity Framework Core para UruFactura: CAE con numeración atómica entre instancias y registro de CFE emitidos para el reporte diario.</Description>
+    <Description>Almacenamiento de UruFactura con Entity Framework Core: numeración atómica de CAE entre instancias y registro de los CFE emitidos para el reporte diario.</Description>
     <PackageTags>dgi;uruguay;efactura;cfe;facturacion-electronica;entityframeworkcore</PackageTags>
     <PackageId>UruFactura.EntityFrameworkCore</PackageId>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

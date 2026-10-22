@@ -3,83 +3,51 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Xml;
 using System.Xml.Linq;
-using UruFactura.Configuration;
-using UruFactura.Exceptions;
-using UruFactura.Models;
-using UruFactura.Signature;
 
 namespace UruFactura.Soap;
 
 /// <summary>
-/// Cliente SOAP 1.1 de los servicios web de la DGI de Uruguay: <c>ws_efactura</c>
-/// (<c>EFACRECEPCIONSOBRE</c>, <c>EFACRECEPCIONREPORTE</c>, <c>EFACCONSULTARESTADOENVIO</c>) y
-/// <c>ws_consultas</c> (<c>EFACCONSULTARESTADOCFE</c>). Cada mensaje se firma con WS-Security
-/// usando el certificado configurado. Operaciones, namespaces y SOAPAction provienen de los
-/// WSDL oficiales (<c>ws_eprueba?wsdl</c> y <c>ws_consultasPrueba?wsdl</c>).
+/// Cliente SOAP 1.1 de los servicios web de la DGI: <c>ws_efactura</c> (<c>EFACRECEPCIONSOBRE</c>,
+/// <c>EFACRECEPCIONREPORTE</c>, <c>EFACCONSULTARESTADOENVIO</c>) y <c>ws_consultas</c>
+/// (<c>EFACCONSULTARESTADOCFE</c>). Cada mensaje se firma con WS-Security. Operaciones, namespaces y
+/// SOAPAction provienen de los WSDL oficiales (<c>ws_eprueba?wsdl</c> y <c>ws_consultasPrueba?wsdl</c>).
 /// </summary>
-public class DgiSoapClient : IDgiSoapClient
+internal sealed class DgiSoapClient : IDgiClient, IDisposable
 {
-    private readonly UruFacturaConfig _config;
-    private readonly X509Certificate2? _certificado;
-    private HttpClient _httpClient;
-    private bool _ownsHttpClient;
-    private bool _disposed;
-
     private const string ActionEnvio = "http://dgi.gub.uyaction/AWS_EFACTURA.";
     private const string ActionConsultas = "http://dgi.gub.uyaction/AWS_EFACTURA_CONSULTAS.";
 
-    /// <summary>
-    /// Inicializa el cliente SOAP con la configuración de UruFactura.
-    /// </summary>
-    public DgiSoapClient(UruFacturaConfig config, HttpClient? httpClient = null)
+    private readonly UruFacturaConfig _config;
+    private readonly X509Certificate2 _certificado;
+    private readonly HttpClient _httpClient;
+    private readonly bool _ownsHttpClient;
+
+    /// <param name="config">Configuración (URLs, algoritmo de firma, timeout y validación TLS).</param>
+    /// <param name="certificado">Certificado para WS-Security y, con el <see cref="HttpClient"/> propio, para TLS.</param>
+    /// <param name="httpClient">
+    /// <see cref="HttpClient"/> externo (por ejemplo, de <c>IHttpClientFactory</c>). Si se indica, no se le
+    /// configura el certificado de cliente TLS ni <see cref="UruFacturaConfig.OmitirValidacionSsl"/>.
+    /// </param>
+    internal DgiSoapClient(UruFacturaConfig config, X509Certificate2 certificado, HttpClient? httpClient = null)
     {
+        if (httpClient is { Timeout: var t } && t == Timeout.InfiniteTimeSpan)
+            throw new ArgumentException(
+                "El HttpClient externo tiene Timeout infinito. Configure un timeout finito (p. ej. 30 segundos).",
+                nameof(httpClient));
+
         _config = config;
-
-        if (!string.IsNullOrWhiteSpace(config.RutaCertificado))
-        {
-            if (!File.Exists(config.RutaCertificado))
-                throw new UruFacturaException(
-                    $"No se encontró el archivo de certificado: '{config.RutaCertificado}'.");
-
-            _certificado = CertificadoLoader.Cargar(config.RutaCertificado, config.PasswordCertificado);
-        }
-
-        if (httpClient is not null)
-            ValidarHttpClientExterno(httpClient);
+        _certificado = certificado;
         _ownsHttpClient = httpClient is null;
         _httpClient = httpClient ?? CrearHttpClient();
     }
 
-    public virtual IDgiSoapClient WithHttpClient(HttpClient httpClient)
-    {
-        ValidarHttpClientExterno(httpClient);
-        if (_ownsHttpClient)
-            _httpClient.Dispose();
-
-        _httpClient = httpClient;
-        _ownsHttpClient = false;
-        return this;
-    }
-
-    private static void ValidarHttpClientExterno(HttpClient httpClient)
-    {
-        if (httpClient.Timeout == Timeout.InfiniteTimeSpan)
-            throw new ArgumentException(
-                "El HttpClient externo tiene Timeout infinito. " +
-                "Configure un timeout finito (p.ej. TimeSpan.FromSeconds(30)).",
-                nameof(httpClient));
-    }
-
-    /// <inheritdoc />
-    public virtual Task<RespuestaDgi> EnviarSobreAsync(string sobreXml, CancellationToken cancellationToken = default)
+    public Task<AcuseSobre> EnviarSobreAsync(string sobreXml, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sobreXml);
         return InvocarEfacturaAsync("EFACRECEPCIONSOBRE", sobreXml, DgiRespuestaParser.ProcesarSobre, cancellationToken);
     }
 
-    /// <inheritdoc />
-    public virtual Task<RespuestaDgi> ConsultarEstadoEnvioAsync(
-        string idReceptor, string token, CancellationToken cancellationToken = default)
+    public Task<EstadoEnvio> ConsultarEnvioAsync(string idReceptor, string token, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(idReceptor);
         ArgumentException.ThrowIfNullOrWhiteSpace(token);
@@ -94,28 +62,25 @@ public class DgiSoapClient : IDgiSoapClient
             DgiRespuestaParser.ProcesarEstadoEnvio, cancellationToken);
     }
 
-    /// <inheritdoc />
-    public virtual Task<RespuestaDgi> ConsultarEstadoCfeAsync(
-        int tipoCfe, string serie, long numero, CancellationToken cancellationToken = default)
+    public Task<EstadoComprobante> ConsultarCfeAsync(TipoCfe tipo, string serie, long numero, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serie);
         return InvocarAsync(
-            _config.DgiConsultasUrl, ActionConsultas + "EFACCONSULTARESTADOCFE", "EFACCONSULTARESTADOCFE",
+            _config.UrlConsultasEfectiva, ActionConsultas + "EFACCONSULTARESTADOCFE", "EFACCONSULTARESTADOCFE",
             doc =>
             {
                 var op = doc.CreateElement("dgi", "WS_eFactura_Consultas.EFACCONSULTARESTADOCFE", WsSecurity.DgiNs);
                 var cfeid = Agregar(op, "Cfeid");
-                Agregar(cfeid, "TipoCFE", tipoCfe.ToString(CultureInfo.InvariantCulture));
+                Agregar(cfeid, "TipoCFE", ((int)tipo).ToString(CultureInfo.InvariantCulture));
                 Agregar(cfeid, "Serie", serie);
                 Agregar(cfeid, "Nro", numero.ToString(CultureInfo.InvariantCulture));
                 return op;
             },
-            DgiRespuestaParser.ProcesarEstadoCfe, cancellationToken);
+            xml => DgiRespuestaParser.ProcesarEstadoCfe(xml) with { TipoCfe = (int)tipo, Serie = serie, Numero = numero },
+            cancellationToken);
     }
 
-    /// <inheritdoc />
-    public virtual Task<RespuestaDgi> EnviarReporteDiarioAsync(
-        string reporteFirmadoXml, CancellationToken cancellationToken = default)
+    public Task<AcuseReporte> EnviarReporteAsync(string reporteFirmadoXml, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reporteFirmadoXml);
         return InvocarEfacturaAsync("EFACRECEPCIONREPORTE", reporteFirmadoXml, DgiRespuestaParser.ProcesarReporte, cancellationToken);
@@ -127,10 +92,10 @@ public class DgiSoapClient : IDgiSoapClient
     /// Operación de <c>ws_efactura</c>:
     /// <c>&lt;dgi:WS_eFactura.Operacion&gt;&lt;dgi:Datain&gt;&lt;dgi:xmlData&gt;&lt;![CDATA[xml]]&gt;</c>.
     /// </summary>
-    private Task<RespuestaDgi> InvocarEfacturaAsync(
-        string operacion, string xmlData, Func<string, RespuestaDgi> procesar, CancellationToken cancellationToken) =>
+    private Task<T> InvocarEfacturaAsync<T>(
+        string operacion, string xmlData, Func<string, T> procesar, CancellationToken cancellationToken) =>
         InvocarAsync(
-            _config.DgiEnvioUrl, ActionEnvio + operacion, operacion,
+            _config.UrlEnvioEfectiva, ActionEnvio + operacion, operacion,
             doc =>
             {
                 var op = doc.CreateElement("dgi", "WS_eFactura." + operacion, WsSecurity.DgiNs);
@@ -149,22 +114,19 @@ public class DgiSoapClient : IDgiSoapClient
         return el;
     }
 
-    private async Task<RespuestaDgi> InvocarAsync(
+    private async Task<T> InvocarAsync<T>(
         string url,
         string soapAction,
         string operacion,
         Func<XmlDocument, XmlElement> body,
-        Func<string, RespuestaDgi> procesar,
+        Func<string, T> procesar,
         CancellationToken cancellationToken)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-
-        var certificado = _certificado ?? throw new UruFacturaException(
-            "Se requiere RutaCertificado para firmar los mensajes SOAP (WS-Security) de la DGI.");
-
+        string responseBody;
+        HttpResponseMessage response;
         try
         {
-            var envelope = WsSecurity.CrearYFirmar(body, certificado, _config.AlgoritmoFirma);
+            var envelope = WsSecurity.CrearYFirmar(body, _certificado, _config.AlgoritmoFirma);
 
             using var request = new HttpRequestMessage(HttpMethod.Post, url)
             {
@@ -172,47 +134,39 @@ public class DgiSoapClient : IDgiSoapClient
             };
             request.Headers.TryAddWithoutValidation("SOAPAction", $"\"{soapAction}\"");
 
-            using var response = await _httpClient.SendAsync(request, cancellationToken);
-            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-
-            if (response.IsSuccessStatusCode)
-                return procesar(responseBody);
-
-            // Un error HTTP puede traer un SOAP Fault (interpretable) o un cuerpo ajeno, como el
-            // HTML de un proxy 502/503: en ese caso se informa el error HTTP.
-            try
-            {
-                return procesar(responseBody);
-            }
-            catch (DgiCommunicationException)
-            {
-                return RespuestaDgi.Error(
-                    ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture),
-                    $"HTTP {(int)response.StatusCode} {response.ReasonPhrase} al invocar '{operacion}'.",
-                    responseBody);
-            }
+            response = await _httpClient.SendAsync(request, cancellationToken);
+            responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
-        catch (HttpRequestException ex)
-        {
-            throw new DgiCommunicationException(
-                $"Error de red al invocar '{operacion}': {ex.Message}", ex);
-        }
         catch (TaskCanceledException ex)
         {
-            throw new DgiCommunicationException(
-                $"Timeout al invocar '{operacion}'. Verifique el SoapTimeoutSegundos.", ex);
+            throw new DgiCommunicationException($"Timeout al invocar '{operacion}' (Timeout: {_config.Timeout}).", ex);
         }
-        catch (Exception ex) when (ex is DgiCommunicationException or UruFacturaException)
+        catch (HttpRequestException ex)
         {
-            throw;
+            throw new DgiCommunicationException($"Error de red al invocar '{operacion}': {ex.Message}", ex);
         }
-        catch (Exception ex)
+
+        using (response)
         {
-            throw new DgiCommunicationException($"Error inesperado al invocar '{operacion}'.", ex);
+            if (response.IsSuccessStatusCode)
+                return procesar(responseBody);
+
+            // Un error HTTP puede traer un SOAP Fault (que se informa como tal) o un cuerpo ajeno,
+            // como el HTML de un proxy 502/503: en ese caso se informa el error HTTP.
+            try
+            {
+                return procesar(responseBody);
+            }
+            catch (DgiCommunicationException ex) when (ex.CodigoRespuesta is null)
+            {
+                var codigo = ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture);
+                throw new DgiCommunicationException(
+                    $"HTTP {codigo} {response.ReasonPhrase} al invocar '{operacion}'.", codigo, responseBody);
+            }
         }
     }
 
@@ -220,32 +174,22 @@ public class DgiSoapClient : IDgiSoapClient
     {
         var handler = new SocketsHttpHandler
         {
-            // El cliente suele vivir toda la aplicación (singleton): renovar las conexiones
-            // periódicamente hace que se respeten los cambios de DNS de los servicios de la DGI.
+            // El cliente suele vivir toda la aplicación: renovar las conexiones periódicamente hace
+            // que se respeten los cambios de DNS de los servicios de la DGI.
             PooledConnectionLifetime = TimeSpan.FromMinutes(15),
         };
+        handler.SslOptions.ClientCertificates = [_certificado];
 
-        // La validación del certificado TLS del servidor solo se deshabilita si el llamador
-        // lo pide explícitamente (OmitirValidacionSsl). Nunca se hace de forma automática.
+        // Solo si el llamador lo pide explícitamente.
         if (_config.OmitirValidacionSsl)
             handler.SslOptions.RemoteCertificateValidationCallback = (_, _, _, _) => true;
 
-        if (_certificado is not null)
-            handler.SslOptions.ClientCertificates = [_certificado];
-
-        return new HttpClient(handler)
-        {
-            Timeout = TimeSpan.FromSeconds(_config.SoapTimeoutSegundos),
-        };
+        return new HttpClient(handler) { Timeout = _config.Timeout };
     }
 
-    public virtual void Dispose()
+    public void Dispose()
     {
-        if (_disposed) return;
         if (_ownsHttpClient)
             _httpClient.Dispose();
-        _certificado?.Dispose();
-        _disposed = true;
-        GC.SuppressFinalize(this);
     }
 }

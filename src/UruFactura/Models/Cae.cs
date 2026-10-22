@@ -1,115 +1,102 @@
-using UruFactura.Enums;
-
-namespace UruFactura.Models;
+namespace UruFactura;
 
 /// <summary>
-/// Constancia de Autorización de Emisión (CAE) emitida por la DGI.
+/// Constancia de Autorización de Emisión (CAE) de la DGI: autoriza un rango de números de una serie
+/// para un tipo de CFE. Se identifica por <see cref="TipoCfe"/>, <see cref="Serie"/> y <see cref="RangoDesde"/>.
 /// </summary>
-public class Cae
+public sealed record Cae
 {
-    private readonly Lock _lock = new();
-    private long _ultimoNroUsado;
+    /// <summary>Número de autorización (<c>CAE_ID</c>, hasta 11 dígitos). Se informa en cada CFE.</summary>
+    public string NumeroAutorizacion { get; init; } = string.Empty;
 
-    /// <summary>Número de serie del CAE.</summary>
-    public string NroSerie { get; set; } = string.Empty;
+    /// <summary>Tipo de CFE que autoriza.</summary>
+    public TipoCfe TipoCfe { get; init; }
 
-    /// <summary>
-    /// Número de autorización del CAE (<c>CAE_ID</c>, hasta 11 dígitos). Se incluye en el
-    /// bloque <c>CAEData</c> de cada CFE.
-    /// </summary>
-    public string NumeroAutorizacion { get; set; } = string.Empty;
+    /// <summary>Serie de los CFE autorizados: una letra, dos letras o un dígito 1-9 y una letra ("A", "AB", "1A").</summary>
+    public string Serie { get; init; } = string.Empty;
 
-    /// <summary>
-    /// Serie de los CFE autorizados por este CAE (1 o 2 caracteres: "A", "AB" o "1A").
-    /// </summary>
-    public string Serie { get; set; } = string.Empty;
+    /// <summary>Primer número autorizado.</summary>
+    public long RangoDesde { get; init; }
 
-    /// <summary>Tipo de CFE al que aplica este CAE.</summary>
-    public TipoCfe TipoCfe { get; set; }
+    /// <summary>Último número autorizado.</summary>
+    public long RangoHasta { get; init; }
 
-    /// <summary>Número inicial del rango autorizado.</summary>
-    public long RangoDesde { get; set; }
+    /// <summary>Fecha de vencimiento.</summary>
+    public DateOnly FechaVencimiento { get; init; }
 
-    /// <summary>Número final del rango autorizado.</summary>
-    public long RangoHasta { get; set; }
+    /// <summary>Último número usado (0 si todavía no se usó). Lo actualiza el almacenamiento al numerar.</summary>
+    public long UltimoNroUsado { get; init; }
 
-    /// <summary>Fecha de vencimiento del CAE.</summary>
-    public DateOnly FechaVencimiento { get; set; }
+    /// <summary>Indica si el CAE no venció (según la fecha de Uruguay).</summary>
+    public bool EsVigente => EsVigenteEn(HoraUruguay.Hoy());
 
-    /// <summary>
-    /// Último número utilizado dentro del rango.
-    /// Use <c>init</c> en inicializadores de objeto; el valor se incrementa
-    /// internamente por <see cref="ObtenerProximoNumero"/>.
-    /// </summary>
-    public long UltimoNroUsado
-    {
-        get => _ultimoNroUsado;
-        init => _ultimoNroUsado = value;
-    }
+    /// <summary>Cantidad de números que quedan por usar.</summary>
+    public long Disponibles => Math.Max(0, RangoHasta - Math.Max(UltimoNroUsado, RangoDesde - 1));
 
-    /// <summary>
-    /// Indica si el CAE está vigente (no vencido) en la fecha actual de Uruguay.
-    /// </summary>
-    public bool EsVigente => HoraUruguay.Hoy() <= FechaVencimiento;
-
-    /// <summary>
-    /// Indica si el CAE tiene números disponibles.
-    /// </summary>
-    public bool TieneNumerosDisponibles => _ultimoNroUsado < RangoHasta;
-
-    /// <summary>
-    /// Porcentaje de uso del rango del CAE (0-100).
-    /// </summary>
+    /// <summary>Porcentaje del rango ya usado (0-100).</summary>
     public decimal PorcentajeUso
     {
         get
         {
-            long total = RangoHasta - RangoDesde + 1;
+            var total = RangoHasta - RangoDesde + 1;
             if (total <= 0) return 100m;
-            long usados = _ultimoNroUsado - RangoDesde + 1;
-            if (usados <= 0) return 0m;
+            var usados = Math.Clamp(UltimoNroUsado - RangoDesde + 1, 0, total);
             return Math.Round((decimal)usados / total * 100, 2);
         }
     }
 
+    internal bool EsVigenteEn(DateOnly hoy) => hoy <= FechaVencimiento;
+
+    /// <summary>El número que se asigna al reservar (un contador por debajo del rango arranca en <see cref="RangoDesde"/>).</summary>
+    internal long ProximoNumero => Math.Max(UltimoNroUsado + 1, RangoDesde);
+
+    /// <summary>Mismo CAE: mismo tipo, serie y comienzo de rango.</summary>
+    internal bool EsElMismo(Cae otro) =>
+        TipoCfe == otro.TipoCfe && Serie == otro.Serie && RangoDesde == otro.RangoDesde;
+
     /// <summary>
-    /// Obtiene el próximo número disponible e incrementa el contador.
-    /// Este método es thread-safe.
+    /// El CAE con el que se numera <paramref name="tipo"/>: entre los vigentes con números disponibles,
+    /// el de vencimiento más lejano y, a igual vencimiento, el que tenga más números libres.
     /// </summary>
-    /// <exception cref="Exceptions.CaeException">Si no hay números disponibles o el CAE está vencido.</exception>
-    public virtual long ObtenerProximoNumero()
+    internal static Cae? Elegir(IEnumerable<Cae> caes, TipoCfe tipo, DateOnly hoy) =>
+        caes.Where(c => c.TipoCfe == tipo && c.EsVigenteEn(hoy) && c.Disponibles > 0)
+            .MaxBy(c => (c.FechaVencimiento, c.Disponibles));
+
+    internal IEnumerable<string> Validar()
     {
-        lock (_lock)
-        {
-            if (!EsVigente)
-                throw new Exceptions.CaeException(
-                    $"El CAE {NroSerie} venció el {FechaVencimiento:dd/MM/yyyy}.");
-
-            if (!TieneNumerosDisponibles)
-                throw new Exceptions.CaeException(
-                    $"El CAE {NroSerie} no tiene números disponibles (rango hasta {RangoHasta}).");
-
-            // Max: un contador por debajo del rango (0, o heredado de un CAE anterior) arranca en RangoDesde.
-            _ultimoNroUsado = Math.Max(_ultimoNroUsado + 1, RangoDesde);
-            return _ultimoNroUsado;
-        }
+        if (NumeroAutorizacion.Length is < 1 or > 11 || !NumeroAutorizacion.All(char.IsAsciiDigit))
+            yield return "NumeroAutorizacion debe tener entre 1 y 11 dígitos.";
+        if (!Enum.IsDefined(TipoCfe))
+            yield return $"El tipo de CFE {(int)TipoCfe} no está soportado.";
+        if (!SerieValida(Serie))
+            yield return "La serie debe ser una letra, dos letras o un dígito 1-9 seguido de una letra (ej: \"A\", \"AB\", \"1A\").";
+        if (RangoDesde is < 1 or > 9_999_999 || RangoHasta is < 1 or > 9_999_999 || RangoDesde > RangoHasta)
+            yield return "El rango autorizado debe estar entre 1 y 9999999, con RangoDesde ≤ RangoHasta.";
+        if (FechaVencimiento == default)
+            yield return "FechaVencimiento es obligatoria.";
+        if (UltimoNroUsado < 0 || UltimoNroUsado > RangoHasta)
+            yield return "UltimoNroUsado debe estar entre 0 y RangoHasta.";
     }
 
-    /// <summary>
-    /// Devuelve una advertencia si el CAE está por vencer o por agotar su rango.
-    /// </summary>
-    public virtual string? ObtenerAdvertencia(int diasAlertaVencimiento = 7, decimal porcentajeAlertaUso = 80m)
+    internal string? ObtenerAdvertencia(DateOnly hoy, int diasAlertaVencimiento, decimal porcentajeAlertaUso)
     {
-        if (!EsVigente)
-            return $"⚠️ CAE {NroSerie} VENCIDO el {FechaVencimiento:dd/MM/yyyy}.";
+        var nombre = $"CAE {NumeroAutorizacion} ({TipoCfe}, serie {Serie})";
+        if (!EsVigenteEn(hoy))
+            return $"⚠️ {nombre} venció el {FechaVencimiento:dd/MM/yyyy}.";
+        if (Disponibles == 0)
+            return $"⚠️ {nombre} no tiene números disponibles.";
 
-        var diasRestantes = FechaVencimiento.DayNumber - HoraUruguay.Hoy().DayNumber;
+        var diasRestantes = FechaVencimiento.DayNumber - hoy.DayNumber;
         if (diasRestantes <= diasAlertaVencimiento)
-            return $"⚠️ CAE {NroSerie} vence en {diasRestantes} día(s) ({FechaVencimiento:dd/MM/yyyy}).";
-
+            return $"⚠️ {nombre} vence en {diasRestantes} día(s) ({FechaVencimiento:dd/MM/yyyy}).";
         if (PorcentajeUso >= porcentajeAlertaUso)
-            return $"⚠️ CAE {NroSerie} ha utilizado el {PorcentajeUso}% de su rango autorizado.";
-
+            return $"⚠️ {nombre} usó el {PorcentajeUso}% de su rango.";
         return null;
     }
+
+    private static bool SerieValida(string? serie) =>
+        serie is { Length: 1 } && char.IsAsciiLetterUpper(serie[0])
+        || serie is { Length: 2 }
+           && (char.IsAsciiLetterUpper(serie[0]) && char.IsAsciiLetterUpper(serie[1])
+               || serie[0] is >= '1' and <= '9' && char.IsAsciiLetterUpper(serie[1]));
 }

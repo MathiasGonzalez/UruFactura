@@ -27,7 +27,7 @@ internal static class XmlCfe
     /// <summary>Escribe <c>&lt;nombre&gt;valor&lt;/nombre&gt;</c> en el namespace de los CFE.</summary>
     internal static void El(XmlWriter w, string nombre, string valor)
     {
-        w.WriteStartElement(nombre, CfeXmlBuilder.NsUri);
+        w.WriteStartElement(nombre, CfeXml.NsUri);
         w.WriteString(valor);
         w.WriteEndElement();
     }

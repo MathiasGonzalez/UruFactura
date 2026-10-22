@@ -12,653 +12,340 @@
 
 > 📖 **Documentación completa:** [mathiasgonzalez.github.io/UruFactura](https://mathiasgonzalez.github.io/UruFactura/)
 
-UruFactura es una librería open-source **.NET 10 C#** de alto nivel diseñada para simplificar la integración de sistemas locales con el ecosistema de la DGI. Olvídate de lidiar con la complejidad manual de los sobres SOAP o la estructura rígida de los esquemas XML; esta herramienta actúa como un puente amigable entre tu lógica de negocio y los requisitos impositivos uruguayos.
+UruFactura es una librería open-source **.NET 10** para emitir Comprobantes Fiscales Electrónicos (CFE) ante la DGI: arma el XML según los esquemas oficiales, lo firma, administra la numeración de los CAE, habla con los servicios SOAP de la DGI y envía el reporte diario. Vos describís el comprobante; UruFactura se ocupa del resto.
 
 ---
 
-## 🚀 Características Principales
+## 🚀 Características
 
 | Característica | Detalle |
 |---|---|
-| **Generación de CFE** | Crea e-Tickets, e-Facturas, e-Remitos y sus notas de corrección con objetos simples, validados contra los XSD oficiales de la DGI (paquete `xsds_fe` 1.44.2, formato CFE v25.2). |
-| **Firma Digital** | Firma XML Signature *enveloped* del CFE y firma **WS-Security** de cada mensaje SOAP, usando certificados estándar `.p12` / `.pfx`. |
-| **Comunicación SOAP** | Cliente de los servicios web de la DGI (`ws_efactura` y `ws_consultas`): envío de sobres `EnvioCFE`, consulta del estado del envío y del comprobante, y Reporte Diario. |
-| **Gestión de CAE** | Control inteligente de Constancias de Autorización de Emisión con alertas de vencimiento y rango. |
-| **Varias instancias** | Con `UruFactura.EntityFrameworkCore`, la numeración de CFE y de envíos se reserva de forma atómica en la base y el reporte diario incluye los CFE de todas las instancias. |
-| **Representación Impresa** | Generador de PDFs (A4 y térmico 80mm) con código QR y sellos de seguridad según normativa. |
+| **Todos los CFE** | e-Ticket, e-Factura, exportación, e-Remito, e-Resguardo, sus notas, venta por cuenta ajena y contingencia. XML validado contra los XSD oficiales (`xsds_fe` 1.44.2, formato CFE v25.2). |
+| **Firma digital** | XML Signature *enveloped* del CFE y del reporte, y **WS-Security** en cada mensaje SOAP, con un certificado `.p12`/`.pfx` o un `X509Certificate2` (Key Vault, HSM). |
+| **Numeración con CAE** | Reserva atómica del próximo número; con varias instancias, en la base de datos. Alertas de vencimiento y de rango. |
+| **DGI** | Envío de sobres `EnvioCFE`, consulta del resultado, consulta por comprobante y reporte diario, con respuestas tipadas. |
+| **Representación impresa** | PDF A4 y térmico (80 mm) con QR y pie normativo, en el paquete `UruFactura.Pdf`. |
 
 ---
 
-## 📦 Estructura del Proyecto
+## 📦 Paquetes
 
-```
-UruFactura/
-├── src/
-│   ├── UruFactura/                  # Paquete completo (con PDF)
-│   │   ├── Configuration/              # UruFacturaConfig
-│   │   ├── Enums/                      # TipoCfe, TipoIva, FormaPago, Moneda, Ambiente, IndTraslado, TipoDocumentoReceptor
-│   │   ├── Exceptions/                 # CaeException, CfeValidationException, DgiCommunicationException,
-│   │   │                               # FirmaDigitalException, PdfGenerationException, UruFacturaException
-│   │   ├── Models/                     # Cfe, Cae, Receptor, LineaDetalle, RefCfe,
-│   │   │                               # RespuestaDgi, RespuestaReporteDiario, TotalesIva
-│   │   ├── Formatting/                 # CfeFormat (formateadores internos de fecha y moneda)
-│   │   ├── Xml/                        # CfeXmlBuilder / ICfeXmlBuilder (generación XML DGI)
-│   │   ├── Signature/                  # CfeFirmante / ICfeFirmante (XML Signature enveloped)
-│   │   ├── Soap/                       # DgiSoapClient / IDgiSoapClient (comunicación con DGI)
-│   │   ├── Cae/                        # CaeManager / ICaeManager (gestión de CAE)
-│   │   │                               # InMemoryCaeRepository / ICaeRepository (persistencia)
-│   │   │                               # ICaeRepositoryCompartido (numeración atómica entre instancias)
-│   │   ├── Persistence/                # ICfeRepository (registro de CFE emitidos)
-│   │   ├── Pdf/                        # CfePdfGenerator / ICfePdfGenerator (PDF A4 y térmico)
-│   │   │                               # CfeQrGenerator / ICfeQrGenerator (código QR)
-│   │   ├── HoraUruguay.cs              # Fecha/hora de Uruguay (UTC−03:00) para fechas fiscales
-│   │   ├── IUruFacturaClient.cs        # Interfaz pública (para mocking en tests)
-│   │   ├── UruFacturaClient.cs         # Fachada principal
-│   │   ├── UruFacturaClientBuilder.cs  # Builder fluido con WithDefaults()
-│   │   └── UruFacturaClientBuilderPdf.cs # Extensión del builder para PDF (solo paquete completo)
-│   ├── UruFactura.Lite/             # Paquete Lite (sin FluentReport/SkiaSharp/ZXing)
-│   │   └── UruFacturaClient.cs         # Constructores de conveniencia (sin PDF por defecto)
-│   ├── UruFactura.EntityFrameworkCore/      # Persistencia EF Core: EfCaeRepository, EfCfeRepository,
-│   │                                        # UruFacturaDbContext y ApplyUruFacturaModel()
-│   └── UruFactura.Lite.EntityFrameworkCore/ # Las mismas fuentes, compiladas contra UruFactura.Lite
-└── tests/
-    └── UruFactura.Tests/            # Tests unitarios xUnit
+| Paquete | Contenido |
+|---|---|
+| [`UruFactura`](https://www.nuget.org/packages/UruFactura/) | Todo menos el PDF. Sin dependencias de terceros. |
+| [`UruFactura.Pdf`](https://www.nuget.org/packages/UruFactura.Pdf/) | PDF A4, térmico y QR (FluentReport + SkiaSharp + ZXing). |
+| [`UruFactura.EntityFrameworkCore`](https://www.nuget.org/packages/UruFactura.EntityFrameworkCore/) | Almacenamiento en base de datos, para producción y varias instancias. |
+
+```bash
+dotnet add package UruFactura
+dotnet add package UruFactura.Pdf                          # si imprimís
+dotnet add package UruFactura.EntityFrameworkCore          # en producción
+dotnet add package Npgsql.EntityFrameworkCore.PostgreSQL   # o el proveedor de tu base
 ```
 
 ---
 
-## 🛠️ Uso Rápido
+## 🛠️ Uso
+
+Todo está en un solo namespace: `using UruFactura;`.
 
 ### 1. Configurar el cliente
 
 ```csharp
 var config = new UruFacturaConfig
 {
-    // Obligatorios
-    RutEmisor           = "219999820013",       // 12 dígitos, sin puntos ni guión
-    RazonSocialEmisor   = "Mi Empresa S.A.",
-    DomicilioFiscal     = "Av. 18 de Julio 1234",
-    Ciudad              = "Montevideo",
-    Departamento        = "Montevideo",
-    Giro                = "Comercio al por mayor", // Actividad económica (opcional)
+    Emisor = new Emisor
+    {
+        Rut             = "219999820013",       // 12 dígitos, sin puntos ni guión
+        RazonSocial     = "Mi Empresa S.A.",
+        DomicilioFiscal = "Av. 18 de Julio 1234",
+        Ciudad          = "Montevideo",
+        Departamento    = "Montevideo",
+        // Opcionales: NombreComercial, Giro, CodigoSucursal (default 1), Sucursal, Telefonos, Correo,
+        // FechaIncorporacion y UrlVerificacion (leyendas de la representación impresa).
+    },
     Ambiente            = Ambiente.Homologacion,
-    RutaCertificado     = "/ruta/al/certificado.p12",
-    PasswordCertificado = Environment.GetEnvironmentVariable("CERT_PASSWORD")!,
-
-    // Opcionales
-    NombreComercialEmisor = "Mi Comercio",      // nombre de fantasía
-    SoapTimeoutSegundos   = 60,                 // timeout SOAP (default: 30 s)
-    OmitirValidacionSsl   = true,               // solo en Homologación con CA no confiable
-    CodigoSucursal        = 1,                  // CdgDGISucur asignado por la DGI (default: 1)
-    AlgoritmoFirma        = AlgoritmoFirma.Sha256, // o Sha1 si la DGI rechaza SHA-256 en tu ambiente
-
-    TelefonosEmisor       = ["29001234"],       // opcional, hasta 2
-    CorreoEmisor          = "ventas@empresa.com.uy",
-    ValorUnidadIndexada   = 6.2m,               // opcional: valida el tope de 5.000 UI para e-Tickets sin receptor
-    FechaIncorporacionEmisor = "01/01/2020",    // leyenda "Fecha emisor" de la representación impresa (o "Res. N/año")
-    UrlVerificacionEmisor = "www.miempresa.com.uy", // leyenda de verificación de e-Tickets (por defecto www.dgi.gub.uy)
+    RutaCertificado     = "/ruta/al/certificado.p12",       // o Certificado = miX509Certificate2
+    PasswordCertificado = Environment.GetEnvironmentVariable("CERT_PASSWORD"),
 
     // En Producción son obligatorias (la DGI las entrega al habilitar el ambiente).
-    // En Homologación se usan por defecto los servicios de prueba de la DGI.
-    // UrlEnvio      = "https://…/ws_efactura",
-    // UrlConsultas  = "https://…/ws_consultas",
+    // UrlEnvio     = "https://…/ws_efactura",
+    // UrlConsultas = "https://…/ws_consultas",
+    // Otras opciones: AlgoritmoFirma (Sha256 por defecto), Timeout (30 s), ValorUnidadIndexada, OmitirValidacionSsl.
 };
 
-// Constructor de conveniencia (paquete completo — incluye PDF)
-using var client = new UruFacturaClient(config);
-
-// O usando el builder fluido (recomendado para DI o tests):
-using var client = UruFacturaClientBuilder.WithDefaults(config)
-    .WithDefaultPdf()   // omitir si usás UruFactura.Lite
-    .Build();
+using var client = new UruFacturaClient(config);   // valida la configuración y carga el certificado
 ```
 
-> ⚠️ Nunca almacenes `PasswordCertificado` en texto plano. Usá variables de entorno o un gestor de secretos.
+> ⚠️ Nunca guardes `PasswordCertificado` en texto plano. Usá variables de entorno o un gestor de secretos.
+> `config.ToString()` no la muestra, así que podés loguear la configuración.
 
-### 2. Crear y enviar un e-Ticket
+### 2. Registrar los CAE
 
 ```csharp
-using UruFactura.Models; // Cae, LineaDetalle, Receptor, RefCfe
-
-// Registrar el CAE que entregó la DGI (con su serie y número de autorización)
-client.Cae.RegistrarCae(new Cae
+await client.RegistrarCaeAsync(new Cae
 {
-    NroSerie           = "CAE2025001",   // identificador interno (clave en el repositorio)
-    NumeroAutorizacion = "90110001945",  // CAE_ID: va en el bloque CAEData de cada CFE
-    Serie              = "A",            // serie de los comprobantes que autoriza
+    NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
     TipoCfe            = TipoCfe.ETicket,
+    Serie              = "A",
     RangoDesde         = 1,
     RangoHasta         = 1000,
-    FechaVencimiento   = new DateOnly(2026, 12, 31),
-});
-
-// Crear comprobante y tomar el próximo número del CAE (completa Numero, Serie y CaeData)
-var eticket = client.CrearETicket();
-client.AsignarCae(eticket);   // o await client.AsignarCaeAsync(eticket) para persistirlo (ver abajo)
-eticket.Detalle.Add(new LineaDetalle
-{
-    NombreItem     = "Servicio de consultoría",
-    UnidadMedida   = "UN",              // hasta 4 caracteres; si se omite se informa "N/A"
-    Cantidad       = 1,
-    PrecioUnitario = 1000m,
-    IndFactIva     = TipoIva.Basico,
-    DescuentoMonto = 50m,               // opcional: monto fijo sin IVA
-    RecargoMonto   = 0m,
-});
-
-// Validar antes de enviar
-var errores = eticket.Validar();
-if (errores.Count > 0)
-{
-    foreach (var error in errores)
-        Console.WriteLine($"❌ {error}");
-    return;
-}
-
-// 1) Genera el XML, lo firma y lo envía dentro de un sobre EnvioCFE.
-var envio = await client.EnviarCfeAsync(eticket);
-if (!envio.Exitoso)
-{
-    Console.WriteLine($"❌ Sobre rechazado ({envio.Codigo}): {envio.Mensaje}");
-    return;
-}
-// La DGI recibió el sobre; el resultado de cada comprobante se consulta después.
-
-// 2) Consultar el resultado del envío (la DGI indica desde cuándo: envio.ConsultarDesde)
-var estado = await client.ConsultarEstadoEnvioAsync(envio, [eticket]);
-Console.WriteLine(estado.Exitoso
-    ? "✅ Aceptado (AE)"
-    : $"❌ {estado.Codigo}: {estado.Mensaje}");   // eticket.AceptadoPorDgi queda actualizado
-```
-
-> ℹ️ Enviar un CFE **no** lo da por aceptado: la DGI responde primero con un acuse del sobre
-> (`ACKSobre`, estado `AS` o `BS`) y luego, con el `IdReceptor` y el `Token` de ese acuse, informa el
-> estado de cada comprobante (`AE` aceptado, `BE` rechazado, `CE` observado). También podés consultar
-> un comprobante suelto con `ConsultarEstadoCfeAsync(cfe)`.
-
-### 3. Generar PDF
-
-El PDF incluye el QR y los datos del pie exigidos por la DGI (código de seguridad, CAE, rango y vencimiento). `GenerarPdfA4`/`GenerarPdfTermico` firman el CFE si todavía no lo está, porque el QR lleva el código de seguridad de la firma.
-
-```csharp
-// PDF A4
-byte[] pdfA4 = client.GenerarPdfA4(eticket);
-await File.WriteAllBytesAsync("eticket.pdf", pdfA4);
-
-// PDF Térmico (ticket 80mm)
-byte[] pdfTermico = client.GenerarPdfTermico(eticket);
-await File.WriteAllBytesAsync("eticket_termico.pdf", pdfTermico);
-```
-
-### 4. Nota de crédito con referencia
-
-```csharp
-var nc = client.CrearNotaCreditoETicket();
-client.AsignarCae(nc);   // requiere un CAE registrado para el tipo 102
-nc.Referencias.Add(new RefCfe
-{
-    TipoCfe    = TipoCfe.ETicket,
-    Serie      = "A",
-    NroCfe     = 42,
-    FechaCfe   = new DateTime(2025, 6, 15),
-    MontoCfeRef = 1220m,                  // total del CFE referenciado
-    MonedaCfeRef = Moneda.PesoUruguayo,
-    Razon      = "Devolución de mercadería",
-});
-nc.Detalle.Add(new LineaDetalle
-{
-    NroLinea       = 1,
-    NombreItem     = "Devolución producto",
-    Cantidad       = 1,
-    PrecioUnitario = 500m,
-    IndFactIva     = TipoIva.Basico,
+    FechaVencimiento   = new DateOnly(2027, 12, 31),
 });
 ```
 
-### 5. Verificar estado de CAEs
+Un CAE por tipo de CFE (y por serie). La numeración la lleva el almacenamiento: con el predeterminado
+(en memoria) se pierde al reiniciar, así que en producción usá [uno durable](#-producción-y-varias-instancias).
+
+### 3. Emitir, enviar y consultar
 
 ```csharp
-// Registrar múltiples CAEs a la vez
-client.Cae.RegistrarCaes(new[]
+var cfe = new Cfe(TipoCfe.ETicket)
 {
-    new Cae { NroSerie = "CAE2025001", NumeroAutorizacion = "90110001945", Serie = "A", TipoCfe = TipoCfe.ETicket,  RangoDesde = 1, RangoHasta = 1000, FechaVencimiento = new DateOnly(2026, 12, 31) },
-    new Cae { NroSerie = "CAE2025002", NumeroAutorizacion = "90110001946", Serie = "A", TipoCfe = TipoCfe.EFactura, RangoDesde = 1, RangoHasta = 500,  FechaVencimiento = new DateOnly(2026, 12, 31) },
-});
-
-// Obtener próximo número disponible (thread-safe). Normalmente no hace falta llamarlo
-// directamente: client.AsignarCae(cfe) lo usa y completa el CFE.
-var (cae, numero) = client.Cae.ObtenerProximoNumero(TipoCfe.ETicket);
-
-// Obtener CAE activo para un tipo
-var caeActivo = client.Cae.ObtenerCaeActivo(TipoCfe.ETicket);
-
-// Ver advertencias (vencimiento próximo, rango casi agotado)
-var advertencias = client.Cae.ObtenerAdvertencias(diasAlertaVencimiento: 7, porcentajeAlertaUso: 80m);
-foreach (var advertencia in advertencias)
-    Console.WriteLine(advertencia);
-
-Console.WriteLine(client.Cae.ResumenEstado());
-```
-
-### 6. Varios CFE en un sobre y Reporte Diario
-
-```csharp
-// Hasta 250 CFE por sobre
-var envio = await client.EnviarCfesAsync([cfe1, cfe2, cfe3]);
-var estado = await client.ConsultarEstadoEnvioAsync(envio, [cfe1, cfe2, cfe3]);
-
-// Reporte Diario: resumen firmado (montos, cantidad y rangos de números por tipo) de los
-// CFE emitidos en la fecha. No contiene los comprobantes, solo el resumen.
-var ayer = HoraUruguay.Hoy().AddDays(-1);
-var reporte = await client.EnviarReporteDiarioAsync(ayer.ToDateTime(TimeOnly.MinValue), cfesDelDia);
-Console.WriteLine($"{reporte.CantidadCfe} CFE → {reporte.Respuesta.Codigo} {reporte.Respuesta.Mensaje}");
-
-// Con un ICfeRepository configurado (ver "Varias instancias"), el reporte sale de la base
-// e incluye los CFE de todas las instancias:
-var reporteDesdeLaBase = await client.EnviarReporteDiarioAsync(ayer);
-```
-
-> Los CFE que se pasan al reporte pueden venir de la base sin `Detalle`: si solo tienen los totales
-> guardados, se usan esos (no se recalculan). Las fechas fiscales (`FechaEmision` por defecto, vigencia
-> del CAE, `TmstFirma`) usan la hora de Uruguay (`HoraUruguay`), no la del servidor.
-
-### 7. Exportación y remitos
-
-```csharp
-var exportacion = client.CrearEFacturaExportacion();
-exportacion.Moneda        = Moneda.DolarAmericano;
-exportacion.TipoCambio    = 40.5m;
-exportacion.ClausulaVenta = "FOB";   // Incoterm (1-3 letras) o "N/A"
-exportacion.ModalidadVenta = 1;      // 1 Régimen general, 2 Consignación, ...
-exportacion.ViaTransporte = 1;       // 1 Marítimo, 2 Aéreo, 3 Terrestre, 9 Otro
-exportacion.Receptor = new Receptor
-{
-    Documento = "X1234567", TipoDocumento = TipoDocumentoReceptor.Pasaporte,
-    CodigoPais = "US", Pais = "Estados Unidos", RazonSocial = "Importer Inc.",
+    Detalle =
+    [
+        new LineaDetalle { NombreItem = "Servicio de consultoría", Cantidad = 1, PrecioUnitario = 1000m, IndFactIva = TipoIva.Basico },
+    ],
 };
 
-var remito = client.CrearERemito();
-remito.IndTraslado = IndTraslado.TrasladoPorVenta; // se informa como TipoTraslado 1 (venta) o 2 (traslado interno)
+// Valida, toma el próximo número del CAE, arma el XML, lo firma y lo registra. Un CFE inválido
+// lanza CfeValidationException sin consumir números (client.Validar(cfe) devuelve los errores sin emitir).
+CfeEmitido emitido = await client.EmitirAsync(cfe);
+
+// La DGI acusa recibo del sobre (AS); que lo reciba no significa que acepte el CFE.
+AcuseSobre acuse = await client.EnviarAsync(emitido);
+if (!acuse.Recibido)
+    throw new Exception($"Sobre rechazado ({acuse.Estado}): {acuse.Mensaje}");
+
+// El resultado de cada comprobante se consulta después (la DGI indica desde cuándo: acuse.ConsultarDesde).
+EstadoEnvio estado = await client.ConsultarEnvioAsync(acuse);
+Console.WriteLine(emitido.AceptadoPorDgi ? "✅ Aceptado (AE)" : $"❌ {emitido.EstadoDgi}: {emitido.MensajeDgi}");
 ```
 
-### 8. Descuentos globales, medios de pago, retenciones y otros datos
+- `Cfe` es inmutable: se arma con inicializadores y `with`. Lo emitido es exactamente lo que queda firmado.
+- `CfeEmitido` tiene el número, la serie, el CAE, los `Totales`, el `Xml` firmado (que hay que conservar), el
+  `CodigoSeguridad`, la `UrlQr` y el estado ante la DGI (`EstadoDgi`, `AceptadoPorDgi`).
+- `EnviarAsync([cfe1, cfe2, …])` manda hasta 250 CFE en un sobre. `ConsultarCfeAsync(emitido)` consulta un
+  comprobante suelto (útil tras un reinicio).
+- Los rechazos de la DGI vienen en el acuse; los errores de comunicación (red, timeout, SOAP Fault, HTTP 5xx)
+  se lanzan como `DgiCommunicationException`.
+
+### 4. Representación impresa (`UruFactura.Pdf`)
 
 ```csharp
-// Descuento o recargo global (en monto, sin IVA) sobre la base de un tipo de IVA: cambia el IVA y el total
-cfe.DescuentosRecargos.Add(new DescuentoRecargoGlobal
+byte[] a4      = CfePdf.GenerarA4(emitido);
+byte[] ticket  = CfePdf.GenerarTermico(emitido);   // 80 mm
+byte[] qrPng   = CfePdf.GenerarQr(emitido);
+```
+
+Incluye el QR y el pie que exige la DGI (código de seguridad, CAE, rango y vencimiento). Para un diseño
+propio, `emitido.UrlQr` tiene el contenido del QR sin necesidad del paquete de PDF.
+
+### 5. Reporte diario
+
+```csharp
+// Resumen firmado (montos, cantidades y rangos por tipo) de los CFE emitidos en la fecha,
+// tomados del almacenamiento. Usá la fecha de Uruguay: el servidor puede estar en UTC.
+AcuseReporte reporte = await client.EnviarReporteDiarioAsync(HoraUruguay.Hoy().AddDays(-1));
+Console.WriteLine($"{reporte.CantidadCfe} CFE → {reporte.Estado} {reporte.Mensaje}");
+```
+
+### 6. Otros comprobantes
+
+```csharp
+// e-Factura: receptor con RUT
+var factura = new Cfe(TipoCfe.EFactura)
 {
-    Tipo = TipoMovimientoGlobal.Descuento, Glosa = "Promoción", Monto = 50m, IndFact = TipoIva.Basico,
-});
+    Receptor = new Receptor { Documento = "214844360018", RazonSocial = "Cliente S.A." },
+    Detalle  = [new LineaDetalle { NombreItem = "Licencia", Cantidad = 1, PrecioUnitario = 5000m }],
+};
 
-// Medios de pago (hasta 40)
-cfe.MediosPago.Add(new MedioPago { Glosa = "Efectivo", Valor = 500m, Orden = 1 });
+// Nota de crédito: referencia con monto y moneda del original (obligatorios desde CFE v25.01)
+var nc = new Cfe(TipoCfe.NotaCreditoETicket)
+{
+    Referencias = [new RefCfe
+    {
+        TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 42, FechaCfe = new DateOnly(2026, 6, 15),
+        MontoCfeRef = 1220m, MonedaCfeRef = Moneda.PesoUruguayo, Razon = "Devolución",
+    }],
+    Detalle = [new LineaDetalle { NombreItem = "Devolución", Cantidad = 1, PrecioUnitario = 1000m }],
+};
 
-// Datos opcionales del comprobante, del receptor y de las líneas
-cfe.NroInterno = "PED-1234";
-cfe.FormaPago = FormaPago.Credito;
-cfe.FechaVencimiento = new DateOnly(2026, 7, 31);
-cfe.InfoAdicional = "Orden de compra 77";
-cfe.Receptor.CodigoPostal = "11200";
-cfe.Detalle[0].Codigos.Add(new CodigoItem { Tipo = "EAN13", Codigo = "7730000000001" });
-cfe.Detalle[0].Descripcion = "Descripción ampliada";
-cfe.Detalle[0].DescuentoPorcentaje = 10m;   // se calcula el monto si no se informa DescuentoMonto
+// Exportación
+var exportacion = new Cfe(TipoCfe.EFacturaExportacion)
+{
+    Moneda = Moneda.DolarAmericano, TipoCambio = 40.5m,
+    ClausulaVenta = "FOB", ModalidadVenta = 1, ViaTransporte = 1,
+    Receptor = new Receptor { Documento = "X1234567", TipoDocumento = TipoDocumentoReceptor.Pasaporte, CodigoPais = "US", RazonSocial = "Importer Inc." },
+    Detalle = [new LineaDetalle { NombreItem = "Software", Cantidad = 1, PrecioUnitario = 8000m }],
+};
+
+// e-Remito (TrasladoPorVenta se informa como TipoTraslado 1; el resto como 2 = traslado interno)
+var remito = new Cfe(TipoCfe.ERemito)
+{
+    IndTraslado = IndTraslado.TrasladoPropio,
+    Detalle = [new LineaDetalle { NombreItem = "Cajas", Cantidad = 50 }],
+};
 
 // e-Resguardo: las retenciones van en las líneas
-var resguardo = client.CrearEResguardo();
-resguardo.Receptor = new Receptor { Documento = "214844360018", RazonSocial = "Proveedor S.A." };
-resguardo.Detalle.Add(new LineaDetalle
+var resguardo = new Cfe(TipoCfe.EResguardo)
 {
-    Retenciones = { new RetencionPercepcion { Codigo = "R1", Tasa = 12m, MontoSujeto = 1000m, Valor = 120m } },
-});
+    Receptor = new Receptor { Documento = "214844360018", RazonSocial = "Proveedor S.A." },
+    Detalle  = [new LineaDetalle { Retenciones = [new RetencionPercepcion { Codigo = "R1", Tasa = 12m, MontoSujeto = 1000m, Valor = 120m }] }],
+};
 
-// Venta por cuenta ajena: datos del mandante
-var cuentaAjena = client.Crear(TipoCfe.ETicketCuentaAjena);
-cuentaAjena.Mandante = new Mandante { Documento = "214844360018", Nombre = "Mandante S.A." };
+// Venta por cuenta ajena y contingencia: mismo modelo, otro tipo
+var cuentaAjena = new Cfe(TipoCfe.ETicketCuentaAjena) { Mandante = new Mandante { Documento = "214844360018", Nombre = "Mandante S.A." }, Detalle = [/* … */] };
+var contingencia = new Cfe(TipoCfe.ETicketContingencia) { Detalle = [/* … */] };
 ```
 
-### 9. Persistencia de CAE al iniciar
+Además: `DescuentosRecargos` (globales, en monto, cambian la base del IVA), `MediosPago`, `NroInterno`,
+`FormaPago`, `FechaVencimiento`, `InfoAdicional`, datos opcionales del `Receptor` y de cada `LineaDetalle`
+(`Descripcion`, `Codigos`, `DescuentoMonto`/`DescuentoPorcentaje`, `RecargoMonto`). Para emitir con otra
+sucursal: `Emisor = config.Emisor with { CodigoSucursal = 3 }`.
 
-```csharp
-using var client = UruFacturaClientBuilder.WithDefaults(config)
-    .WithCaeRepository(miRepositorio)
-    .Build();
+### 7. Validaciones locales
 
-await client.CargarCaesAsync();            // al iniciar: carga los CAE con su último número usado
-await client.RegistrarCaeAsync(nuevoCae);  // alta de un CAE: lo registra y lo guarda
-await client.AsignarCaeAsync(cfe);         // cada emisión persiste el número usado
-```
-
-### 10. Validaciones locales
-
-`cfe.Validar()` detecta antes de enviar: RUT del emisor y del receptor con dígito verificador inválido, serie y
-número fuera del rango del CAE, longitudes máximas del esquema, receptor faltante en e-Factura/e-Resguardo, datos
-de exportación y de remito, mandante en cuenta ajena, referencias de las notas, descuentos y medios de pago mal
-formados y, si configurás `ValorUnidadIndexada`, e-Tickets sobre 5.000 UI sin identificar al receptor. `CfeXmlBuilder`
-`Generar()` ejecuta `Validar()` internamente antes de serializar el XML. Los montos se calculan con la
-misma precisión con que se escriben en el XML (cantidad con 3 decimales, precio con 6, montos con 2) y con
-redondeo comercial (la mitad hacia arriba), para que `MontoItem` y los totales coincidan con lo que recalcula la DGI. Las reglas que dependen de datos de la DGI
-(por ejemplo, si el emisor está habilitado) solo las valida la DGI al recibir el sobre.
+`client.Validar(cfe)` (y `EmitirAsync`, antes de reservar un número) detecta: RUT del receptor con dígito
+verificador inválido, longitudes máximas del esquema, receptor faltante en e-Factura/e-Resguardo, datos de
+exportación y de remito, mandante en cuenta ajena, referencias de las notas, descuentos y medios de pago mal
+formados y, si configurás `ValorUnidadIndexada`, e-Tickets sobre 5.000 UI sin identificar al receptor. La
+configuración (emisor, certificado, URLs) y cada CAE se validan al construir el cliente y al registrarlos.
+Los montos se calculan con la misma precisión con que se escriben en el XML (cantidad 3 decimales, precio 6,
+montos 2) y redondeo comercial, para que coincidan con lo que recalcula la DGI. Las reglas que dependen de
+datos de la DGI (por ejemplo, si el emisor está habilitado) solo las valida la DGI.
 
 ---
 
-## 📄 Tipos de CFE soportados
+## 🏭 Producción y varias instancias
 
-| Código | Tipo | Método del cliente |
-|--------|------|-------------------|
-| 101 | e-Ticket | `CrearETicket()` |
-| 102 | Nota de Crédito e-Ticket | `CrearNotaCreditoETicket()` |
-| 103 | Nota de Débito e-Ticket | `CrearNotaDebitoETicket()` |
-| 111 | e-Factura | `CrearEFactura()` |
-| 112 | Nota de Crédito e-Factura | `CrearNotaCreditoEFactura()` |
-| 113 | Nota de Débito e-Factura | `CrearNotaDebitoEFactura()` |
-| 121 | e-Factura de Exportación | `CrearEFacturaExportacion()` |
-| 122 | Nota de Crédito e-Factura Exportación | `CrearNotaCreditoEFacturaExportacion()` |
-| 123 | Nota de Débito e-Factura Exportación | `CrearNotaDebitoEFacturaExportacion()` |
-| 124 | e-Remito de Exportación | `CrearERemitoExportacion()` |
-| 181 | e-Remito | `CrearERemito()` |
-| 182 | e-Resguardo | `CrearEResguardo()` |
-| 131-133 | e-Ticket y sus notas, venta por cuenta ajena | `Crear(TipoCfe.ETicketCuentaAjena)` … |
-| 141-143 | e-Factura y sus notas, venta por cuenta ajena | `Crear(TipoCfe.EFacturaCuentaAjena)` … |
-| 201-203, 211-213, 221-224, 231-233, 241-243, 281, 282 | Comprobantes de contingencia (CFC) | `Crear(TipoCfe.ETicketContingencia)` … |
-
-> ℹ️ Los códigos son los del formato CFE de la DGI. Los tipos sin método propio se crean con
-> `client.Crear(TipoCfe.…)`. Las **ventas por cuenta ajena** exigen `cfe.Mandante`; el **e-Resguardo**
-> informa las retenciones en `LineaDetalle.Retenciones` (la línea no lleva nombre ni precio). Los
-> e-Remitos no tienen notas de crédito/débito. **No soportados:** e-Boleta de entrada (151-153 y 251-253),
-> la adenda, y los descuentos/recargos globales en porcentaje (solo en monto).
-
----
-
-## 💸 Tasas de IVA (`TipoIva`)
-
-| Valor | Nombre | Tasa |
-|-------|--------|------|
-| `TipoIva.Exento` | Exento | 0 % |
-| `TipoIva.Minimo` | Mínimo | 10 % |
-| `TipoIva.Basico` | Básico | 22 % |
-| `TipoIva.Suspendido` | Suspendido | — |
-
----
-
-## 🧩 Interfaz `IUruFacturaClient`
-
-UruFactura expone la interfaz `IUruFacturaClient` para facilitar el **mocking en tests** de aplicaciones consumidoras:
-
-```csharp
-// En tu aplicación
-public class MiServicioFacturacion(IUruFacturaClient client) { ... }
-
-// En tus tests
-var mockClient = Substitute.For<IUruFacturaClient>(); // NSubstitute, Moq, etc.
-```
-
-### Interfaces de dependencias
-
-Todas las dependencias internas del cliente también tienen interfaces, lo que permite reemplazar
-cualquier componente sin subclasear `UruFacturaClient`:
-
-| Interfaz | Implementación predeterminada | Descripción |
-|---|---|---|
-| `ICaeManager` | `CaeManager` | Gestión de CAEs en memoria (thread-safe) |
-| `ICaeRepository` | `InMemoryCaeRepository` | Persistencia de CAEs (ver [sección de persistencia](#-persistencia-de-caes)) |
-| `ICfePdfGenerator` | `CfePdfGenerator` | Generación de PDF (solo paquete completo) |
-| `ICfeQrGenerator` | `CfeQrGenerator` | Generación del código QR |
-| `ICfeFirmante` | `CfeFirmante` | Firma XML Signature enveloped (CFE y reporte) |
-| `ICfeXmlBuilder` | `CfeXmlBuilder` | Serialización XML DGI |
-| `IDgiSoapClient` | `DgiSoapClient` | Transporte SOAP hacia DGI |
-
-### Personalizar el comportamiento
-
-Las clases principales (`UruFacturaClient`, `CfeXmlBuilder`, `CfeFirmante`, `DgiSoapClient`, `CaeManager`,
-`InMemoryCaeRepository`, `CfePdfGenerator`, `CfeQrGenerator` y los modelos `Cfe` y `Cae`) exponen sus
-métodos públicos como `virtual`, así que podés heredar y sobreescribir solo lo que necesites:
-
-```csharp
-public class MiCliente(UruFacturaConfig config, ICfeXmlBuilder xml, ICfeFirmante firma,
-                       ICaeManager cae, IDgiSoapClient soap)
-    : UruFacturaClient(config, xml, firma, cae, soap, pdfGenerator: null)
-{
-    public override async Task<RespuestaDgi> EnviarCfeAsync(Cfe cfe, CancellationToken ct = default)
-    {
-        Auditoria.Registrar(cfe);                 // lógica propia antes/después del envío
-        return await base.EnviarCfeAsync(cfe, ct);
-    }
-
-    protected override Cfe CrearCfe(TipoCfe tipo)  // valores por defecto propios
-    {
-        var cfe = base.CrearCfe(tipo);
-        cfe.CodigoSucursal = 3;
-        return cfe;
-    }
-}
-```
-
-También podés reemplazar componentes completos con el builder (`WithXmlBuilder`, `WithSigner`, `WithSoapClient`, …).
-
-### `UruFacturaClientBuilder`
-
-El builder fluido es la forma recomendada de construir el cliente, especialmente cuando se necesita
-inyectar dependencias personalizadas (p.ej. mocks en tests o transporte SOAP propio):
-
-```csharp
-// Caso más habitual — todas las implementaciones predeterminadas:
-using var client = UruFacturaClientBuilder.WithDefaults(config)
-    .WithDefaultPdf()   // solo disponible en UruFactura (no en Lite)
-    .Build();
-
-// Reemplazar solo lo que necesitás:
-using var client = UruFacturaClientBuilder.WithDefaults(config)
-    .WithCaeManager(miCaeManager)
-    .WithSoapClient(miSoapMock)
-    .WithPdfGenerator(miGeneradorPdf)
-    .WithSigner(miCfeFirmante)          // reemplaza la firma digital (ICfeFirmante)
-    .WithXmlBuilder(miXmlBuilder)       // reemplaza el generador de XML (ICfeXmlBuilder)
-    .Build();
-```
-
-> 🏭 **APIs de alto tráfico:** usá `.WithHttpClient(httpClient)` para inyectar un `HttpClient`
-> gestionado por `IHttpClientFactory` y evitar el agotamiento de sockets (*socket exhaustion*)
-> que ocurre cuando se crean y descartan instancias de `HttpClient` por cada request.
-> Al hacerlo, UruFactura no configura el handler interno (certificado de cliente ni `OmitirValidacionSsl`),
-> así que es responsabilidad del caller configurarlos en el handler del `HttpClient` inyectado.
->
-> ```csharp
-> // Ejemplo en Program.cs (ASP.NET Core)
-> builder.Services.AddHttpClient("DGI");
-> builder.Services.AddSingleton(sp =>
->     UruFacturaClientBuilder
->         .WithDefaults(config)
->         .WithHttpClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("DGI"))
->         .Build());
-> ```
-
----
-
-## 💾 Persistencia de CAEs
-
-En producción, el estado de los CAEs —especialmente `UltimoNroUsado`— debe sobrevivir reinicios
-de la aplicación. Si la app arranca con el contador en cero, volvería a emitir números ya usados,
-lo que la DGI rechazaría por duplicado.
-
-UruFactura separa la gestión en memoria (`ICaeManager`) de la persistencia (`ICaeRepository`):
-
-```
-Al iniciar la app:   await client.CargarCaesAsync()   (repo.CargarTodosAsync() → manager.RegistrarCaes())
-Al emitir un CFE:    await client.AsignarCaeAsync(cfe)   (toma el número y llama a repo.ActualizarUltimoNroUsadoAsync)
-```
-
-### Uso con la implementación en memoria (tests / desarrollo)
-
-```csharp
-// InMemoryCaeRepository: los datos se pierden al reiniciar (solo para tests/dev)
-var repo = new InMemoryCaeRepository();
-await repo.GuardarCaeAsync(new Cae
-{
-    NroSerie         = "CAE2025001",
-    NumeroAutorizacion = "90110001945",
-    Serie            = "A",
-    TipoCfe          = TipoCfe.ETicket,
-    RangoDesde       = 1,
-    RangoHasta       = 1000,
-    FechaVencimiento = new DateOnly(2026, 12, 31),
-});
-
-// Al iniciar: cargar y registrar en el manager
-client.Cae.RegistrarCaes(await repo.CargarTodosAsync());
-
-// Al emitir: el cliente toma el número y lo persiste en el repositorio configurado
-// (UruFacturaClientBuilder.WithDefaults(config).WithCaeRepository(repo).Build())
-await client.AsignarCaeAsync(cfe);
-```
-
-### Implementar persistencia real (producción)
-
-Implementá `ICaeRepository` con tu mecanismo de almacenamiento:
-
-```csharp
-public class MiCaeRepository : ICaeRepository
-{
-    public ValueTask<IEnumerable<Cae>> CargarTodosAsync()
-    {
-        // Leer de base de datos / archivo / Redis / etc.
-        throw new NotImplementedException();
-    }
-
-    public ValueTask GuardarCaeAsync(Cae cae)
-    {
-        // INSERT o UPDATE en tu store
-        throw new NotImplementedException();
-    }
-
-    public ValueTask ActualizarUltimoNroUsadoAsync(string nroSerie, long ultimoNroUsado)
-    {
-        // UPDATE ultimo_nro_usado WHERE nro_serie = nroSerie
-        // ¡Llamar en cada emisión exitosa antes de considerar la operación completa!
-        throw new NotImplementedException();
-    }
-}
-```
-
-> ⚠️ `ActualizarUltimoNroUsadoAsync` debe ejecutarse **antes** de considerar la emisión
-> finalizada. Si la app cae entre la emisión y la persistencia, el siguiente arranque
-> repetirá ese número. En escenarios críticos, usá transacciones de base de datos o
-> idempotencia en el endpoint de la DGI.
-
-> ⚠️ Un `ICaeRepository` común **no** alcanza con varias instancias: cada una numera con su
-> `CaeManager` en memoria y dos instancias emitirían el mismo número. Para eso está
-> `ICaeRepositoryCompartido` (siguiente sección).
-
-### Varias instancias con Entity Framework Core
-
-Con más de una instancia (réplicas, deploy blue/green, una API y un worker, etc.) la base pasa a ser
-la fuente de verdad. El paquete `UruFactura.EntityFrameworkCore` (o `UruFactura.Lite.EntityFrameworkCore`)
-trae el modelo y las implementaciones:
+El almacenamiento (`IUruFacturaStore`) guarda los CAE con su numeración, el número de envío y los CFE
+emitidos (de ahí sale el reporte diario). El predeterminado, `InMemoryStore`, sirve para un solo proceso y
+pruebas: si la aplicación se reinicia, volvería a usar números ya emitidos. En producción usá
+`UruFactura.EntityFrameworkCore`, que además es seguro con varias instancias (réplicas, blue/green, una API y
+un worker):
 
 | Tabla | Para qué |
 |---|---|
 | `UruFacturaCaes` | CAE con su `UltimoNroUsado`. Cada número se reserva con un `UPDATE` condicional (compare-and-swap) que se reintenta si otra instancia ganó. |
-| `UruFacturaCfes` | CFE emitidos: numeración (única por tipo/serie/número), totales, XML firmado y estado ante la DGI. De acá sale el reporte diario. |
+| `UruFacturaCfes` | CFE emitidos: XML firmado, contenido (JSON), totales y estado ante la DGI. Tipo/serie/número únicos. |
 | `UruFacturaSecuencias` | Número de envío del emisor (`Idemisor`), único entre instancias. |
 
 ```csharp
 // Program.cs (ASP.NET Core): el proveedor lo elegís vos (SQL Server, PostgreSQL, SQLite, ...)
 builder.Services.AddDbContextFactory<UruFacturaDbContext>(o => o.UseNpgsql(connectionString));
 
-builder.Services.AddSingleton(sp =>
-{
-    var db = sp.GetRequiredService<IDbContextFactory<UruFacturaDbContext>>();
-    return UruFacturaClientBuilder.WithDefaults(config)
-        .WithCaeRepository(new EfCaeRepository<UruFacturaDbContext>(db))  // numeración atómica
-        .WithCfeRepository(new EfCfeRepository<UruFacturaDbContext>(db))  // registro de CFE
-        .Build();
-});
-
-// Emisión (en cualquier instancia)
-var cfe = client.CrearETicket();
-// ... detalle ...
-await client.AsignarCaeAsync(cfe);   // reserva el número en la base (AsignarCae sincrónico queda deshabilitado)
-await client.EnviarCfeAsync(cfe);    // guarda el CFE como emitido y luego la respuesta de la DGI
+builder.Services.AddSingleton<IUruFacturaClient>(sp => new UruFacturaClient(
+    config,
+    store: new EfUruFacturaStore<UruFacturaDbContext>(sp.GetRequiredService<IDbContextFactory<UruFacturaDbContext>>())));
 
 // Reporte diario (una sola instancia, p. ej. un job después de medianoche)
 await client.EnviarReporteDiarioAsync(HoraUruguay.Hoy().AddDays(-1));
 ```
 
-- Si ya tenés tu propio `DbContext`, llamá a `modelBuilder.ApplyUruFacturaModel()` en `OnModelCreating`
-  y usá `EfCaeRepository<MiContexto>` / `EfCfeRepository<MiContexto>`.
-- Las migraciones se generan en tu aplicación (`dotnet ef migrations add UruFactura`), con tu proveedor.
-- Las claves `Id` son `Guid` generados en la aplicación y ordenados por tiempo, para que el índice primario
-  no se fragmente: UUID v7 y, en SQL Server, el GUID secuencial de EF Core (SQL Server ordena
-  `uniqueidentifier` por los últimos bytes, así que un v7 llegaría desordenado al índice).
+- Si ya tenés tu propio `DbContext`, llamá a `modelBuilder.ApplyUruFacturaModel()` en `OnModelCreating` y usá
+  `EfUruFacturaStore<MiContexto>`. Las migraciones se generan en tu aplicación (`dotnet ef migrations add UruFactura`).
+- Las claves `Id` son `Guid` ordenados por tiempo (UUID v7; en SQL Server, el GUID secuencial de EF Core, porque
+  SQL Server ordena `uniqueidentifier` por los últimos bytes) para que el índice primario no se fragmente.
 - `FechaFirma` se guarda en UTC (PostgreSQL/Npgsql no admite otro offset en `timestamp with time zone`).
-- Los CFE que se emiten sin enviarse en el momento se registran con `client.RegistrarCfesAsync([cfe])`
-  para que entren en el reporte diario.
-- Las entidades son públicas: para listar CFE pendientes o buscar por `NroInterno`, consultá
-  `db.Cfes` directamente y usá `entidad.ToCfe()` para pasarlos al cliente (p. ej. a `ConsultarEstadoCfeAsync`).
-- `client.Cae.ObtenerAdvertencias()` usa el estado en memoria de esa instancia; para un panel global,
-  consultá `db.Caes`.
+- Las entidades son públicas: para listar pendientes o buscar por `NroInterno`, consultá `db.Cfes` y usá
+  `entidad.ToCfeEmitido()` (por ejemplo, para `client.ConsultarCfeAsync`).
+- Otro almacenamiento: implementá `IUruFacturaStore`; la reserva de números debe ser atómica.
+
+### Inyección de dependencias y `HttpClient`
+
+`UruFacturaClient` es thread-safe: registralo como singleton (como `IUruFacturaClient`, que además permite
+mockearlo en tests). En APIs de alto tráfico podés pasarle un `HttpClient` de `IHttpClientFactory`
+(`new UruFacturaClient(config, httpClient: …)`); en ese caso su handler debe tener el certificado de cliente
+TLS y la validación del servidor configurados. Para tests o un transporte propio, `dgiClient:` acepta un
+`IDgiClient`, y `reloj:` un `TimeProvider` para las fechas fiscales.
 
 ---
 
-## ⚠️ Excepciones tipadas
+## 📄 Tipos de CFE
 
-| Excepción | Cuándo se lanza |
-|-----------|----------------|
-| `UruFacturaException` | Base de todas las excepciones |
-| `CaeException` | CAE vencido, sin rango disponible o no registrado |
-| `CfeValidationException` | CFE inválido según reglas de negocio |
-| `DgiCommunicationException` | Error de comunicación con el servicio SOAP de la DGI |
-| `FirmaDigitalException` | Error al firmar el CFE con el certificado |
-| `PdfGenerationException` | Error al generar el PDF |
+| Código | Tipo |
+|--------|------|
+| 101 / 102 / 103 | e-Ticket, nota de crédito, nota de débito |
+| 111 / 112 / 113 | e-Factura, nota de crédito, nota de débito |
+| 121 / 122 / 123 | e-Factura de exportación y sus notas |
+| 124 | e-Remito de exportación |
+| 181 | e-Remito |
+| 182 | e-Resguardo |
+| 131-133, 141-143 | e-Ticket y e-Factura venta por cuenta ajena (exigen `Mandante`) |
+| 201-203, 211-213, 221-224, 231-233, 241-243, 281, 282 | Comprobantes de contingencia (CFC) |
+
+> **No soportados:** e-Boleta de entrada (151-153 y 251-253), la adenda y los descuentos/recargos globales en
+> porcentaje (solo en monto). Los e-Remitos no tienen notas de crédito/débito.
+
+### Tasas de IVA (`TipoIva`)
+
+| Valor | Tasa |
+|-------|------|
+| `TipoIva.Exento` | 0 % |
+| `TipoIva.Minimo` | 10 % |
+| `TipoIva.Basico` | 22 % |
+| `TipoIva.Suspendido` | IVA en suspenso |
+
+---
+
+## ⚠️ Excepciones
+
+| Excepción | Cuándo |
+|-----------|--------|
+| `UruFacturaException` | Base de todas; configuración inválida, sobre con más de 250 CFE |
+| `CfeValidationException` | El CFE no es válido (`Errors` tiene el detalle) |
+| `CaeException` | CAE inválido al registrarlo, o no hay CAE vigente con números para el tipo |
+| `FirmaDigitalException` | El certificado no se puede cargar (archivo, contraseña) o no tiene clave privada; falla de firma |
+| `DgiCommunicationException` | Red, timeout, SOAP Fault o HTTP sin acuse (`CodigoRespuesta`: `SOAP_FAULT` o el código HTTP) |
+| `PdfGenerationException` | Falla al generar el PDF (`UruFactura.Pdf`) |
+
+---
+
+## 🔄 Cambios respecto de 1.x
+
+| 1.x | 2.0 |
+|---|---|
+| `UruFactura` (con PDF) / `UruFactura.Lite` | `UruFactura` (sin PDF) + `UruFactura.Pdf` |
+| `UruFactura.Lite.EntityFrameworkCore` | `UruFactura.EntityFrameworkCore` (uno solo) |
+| `using UruFactura.Models; .Enums; .Configuration; …` | `using UruFactura;` |
+| `RutEmisor`, `RazonSocialEmisor`, … en la config | `config.Emisor` (`Emisor`) |
+| `client.CrearETicket()` + `cfe.Detalle.Add(…)` | `new Cfe(TipoCfe.ETicket) { Detalle = [ … ] }` |
+| `AsignarCae` / `AsignarCaeAsync` + `EnviarCfeAsync` | `EmitirAsync` (devuelve `CfeEmitido`) + `EnviarAsync` |
+| `client.Cae.RegistrarCae`, `CargarCaesAsync`, `ICaeRepository`, `ICaeRepositoryCompartido`, `ICfeRepository` | `RegistrarCaeAsync` + `IUruFacturaStore` (`InMemoryStore`, `EfUruFacturaStore`) |
+| `Cae.NroSerie` | se identifica por tipo, serie y rango |
+| `RespuestaDgi.Exitoso` | `AcuseSobre.Recibido`, `EstadoEnvio.TodosAceptados`, `CfeEmitido.AceptadoPorDgi` |
+| `SOAP_FAULT` / HTTP en `RespuestaDgi.Codigo` | `DgiCommunicationException` |
+| `EnviarReporteDiarioAsync(DateTime, cfes)` | `EnviarReporteDiarioAsync(DateOnly)` (desde el almacenamiento) |
+| `client.GenerarPdfA4(cfe)` | `CfePdf.GenerarA4(emitido)` |
+| `UruFacturaClientBuilder` | `new UruFacturaClient(config, store:, httpClient:, dgiClient:, reloj:)` |
+| `ICfeXmlBuilder`, `ICfeFirmante`, `ICfeQrGenerator`, `IDgiSoapClient` | internos; `IDgiClient` para un transporte propio; `Certificado` para Key Vault/HSM |
+| `TipoDocumentoReceptor.DocumentoExterior` | `TipoDocumentoReceptor.Otro` |
+| `CfeFirmante.VerificarFirma(xml)` | `FirmaDigital.Verificar(xml)` |
 
 ---
 
 ## 🔧 Requisitos
 
-- .NET 10 SDK
-- Certificado digital DGI (`.p12` / `.pfx`)
-- CAE vigente emitido por la DGI
-
----
+- .NET 10
+- Certificado digital (`.p12`/`.pfx`) de una CA reconocida por AGESIC, vinculado al RUT del emisor
+- CAE vigentes emitidos por la DGI
 
 ## 📚 Documentación adicional
 
 | Documento | Descripción |
 |-----------|-------------|
 | [FACTURACION_URUGUAY.md](docs/FACTURACION_URUGUAY.md) | Marco normativo, ejemplos por tipo de empresa y consideraciones fiscales |
-| [CERTIFICACION_DGI.md](docs/CERTIFICACION_DGI.md) | Proceso de homologación y puesta en producción paso a paso |
-
----
-
-## 📦 Paquetes NuGet
-
-| Paquete | Cuándo usarlo |
-|---------|--------------|
-| [`UruFactura`](https://www.nuget.org/packages/UruFactura/) | Uso general — incluye generación de PDF A4 y térmico (FluentReport + SkiaSharp + ZXing) |
-| [`UruFactura.Lite`](https://www.nuget.org/packages/UruFactura.Lite/) | Entornos donde el peso de las dependencias de PDF no es deseable (microservicios, Azure Functions, etc.). Podés inyectar tu propio `ICfePdfGenerator` si lo necesitás. |
-| [`UruFactura.EntityFrameworkCore`](https://www.nuget.org/packages/UruFactura.EntityFrameworkCore/) | Persistencia en base de datos con EF Core y soporte de varias instancias, para el paquete completo. |
-| [`UruFactura.Lite.EntityFrameworkCore`](https://www.nuget.org/packages/UruFactura.Lite.EntityFrameworkCore/) | Lo mismo, para `UruFactura.Lite`. |
-
-```bash
-# Paquete completo
-dotnet add package UruFactura
-
-# Paquete Lite (sin FluentReport / SkiaSharp / ZXing)
-dotnet add package UruFactura.Lite
-
-# Persistencia con EF Core (elegí el que corresponda a tu paquete) + tu proveedor
-dotnet add package UruFactura.EntityFrameworkCore        # o UruFactura.Lite.EntityFrameworkCore
-dotnet add package Npgsql.EntityFrameworkCore.PostgreSQL  # o Microsoft.EntityFrameworkCore.SqlServer, ...
-```
-
----
+| [CERTIFICACION_DGI.md](docs/CERTIFICACION_DGI.md) | Homologación y puesta en producción paso a paso |
+| [NORMATIVA_DGI_UPDATE.md](docs/NORMATIVA_DGI_UPDATE.md) | Runbook para actualizar el SDK ante cambios de formato o normativa |
 
 ## 🧪 Tests
 
 ```bash
-dotnet test tests/UruFactura.Tests/
+dotnet test UruFactura.slnx
 ```
 
----
+Los tests validan el XML generado contra los XSD y WSDL oficiales de la DGI (`tests/UruFactura.Tests/Schemas/dgi`).
 
 ## 📝 Licencia
 

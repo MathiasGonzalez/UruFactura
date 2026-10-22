@@ -17,98 +17,87 @@ Desde la configuración inicial hasta obtener el PDF listo para entregar al clie
 
 ```mermaid
 flowchart TD
-    A([Inicio]) --> B[Configurar UruFacturaConfig\ncertificado · RUT · ambiente]
-    B --> C[Instanciar UruFacturaClient\nvia constructor o builder]
-    C --> D[Registrar CAE\nclient.Cae.RegistrarCae]
-    D --> E{CAE válido?}
-    E -- No --> F[❌ Sin CAE no se puede emitir\nSolicitar CAE en DGI en línea]
-    F --> D
-    E -- Sí --> G[Crear CFE\nCrearETicket / CrearEFactura / …]
-    G --> H[Completar datos\nDetalle · Receptor · Referencias]
-    H --> I[GenerarXml\nSerialización al esquema DGI]
-    I --> J[FirmarCfe\nXML Signature con certificado .p12]
-    J --> K[EnviarCfeAsync\nsobre EnvioCFE + SOAP/WS-Security]
+    A([Inicio]) --> B[new UruFacturaClient config\nvalida la config y carga el certificado]
+    B --> C[RegistrarCaeAsync\nuna vez por CAE]
+    C --> G[Describir el comprobante\nnew Cfe tipo · Detalle · Receptor · Referencias]
+    G --> H[EmitirAsync]
+    H --> V{¿Válido y hay CAE?}
+    V -- No --> X[❌ CfeValidationException o CaeException\nno se consume ningún número]
+    V -- Sí --> E[CfeEmitido\nnúmero · XML firmado · totales · QR]
+    E --> K[EnviarAsync\nsobre EnvioCFE + SOAP/WS-Security]
     K --> L{Acuse del sobre}
-    L -- AS\nrecibido --> L2[ConsultarEstadoEnvioAsync\ncon IdReceptor + Token]
-    L -- BS / BA\nrechazado --> N[❌ Revisar error\nrespuesta.Mensaje]
-    L2 -- AE\naceptado --> M[✅ CFE aceptado]
-    L2 -- BE / CE --> N
-    M --> O[GenerarPdfA4 / GenerarPdfTermico]
-    O --> P[Archivar XML firmado\nobligatorio 5 años]
-    P --> Q([Fin])
+    L -- AS\nrecibido --> L2[ConsultarEnvioAsync acuse]
+    L -- BS / BA\nrechazado --> N[❌ Revisar acuse.Mensaje\ny reenviar el mismo CfeEmitido]
+    L2 -- AE\naceptado --> M[✅ emitido.AceptadoPorDgi]
+    L2 -- BE / CE --> N2[❌ emitido.MensajeDgi]
+    M --> O[CfePdf.GenerarA4 / GenerarTermico]
+    O --> Q([Fin])
 ```
 
 ---
 
-## Pipeline interno de EnviarCfeAsync
-
-Lo que ocurre dentro de UruFactura al llamar a `EnviarCfeAsync`.
+## Pipeline interno de EmitirAsync y EnviarAsync
 
 ```mermaid
 sequenceDiagram
     participant App as Tu aplicación
     participant Client as UruFacturaClient
-    participant Xml as ICfeXmlBuilder
-    participant Firma as ICfeFirmante
-    participant Soap as IDgiSoapClient
+    participant Store as IUruFacturaStore
     participant DGI as DGI (SOAP)
 
-    App->>Client: EnviarCfeAsync(cfe)
-    Client->>Xml: Generar(cfe)  (cfe.CaeData ya asignado con AsignarCae)
-    Xml-->>Client: xmlSinFirmar
-    Client->>Firma: Firmar(xmlSinFirmar)
-    Note over Firma: XML Signature enveloped con certificado .p12/.pfx
-    Firma-->>Client: xmlFirmado
-    Client->>Soap: EnviarSobreAsync(EnvioCFE con xmlFirmado)
-    Soap->>DGI: POST SOAP (WS-Security) EFACRECEPCIONSOBRE
-    DGI-->>Soap: ACKSobre (AS/BS, IdReceptor, Token)
-    Soap-->>Client: RespuestaDgi
-    Client-->>App: RespuestaDgi
+    App->>Client: EmitirAsync(cfe)
+    Note over Client: Valida el contenido (sin consumir números)
+    Client->>Store: ReservarNumeroAsync(tipo, hoy)
+    Store-->>Client: CAE con el número reservado (atómico)
+    Note over Client: Arma el XML, calcula totales y firma (XML Signature)
+    Client->>Store: GuardarCfesAsync(emitido)
+    Client-->>App: CfeEmitido
+
+    App->>Client: EnviarAsync(emitido)
+    Client->>Store: ReservarIdEnvioAsync()
+    Client->>DGI: EFACRECEPCIONSOBRE (sobre EnvioCFE, WS-Security)
+    DGI-->>Client: ACKSobre (AS/BS, IdReceptor, Token)
+    Client->>Store: GuardarCfesAsync (IdReceptor y Token)
+    Client-->>App: AcuseSobre
 ```
 
 ---
 
 ## Flujo de firma digital
 
-Detalle del proceso de firma (XML Signature enveloped) que aplica el SDK a cada CFE.
-
 ```mermaid
 flowchart LR
-    A[CFE en memoria] --> B[Serializar a XML\nesquema DGI]
-    B --> C[Calcular digest\nSHA-1 / SHA-256]
-    C --> D[Construir SignedInfo\nCanonicalization · SignatureMethod]
-    D --> E[Firmar SignedInfo\ncon clave privada del .p12]
-    E --> F[Adjuntar certificado\npúblico KeyInfo X509]
-    F --> G[XML con nodo\nds:Signature embebido]
+    A[CFE validado y numerado] --> B[Serializar a XML\nesquema DGI]
+    B --> C[Calcular digest\nSHA-256 / SHA-1]
+    C --> D[Construir SignedInfo\nC14N · enveloped-signature]
+    D --> E[Firmar SignedInfo\ncon la clave privada]
+    E --> F[Adjuntar certificado\nKeyInfo X509]
+    F --> G[CfeEmitido.Xml\nCodigoSeguridad = DigestValue]
     G --> H[Sobre EnvioCFE\n+ SOAP firmado con WS-Security]
-    H --> I[Envío HTTPS\na endpoint DGI]
 ```
 
 ---
 
-## Gestión del ciclo de vida de un CAE
+## Ciclo de vida de un CAE
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Registrado : client.Cae.RegistrarCae()
+    [*] --> Registrado : RegistrarCaeAsync
+    Registrado --> EnUso : EmitirAsync reserva el primer número
+    EnUso --> EnUso : EmitirAsync\n(UltimoNroUsado + 1)
 
-    Registrado --> Activo : Primer número usado
-    Activo --> Activo : AsignarCae\n(incrementa UltimoNroUsado)
+    EnUso --> AdvertenciaRango : >= 80% del rango usado
+    AdvertenciaRango --> Agotado : UltimoNroUsado = RangoHasta
 
-    Activo --> AdvertenciaRango : > 80% del rango utilizado
-    AdvertenciaRango --> Activo : Se registra CAE adicional
-    AdvertenciaRango --> Agotado : Rango = RangoHasta
+    EnUso --> AdvertenciaVencimiento : <= 7 días para vencer
+    AdvertenciaVencimiento --> Vencido : hoy > FechaVencimiento
 
-    Activo --> AdvertenciaVencimiento : < 7 días para vencer
-    AdvertenciaVencimiento --> Activo : Se registra CAE renovado
-    AdvertenciaVencimiento --> Vencido : Fecha > FechaVencimiento
-
-    Agotado --> [*] : Requiere nuevo CAE en DGI
-    Vencido --> [*] : Requiere nuevo CAE en DGI
+    Agotado --> [*] : se usa el siguiente CAE vigente
+    Vencido --> [*] : se usa el siguiente CAE vigente
 ```
 
 <Aside type="tip">
-  Monitoreá los CAEs con `client.Cae.ObtenerAdvertencias()` al iniciar tu aplicación para detectar problemas antes de que bloqueen la emisión.
+  Monitoreá los CAE con `client.ObtenerAdvertenciasCaeAsync()` y registrá el siguiente antes de que el actual venza o se agote.
 </Aside>
 
 ---
@@ -126,9 +115,9 @@ flowchart TD
     C -- Sí --> E[2. Obtener certificado digital\nABITAB · Correo Uruguayo · CertiSur\nFormato .p12/.pfx · vinculado al RUT]
     E --> F[3. Solicitar CAE\nDGI en línea → Solicitud de CAE\nPor tipo de CFE y rango]
     F --> G[4. Configurar SDK en Homologación\nAmbiente.Homologacion]
-    G --> H[5. Emitir CFEs de prueba\nsegún instructivo DGI]
+    G --> H[5. Emitir y enviar CFEs de prueba\nEmitirAsync · EnviarAsync]
     H --> I[6. Enviar Reporte Diario de prueba\nEnviarReporteDiarioAsync]
-    I --> J[7. Consultar estado de cada CFE\nConsultarEstadoCfeAsync]
+    I --> J[7. Consultar estado de cada CFE\nConsultarEnvioAsync]
     J --> K{Todo OK?}
     K -- No --> L[Corregir errores\nrevisando respuesta.Mensaje]
     L --> H
@@ -150,14 +139,14 @@ DGI exige enviar un resumen de todos los CFE emitidos cada día.
 flowchart TD
     A([Fin de la jornada]) --> B{¿Se emitió\nalgún CFE hoy?}
     B -- No --> C[No es obligatorio\npero recomendable enviar\nreporte vacío]
-    B -- Sí --> D[Recopilar todos los CFEs\ndel día]
-    D --> E[Para cada CFE sin firma:\nGenerarYFirmar automático]
-    E --> F[EnviarReporteDiarioAsync\nfecha · lista de CFEs]
-    F --> G[SDK construye sobre SOAP\ncon todos los XML firmados]
-    G --> H[POST a endpoint DGI]
+    B -- Sí --> D[El almacenamiento tiene\nlos CFE emitidos del día]
+    D --> F[EnviarReporteDiarioAsync\nfecha]
+    F --> E[SDK resume por tipo de CFE\nmontos · cantidades · rangos]
+    E --> G[Arma ReporteDiarioCFE y lo firma\nno incluye los XML de los CFE]
+    G --> H[POST SOAP EFACRECEPCIONREPORTE]
     H --> I{Respuesta DGI}
-    I -- Exitoso --> J[✅ Reporte aceptado\nArchivar confirmación]
-    I -- Error --> K[❌ Reintentar\nrevisando respuesta.Mensaje]
+    I -- AR\nrecibido --> J[✅ Reporte recibido\nArchivar confirmación]
+    I -- BR / BA\nrechazado --> K[❌ Reintentar\nrevisando respuesta.Mensaje]
     K --> F
     J --> L([Fin del día])
     C --> L
@@ -171,77 +160,50 @@ flowchart TD
 
 ## Arquitectura de componentes
 
-Relación entre las principales interfaces y quién las implementa por defecto.
+Las tres costuras públicas son el cliente, el almacenamiento y el transporte a la DGI. Todo lo demás (XML, firma, sobre, reporte) es interno.
 
 ```mermaid
 classDiagram
     direction LR
 
-    class UruFacturaClient {
-        +Cae: ICaeManager
-        +CrearETicket() Cfe
-        +AsignarCae(cfe)
-        +EnviarCfeAsync(cfe) Task~RespuestaDgi~
-        +ConsultarEstadoEnvioAsync(envio, cfes) Task
-        +GenerarYFirmar(cfe) string
-        +GenerarPdfA4(cfe) byte[]
-        +EnviarReporteDiarioAsync(...) Task
-        +ConsultarEstadoCfeAsync(cfe) Task
-    }
-
-    class ICaeManager {
+    class IUruFacturaClient {
         <<interface>>
-        +RegistrarCae(cae)
-        +RegistrarCaes(caes)
-        +ObtenerProximoNumero(tipo)
-        +ObtenerAdvertencias(diasAlertaVencimiento?, porcentajeAlertaUso?)
-        +ResumenEstado() string
+        +RegistrarCaeAsync(cae)
+        +Validar(cfe) errores
+        +EmitirAsync(cfe) CfeEmitido
+        +EnviarAsync(cfes) AcuseSobre
+        +ConsultarEnvioAsync(acuse) EstadoEnvio
+        +ConsultarCfeAsync(cfe) EstadoComprobante
+        +EnviarReporteDiarioAsync(fecha) AcuseReporte
     }
 
-    class ICfeXmlBuilder {
+    class IUruFacturaStore {
         <<interface>>
-        +Generar(cfe) string
+        +GuardarCaeAsync(cae)
+        +ReservarNumeroAsync(tipo, hoy) Cae
+        +ReservarIdEnvioAsync() long
+        +GuardarCfesAsync(cfes)
+        +ListarCfesAsync(fecha)
     }
 
-    class ICfeFirmante {
+    class IDgiClient {
         <<interface>>
-        +Firmar(xml) string
+        +EnviarSobreAsync(xml) AcuseSobre
+        +ConsultarEnvioAsync(id, token) EstadoEnvio
+        +ConsultarCfeAsync(tipo, serie, nro) EstadoComprobante
+        +EnviarReporteAsync(xml) AcuseReporte
     }
 
-    class IDgiSoapClient {
-        <<interface>>
-        +EnviarSobreAsync(sobreXml) Task
-        +ConsultarEstadoEnvioAsync(idReceptor, token) Task
-        +ConsultarEstadoCfeAsync(tipo, serie, nro) Task
-        +EnviarReporteDiarioAsync(reporteXml) Task
+    class CfePdf {
+        <<static>>
+        +GenerarA4(emitido) byte[]
+        +GenerarTermico(emitido) byte[]
     }
 
-    class ICfePdfGenerator {
-        <<interface>>
-        +GenerarA4(cfe) byte[]
-        +GenerarTermico(cfe) byte[]
-    }
-
-    class ICaeRepository {
-        <<interface>>
-        +CargarTodosAsync() Task~IEnumerable~
-        +GuardarCaeAsync(cae) Task
-        +ActualizarUltimoNroUsadoAsync(nroSerie, ultimo) Task
-    }
-
-    class CaeManager {
-        -_caesPorTipo: Dictionary
-        -_lock: Lock
-    }
-
-    class InMemoryCaeRepository
-
-    UruFacturaClient --> ICaeManager
-    UruFacturaClient --> ICfeXmlBuilder
-    UruFacturaClient --> ICfeFirmante
-    UruFacturaClient --> IDgiSoapClient
-    UruFacturaClient --> ICfePdfGenerator
-
-    ICaeManager <|.. CaeManager
-    ICaeRepository <|.. InMemoryCaeRepository
+    IUruFacturaClient <|.. UruFacturaClient
+    UruFacturaClient --> IUruFacturaStore
+    UruFacturaClient --> IDgiClient
+    IUruFacturaStore <|.. InMemoryStore
+    IUruFacturaStore <|.. EfUruFacturaStore
+    IDgiClient <|.. DgiSoapClient : interno
 ```

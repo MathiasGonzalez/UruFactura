@@ -26,9 +26,7 @@ jobs:
         id: version
         run: |
           VERSION=$(grep -oP '(?<=<Version>)[^<]+' src/UruFactura/UruFactura.csproj)
-          VERSION_LITE=$(grep -oP '(?<=<Version>)[^<]+' src/UruFactura.Lite/UruFactura.Lite.csproj)
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "VERSION_LITE=$VERSION_LITE" >> "$GITHUB_OUTPUT"
 
       - name: Restore dependencies
         run: dotnet restore UruFactura.slnx
@@ -46,9 +44,9 @@ jobs:
           --configuration Release
           --output ./nupkg
 
-      - name: Pack UruFactura.Lite
+      - name: Pack UruFactura.Pdf
         run: >
-          dotnet pack src/UruFactura.Lite/UruFactura.Lite.csproj
+          dotnet pack src/UruFactura.Pdf/UruFactura.Pdf.csproj
           --no-build
           --configuration Release
           --output ./nupkg
@@ -56,13 +54,6 @@ jobs:
       - name: Pack UruFactura.EntityFrameworkCore
         run: >
           dotnet pack src/UruFactura.EntityFrameworkCore/UruFactura.EntityFrameworkCore.csproj
-          --no-build
-          --configuration Release
-          --output ./nupkg
-
-      - name: Pack UruFactura.Lite.EntityFrameworkCore
-        run: >
-          dotnet pack src/UruFactura.Lite.EntityFrameworkCore/UruFactura.Lite.EntityFrameworkCore.csproj
           --no-build
           --configuration Release
           --output ./nupkg

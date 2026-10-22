@@ -77,20 +77,19 @@ var config = new UruFacturaConfig
 
 3. Indicar la cantidad de comprobantes necesarios.
 
-4. DGI devuelve el CAE con número de serie, rango y fecha de vencimiento.
+4. DGI devuelve el CAE con su número de autorización, serie, rango y fecha de vencimiento.
 
 5. Registrar en el SDK:
 
    ```csharp
-   client.Cae.RegistrarCae(new Cae
+   await client.RegistrarCaeAsync(new Cae
    {
-       NroSerie         = "CAE2025001",
        NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
-       Serie            = "A",
-       TipoCfe          = TipoCfe.ETicket,
-       RangoDesde       = 1,
-       RangoHasta       = 1000,
-       FechaVencimiento = new DateOnly(2026, 12, 31),
+       TipoCfe            = TipoCfe.ETicket,
+       Serie              = "A",
+       RangoDesde         = 1,
+       RangoHasta         = 1000,
+       FechaVencimiento   = new DateOnly(2027, 12, 31),
    });
    ```
 
@@ -117,35 +116,27 @@ var config = new UruFacturaConfig
 1. **Emitir los CFE de prueba requeridos** (tipos y cantidades según instructivo DGI):
 
    ```csharp
-   var eticket = client.CrearETicket();
-   client.AsignarCae(eticket);   // toma el próximo número del CAE
-   eticket.Detalle.Add(new LineaDetalle
+   var eticket = await client.EmitirAsync(new Cfe(TipoCfe.ETicket)
    {
-       NroLinea       = 1,
-       NombreItem     = "Servicio de prueba",
-       Cantidad       = 1,
-       PrecioUnitario = 100m,
-       IndFactIva     = TipoIva.Basico,
+       Detalle = [new LineaDetalle { NombreItem = "Servicio de prueba", Cantidad = 1, PrecioUnitario = 100m }],
    });
 
-   var respuesta = await client.EnviarCfeAsync(eticket);
-   Console.WriteLine(respuesta.Exitoso ? "✅ Sobre recibido (consultar el estado del CFE)" : $"❌ {respuesta.Mensaje}");
+   var acuse = await client.EnviarAsync(eticket);
+   Console.WriteLine(acuse.Recibido ? "✅ Sobre recibido (consultar el estado del CFE)" : $"❌ {acuse.Mensaje}");
    ```
 
 2. **Enviar el Reporte Diario de prueba**:
 
    ```csharp
-   var resultado = await client.EnviarReporteDiarioAsync(
-       DateTime.Today,
-       new[] { eticket }
-   );
+   // Resume los CFE emitidos en la fecha (de Uruguay, no la del servidor)
+   var reporte = await client.EnviarReporteDiarioAsync(HoraUruguay.Hoy());
    ```
 
 3. **Consultar el estado** de cada CFE:
 
    ```csharp
-   var estado = await client.ConsultarEstadoCfeAsync(eticket);
-   Console.WriteLine($"Estado DGI: {estado.Mensaje}");
+   await client.ConsultarEnvioAsync(acuse);   // o client.ConsultarCfeAsync(eticket)
+   Console.WriteLine($"Estado DGI: {eticket.EstadoDgi} {eticket.MensajeDgi}");
    ```
 
 4. **Notificar a DGI** la finalización de las pruebas vía portal DGI en línea.
@@ -162,7 +153,10 @@ Una vez aprobada la homologación por DGI:
 var config = new UruFacturaConfig
 {
     // ...
-    Ambiente = Ambiente.Produccion, // https://efactura.dgi.gub.uy/...
+    Ambiente     = Ambiente.Produccion,
+    // En Producción no hay URL por defecto: usá las que entrega la DGI al habilitar el ambiente
+    UrlEnvio     = "https://…/ws_efactura",
+    UrlConsultas = "https://…/ws_consultas",
 };
 ```
 
@@ -195,63 +189,45 @@ var config = new UruFacturaConfig
 
 ## Flujo completo en producción
 
-Ejemplo end-to-end de un e-Ticket configurado, firmado, enviado y renderizado como PDF:
-
 ```csharp
-// 1. Configurar
+// 1. Configurar (en producción, con un almacenamiento durable: ver Gestión de CAE)
 var config = new UruFacturaConfig
 {
-    RutEmisor           = "219999820013",
-    RazonSocialEmisor   = "Mi Empresa S.A.",
-    DomicilioFiscal     = "Av. 18 de Julio 1234",
-    Ciudad              = "Montevideo",
-    Departamento        = "Montevideo",
+    Emisor = new Emisor
+    {
+        Rut             = "219999820013",
+        RazonSocial     = "Mi Empresa S.A.",
+        DomicilioFiscal = "Av. 18 de Julio 1234",
+        Ciudad          = "Montevideo",
+        Departamento    = "Montevideo",
+    },
     Ambiente            = Ambiente.Produccion,
+    UrlEnvio            = "https://…/ws_efactura",    // obligatorias en Producción:
+    UrlConsultas        = "https://…/ws_consultas",   // las entrega la DGI
     RutaCertificado     = "/ruta/certificado.p12",
-    PasswordCertificado = Environment.GetEnvironmentVariable("CERT_PASSWORD")!,
+    PasswordCertificado = Environment.GetEnvironmentVariable("CERT_PASSWORD"),
 };
 
-using var client = new UruFacturaClient(config);
+using var client = new UruFacturaClient(config, store: miStoreDurable);
 
-// 2. Registrar CAE
-client.Cae.RegistrarCae(new Cae
+// 2. Emitir: valida, numera, firma y registra
+var eticket = await client.EmitirAsync(new Cfe(TipoCfe.ETicket)
 {
-    NroSerie         = "CAE2025001",
-    NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
-    Serie            = "A",
-    TipoCfe          = TipoCfe.ETicket,
-    RangoDesde       = 1,
-    RangoHasta       = 1000,
-    FechaVencimiento = new DateOnly(2026, 12, 31),
+    Detalle = [new LineaDetalle { NombreItem = "Servicio de consultoría", Cantidad = 1, PrecioUnitario = 5000m }],
 });
 
-// 3. Crear comprobante
-var eticket = client.CrearETicket();
-client.AsignarCae(eticket);   // toma el próximo número del CAE
-eticket.Detalle.Add(new LineaDetalle
-{
-    NroLinea       = 1,
-    NombreItem     = "Servicio de consultoría",
-    Cantidad       = 1,
-    PrecioUnitario = 5000m,
-    IndFactIva     = TipoIva.Basico,
-});
+// 3. Enviar: acuse del sobre (AS / BS)
+var acuse = await client.EnviarAsync(eticket);
+if (!acuse.Recibido)
+    throw new Exception($"DGI rechazó el sobre: {acuse.Mensaje}");
 
-// 4. Calcular, firmar y enviar
-eticket.CalcularTotales();
-var respuesta = await client.EnviarCfeAsync(eticket);   // acuse del sobre (AS / BS)
+// 4. Resultado del comprobante
+await client.ConsultarEnvioAsync(acuse);
+if (!eticket.AceptadoPorDgi)
+    throw new Exception($"DGI no aceptó el CFE ({eticket.EstadoDgi}): {eticket.MensajeDgi}");
 
-if (!respuesta.Exitoso)
-    throw new Exception($"DGI rechazó el sobre: {respuesta.Mensaje}");
-
-// El resultado del comprobante se consulta con el IdReceptor/Token del acuse
-var estado = await client.ConsultarEstadoEnvioAsync(respuesta, [eticket]);
-if (!estado.Exitoso)
-    throw new Exception($"DGI rechazó el CFE ({estado.Codigo}): {estado.Mensaje}");
-
-// 5. Generar representación impresa
-byte[] pdf = client.GenerarPdfA4(eticket);
-await File.WriteAllBytesAsync("eticket_001.pdf", pdf);
+// 5. Representación impresa (paquete UruFactura.Pdf)
+await File.WriteAllBytesAsync("eticket.pdf", CfePdf.GenerarA4(eticket));
 ```
 
 ---
@@ -273,19 +249,17 @@ await File.WriteAllBytesAsync("eticket_001.pdf", pdf);
 | Estado | Mensaje | Significado |
 |--------|---------|-------------|
 | `AS` | `ACKSobre` | Sobre recibido (no implica que los CFE hayan sido aceptados) |
-| `BS` | `ACKSobre` | Sobre rechazado: ver los motivos (`S01`…`S20`) en `respuesta.Mensaje` |
+| `BS` | `ACKSobre` | Sobre rechazado: ver los motivos (`S01`…`S20`) en `acuse.Motivos` |
 | `BA` | `ACKSobre` / `ACKRepDiario` | Archivo rechazado |
 | `AR` | `ACKRepDiario` | Reporte diario recibido |
 | `BR` | `ACKRepDiario` | Reporte diario rechazado |
 | `AE` | `ACKCFE` | Comprobante aceptado |
-| `BE` | `ACKCFE` | Comprobante rechazado (CFE): ver motivos en `Comprobantes[i].Motivos` |
+| `BE` | `ACKCFE` | Comprobante rechazado (CFE): motivos en `cfe.MensajeDgi` y `EstadoEnvio.Comprobantes[i].Motivos` |
 | `CE` | `ACKCFE` | Comprobante observado (CFC) |
 | `FE` | `ACKCFE` | Comprobante reliquidado |
-| `SOAP_FAULT` | — | La DGI respondió con un SOAP Fault (p. ej. firma WS-Security inválida) |
-| `4xx` / `5xx` | — | Error HTTP sin cuerpo SOAP (proxy, servicio caído) |
 
 <Aside type="note">
-  En caso de rechazo revisar `respuesta.Mensaje` (incluye los códigos y glosas de los motivos) y, para comprobantes, `respuesta.Comprobantes`.
+  Los errores de comunicación no son estados: un SOAP Fault (p. ej. firma WS-Security inválida) o una respuesta HTTP sin acuse (proxy, servicio caído) se lanzan como `DgiCommunicationException`, con `CodigoRespuesta` = `SOAP_FAULT` o el código HTTP.
 </Aside>
 
-Ver [Códigos DGI completos](../reference/dgi-codes/) para más detalles.
+Ver [Códigos DGI completos](../../reference/dgi-codes/) para más detalles.

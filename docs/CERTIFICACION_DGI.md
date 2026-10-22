@@ -48,19 +48,25 @@ La DGI exige que cada CFE esté **firmado digitalmente** con un certificado de e
 ```csharp
 var config = new UruFacturaConfig
 {
-    RutEmisor           = "219999820013",   // 12 dígitos, sin puntos ni guión
-    RazonSocialEmisor   = "Mi Empresa S.A.",
-    DomicilioFiscal     = "Av. 18 de Julio 1234",
-    Ciudad              = "Montevideo",
-    Departamento        = "Montevideo",
-    Giro                = "Comercio al por mayor",   // Actividad económica (opcional)
+    Emisor = new Emisor
+    {
+        Rut             = "219999820013",   // 12 dígitos, sin puntos ni guión
+        RazonSocial     = "Mi Empresa S.A.",
+        DomicilioFiscal = "Av. 18 de Julio 1234",
+        Ciudad          = "Montevideo",
+        Departamento    = "Montevideo",
+        Giro            = "Comercio al por mayor",   // actividad económica (opcional)
+    },
     RutaCertificado     = "/ruta/certificado.p12",
-    PasswordCertificado = "contraseña_del_certificado",
+    PasswordCertificado = Environment.GetEnvironmentVariable("CERT_PASSWORD"),
     Ambiente            = Ambiente.Homologacion,   // ← Homologación durante las pruebas
 };
+
+using var client = new UruFacturaClient(config);
 ```
 
 > ⚠️ Nunca almacenes `PasswordCertificado` en texto plano en el código fuente. Usá variables de entorno o un gestor de secretos.
+> Si el certificado está en Azure Key Vault o en un HSM, pasalo ya cargado en `Certificado` (un `X509Certificate2` con clave privada).
 
 ---
 
@@ -78,32 +84,32 @@ El **CAE (Constancia de Autorización de Emisión)** es el rango de números de 
 ### Registrar el CAE en UruFactura
 
 ```csharp
-client.Cae.RegistrarCae(new Cae
+await client.RegistrarCaeAsync(new Cae
 {
-    NroSerie         = "CAE2025001",
     NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
-    Serie            = "A",
-    TipoCfe          = TipoCfe.ETicket,
-    RangoDesde       = 1,
-    RangoHasta       = 1000,
-    FechaVencimiento = new DateOnly(2026, 12, 31),
+    TipoCfe            = TipoCfe.ETicket,
+    Serie              = "A",
+    RangoDesde         = 1,
+    RangoHasta         = 1000,
+    FechaVencimiento   = new DateOnly(2027, 12, 31),
 });
 ```
 
-> 💡 **En producción, persistí el estado del CAE.** Usá `ICaeRepository` para cargar los CAEs
-> al arrancar la app y persistir `UltimoNroUsado` después de cada emisión (`AsignarCaeAsync` lo hace con el repositorio configurado). Si la app reinicia
-> sin persistencia, el contador vuelve a cero y la DGI rechazará los comprobantes duplicados.
-> Ver [Persistencia de CAEs en README](../README.md#-persistencia-de-caes) para el patrón completo.
+> 💡 **En producción, usá un almacenamiento durable.** El predeterminado guarda la numeración en memoria: si
+> la app se reinicia, volvería a usar números ya emitidos y la DGI los rechazaría por duplicados. Con
+> `UruFactura.EntityFrameworkCore` la numeración queda en la base (y es segura con varias instancias).
+> Ver [Producción y varias instancias](../README.md#-producción-y-varias-instancias).
 
 ### Monitorear el estado del CAE
 
 ```csharp
-// Ver advertencias (vencimiento próximo, rango casi agotado)
-foreach (var advertencia in client.Cae.ObtenerAdvertencias())
+// Vencidos, agotados, por vencer (7 días) o con el rango usado al 80 % o más
+foreach (var advertencia in await client.ObtenerAdvertenciasCaeAsync())
     Console.WriteLine(advertencia);
 
-// Resumen general
-Console.WriteLine(client.Cae.ResumenEstado());
+// Estado de cada CAE
+foreach (var cae in await client.ObtenerCaesAsync())
+    Console.WriteLine($"{cae.TipoCfe} {cae.Serie}: usados hasta {cae.UltimoNroUsado} de {cae.RangoHasta}, vence {cae.FechaVencimiento}");
 ```
 
 > 🔁 Solicitá un nuevo CAE antes de que venza el actual o se agote el rango.
@@ -128,36 +134,32 @@ Consultas (ws_consultas): https://efactura.dgi.gub.uy:6460/ePrueba/ws_consultasP
 1. **Emitir los CFE de prueba requeridos** por la DGI (tipos y cantidades definidos en el instructivo oficial de homologación).
 
 ```csharp
-// Ejemplo: enviar un e-Ticket de prueba
-var eticket = client.CrearETicket();
-client.AsignarCae(eticket);   // toma el próximo número del CAE
-eticket.Detalle.Add(new LineaDetalle
+// Ejemplo: emitir y enviar un e-Ticket de prueba
+var eticket = await client.EmitirAsync(new Cfe(TipoCfe.ETicket)
 {
-    NroLinea       = 1,
-    NombreItem     = "Servicio de prueba",
-    Cantidad       = 1,
-    PrecioUnitario = 100m,
-    IndFactIva     = TipoIva.Basico,
+    Detalle = [new LineaDetalle { NombreItem = "Servicio de prueba", Cantidad = 1, PrecioUnitario = 100m }],
 });
 
-var respuesta = await client.EnviarCfeAsync(eticket);
-Console.WriteLine(respuesta.Exitoso
-    ? $"✅ Aceptado: {respuesta.Mensaje}"
-    : $"❌ Rechazado: {respuesta.Mensaje} (código {respuesta.Codigo})");
+// Recibido = la DGI recibió el sobre (AS); la aceptación del CFE se consulta en el paso 3
+var acuse = await client.EnviarAsync(eticket);
+Console.WriteLine(acuse.Recibido
+    ? $"✅ Sobre recibido: {acuse.Mensaje}"
+    : $"❌ Sobre rechazado ({acuse.Estado}): {acuse.Mensaje}");
 ```
 
 2. **Enviar el Reporte Diario de prueba** al finalizar cada jornada de pruebas.
 
 ```csharp
-var resultado = await client.EnviarReporteDiarioAsync(DateTime.Today, new[] { eticket });
-Console.WriteLine($"Reporte diario: {resultado.Respuesta.Mensaje}");
+// Resume los CFE emitidos en la fecha (de Uruguay: el servidor puede estar en UTC)
+var reporte = await client.EnviarReporteDiarioAsync(HoraUruguay.Hoy());
+Console.WriteLine($"Reporte diario: {reporte.Estado} {reporte.Mensaje}");
 ```
 
 3. **Consultar el estado** de cada CFE para confirmar la aceptación.
 
 ```csharp
-var estado = await client.ConsultarEstadoCfeAsync(eticket);
-Console.WriteLine($"Estado DGI: {estado.Mensaje}");
+var estado = await client.ConsultarEnvioAsync(acuse);   // o client.ConsultarCfeAsync(eticket)
+Console.WriteLine(eticket.AceptadoPorDgi ? "✅ Aceptado (AE)" : $"❌ {eticket.EstadoDgi}: {eticket.MensajeDgi}");
 ```
 
 4. **Notificar a DGI** que finalizaste las pruebas de homologación mediante el portal DGI en línea o vía el representante técnico asignado.
@@ -189,59 +191,55 @@ En Producción UruFactura **no** usa URL por defecto: configurá `UrlEnvio` y `U
 ## 6. Flujo completo de emisión en producción
 
 ```csharp
-// 1. Configurar
+// 1. Configurar (en producción, con almacenamiento durable: ver README)
 var config = new UruFacturaConfig
 {
-    RutEmisor           = "219999820013",
-    RazonSocialEmisor   = "Mi Empresa S.A.",
-    DomicilioFiscal     = "Av. 18 de Julio 1234",
-    Ciudad              = "Montevideo",
-    Departamento        = "Montevideo",
+    Emisor = new Emisor
+    {
+        Rut             = "219999820013",
+        RazonSocial     = "Mi Empresa S.A.",
+        DomicilioFiscal = "Av. 18 de Julio 1234",
+        Ciudad          = "Montevideo",
+        Departamento    = "Montevideo",
+    },
     Ambiente            = Ambiente.Produccion,
+    UrlEnvio            = "https://…/ws_efactura",    // obligatorias en Producción:
+    UrlConsultas        = "https://…/ws_consultas",   // las entrega la DGI
     RutaCertificado     = "/ruta/certificado.p12",
-    PasswordCertificado = Environment.GetEnvironmentVariable("CERT_PASSWORD")!,
+    PasswordCertificado = Environment.GetEnvironmentVariable("CERT_PASSWORD"),
 };
 
-using var client = new UruFacturaClient(config);
+using var client = new UruFacturaClient(config, store: miStoreDurable);
 
-// 2. Registrar CAE
-client.Cae.RegistrarCae(new Cae
+// 2. Registrar el CAE de producción (una vez)
+await client.RegistrarCaeAsync(new Cae
 {
-    NroSerie         = "CAE2025001",
-    NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
-    Serie            = "A",
-    TipoCfe          = TipoCfe.ETicket,
-    RangoDesde       = 1,
-    RangoHasta       = 1000,
-    FechaVencimiento = new DateOnly(2026, 12, 31),
+    NumeroAutorizacion = "90110001945",
+    TipoCfe            = TipoCfe.ETicket,
+    Serie              = "A",
+    RangoDesde         = 1,
+    RangoHasta         = 1000,
+    FechaVencimiento   = new DateOnly(2027, 12, 31),
 });
 
-// 3. Crear comprobante
-var eticket = client.CrearETicket();
-client.AsignarCae(eticket);   // toma el próximo número del CAE
-eticket.Detalle.Add(new LineaDetalle
+// 3. Emitir: valida, numera, firma y registra
+var eticket = await client.EmitirAsync(new Cfe(TipoCfe.ETicket)
 {
-    NroLinea       = 1,
-    NombreItem     = "Servicio de consultoría",
-    Cantidad       = 1,
-    PrecioUnitario = 5000m,
-    IndFactIva     = TipoIva.Basico,
+    Detalle = [new LineaDetalle { NombreItem = "Servicio de consultoría", Cantidad = 1, PrecioUnitario = 5000m }],
 });
 
-// 4. Generar, firmar y enviar
-var respuesta = await client.EnviarCfeAsync(eticket);   // acuse del sobre (AS / BS)
+// 4. Enviar: acuse del sobre (AS / BS)
+var acuse = await client.EnviarAsync(eticket);
+if (!acuse.Recibido)
+    throw new Exception($"DGI rechazó el sobre: {acuse.Mensaje}");
 
-if (!respuesta.Exitoso)
-    throw new Exception($"DGI rechazó el sobre: {respuesta.Mensaje}");
+// El resultado del comprobante se consulta con el acuse
+await client.ConsultarEnvioAsync(acuse);
+if (!eticket.AceptadoPorDgi)
+    throw new Exception($"DGI no aceptó el CFE ({eticket.EstadoDgi}): {eticket.MensajeDgi}");
 
-// El resultado del comprobante se consulta con el IdReceptor/Token del acuse
-var estado = await client.ConsultarEstadoEnvioAsync(respuesta, [eticket]);
-if (!estado.Exitoso)
-    throw new Exception($"DGI rechazó el CFE ({estado.Codigo}): {estado.Mensaje}");
-
-// 5. Generar representación impresa
-byte[] pdf = client.GenerarPdfA4(eticket);
-await File.WriteAllBytesAsync("eticket_001.pdf", pdf);
+// 5. Representación impresa (paquete UruFactura.Pdf)
+await File.WriteAllBytesAsync("eticket_001.pdf", CfePdf.GenerarA4(eticket));
 ```
 
 ---
@@ -277,15 +275,15 @@ await File.WriteAllBytesAsync("eticket_001.pdf", pdf);
 | Estado | Mensaje | Significado |
 |--------|---------|-------------|
 | `AS` | `ACKSobre` | Sobre recibido (no implica que los CFE hayan sido aceptados) |
-| `BS` | `ACKSobre` | Sobre rechazado: ver los motivos (`S01`…`S20`) en `respuesta.Mensaje` |
+| `BS` | `ACKSobre` | Sobre rechazado: ver los motivos (`S01`…`S20`) en `acuse.Motivos` |
 | `BA` | `ACKSobre` / `ACKRepDiario` | Archivo rechazado |
 | `AR` | `ACKRepDiario` | Reporte diario recibido |
 | `BR` | `ACKRepDiario` | Reporte diario rechazado |
 | `AE` | `ACKCFE` | Comprobante aceptado |
-| `BE` | `ACKCFE` | Comprobante rechazado (CFE): ver motivos en `Comprobantes[i].Motivos` |
+| `BE` | `ACKCFE` | Comprobante rechazado (CFE): ver `EstadoEnvio.Comprobantes[i].Motivos` o `cfe.MensajeDgi` |
 | `CE` | `ACKCFE` | Comprobante observado (CFC) |
 | `FE` | `ACKCFE` | Comprobante reliquidado |
-| `SOAP_FAULT` | — | La DGI respondió con un SOAP Fault (p. ej. firma WS-Security inválida) |
-| `4xx` / `5xx` | — | Error HTTP sin cuerpo SOAP (proxy, servicio caído) |
 
-> En caso de rechazo, revisar `respuesta.Mensaje` (incluye los códigos y glosas de los motivos) y, para comprobantes, `respuesta.Comprobantes`.
+Los errores de comunicación no son estados: un SOAP Fault (p. ej. firma WS-Security inválida) o una respuesta
+HTTP sin acuse (proxy, servicio caído) se lanzan como `DgiCommunicationException`, con `CodigoRespuesta`
+igual a `SOAP_FAULT` o al código HTTP.

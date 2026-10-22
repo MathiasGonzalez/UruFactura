@@ -3,43 +3,22 @@ using System.Security.Cryptography.X509Certificates;
 using System.Security.Cryptography.Xml;
 using System.Text;
 using System.Xml;
-using UruFactura.Configuration;
-using UruFactura.Enums;
-using UruFactura.Exceptions;
 using UruFactura.Soap;
-using Xunit;
 
 namespace UruFactura.Tests;
 
-public class DgiSoapClientTests : IDisposable
+public class DgiSoapClientTests
 {
     private const string WsseNs = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd";
     private const string WsuNs = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd";
 
-    private readonly string _rutaCert = Path.Combine(Path.GetTempPath(), $"urufactura_soap_{Guid.NewGuid():N}.p12");
-    private readonly X509Certificate2 _cert = TestData.CertificadoAutofirmado();
+    private readonly X509Certificate2 _cert = TestData.Certificado;
 
-    public DgiSoapClientTests() =>
-        File.WriteAllBytes(_rutaCert, _cert.Export(X509ContentType.Pfx, "pw"));
+    private static UruFacturaConfig Config(AlgoritmoFirma algoritmo = AlgoritmoFirma.Sha256) =>
+        TestData.Config() with { AlgoritmoFirma = algoritmo };
 
-    public void Dispose()
-    {
-        _cert.Dispose();
-        File.Delete(_rutaCert);
-    }
-
-    private UruFacturaConfig Config(bool conCertificado = true, AlgoritmoFirma algoritmo = AlgoritmoFirma.Sha256) => new()
-    {
-        RutEmisor = "219999820013",
-        RazonSocialEmisor = "Empresa Test S.A.",
-        DomicilioFiscal = "Av. 18 de Julio 1234",
-        Ciudad = "Montevideo",
-        Departamento = "Montevideo",
-        Ambiente = Ambiente.Homologacion,
-        RutaCertificado = conCertificado ? _rutaCert : "",
-        PasswordCertificado = conCertificado ? "pw" : "",
-        AlgoritmoFirma = algoritmo,
-    };
+    private DgiSoapClient Cliente(HttpMessageHandler handler, UruFacturaConfig? config = null) =>
+        new(config ?? Config(), _cert, Http(handler));
 
     private static HttpClient Http(HttpMessageHandler handler) =>
         new(handler) { Timeout = TimeSpan.FromSeconds(30) };
@@ -64,7 +43,7 @@ public class DgiSoapClientTests : IDisposable
     public void Constructor_HttpClientExternoConTimeoutInfinito_LanzaArgumentException()
     {
         using var httpClient = new HttpClient(new CapturingHandler()) { Timeout = Timeout.InfiniteTimeSpan };
-        Assert.Throws<ArgumentException>(() => new DgiSoapClient(Config(), httpClient));
+        Assert.Throws<ArgumentException>(() => new DgiSoapClient(Config(), _cert, httpClient));
     }
 
     [Fact]
@@ -73,22 +52,17 @@ public class DgiSoapClientTests : IDisposable
         using var httpClient = Http(new CapturingHandler());
         var ex = Record.Exception(() =>
         {
-            using var _ = new DgiSoapClient(Config() with { OmitirValidacionSsl = true }, httpClient);
+            using var _ = new DgiSoapClient(Config() with { OmitirValidacionSsl = true }, _cert, httpClient);
         });
         Assert.Null(ex);
     }
-
-    [Fact]
-    public void Constructor_CertificadoInexistente_LanzaUruFacturaException() =>
-        Assert.Throws<UruFacturaException>(() =>
-            new DgiSoapClient(Config() with { RutaCertificado = "/no/existe.p12" }));
 
     [Fact]
     public void Dispose_CuandoHttpClientEsExterno_NoLoDispone()
     {
         var handler = new CapturingHandler();
         using var httpClient = Http(handler);
-        new DgiSoapClient(Config(), httpClient).Dispose();
+        new DgiSoapClient(Config(), _cert, httpClient).Dispose();
         Assert.False(handler.Disposed);
     }
 
@@ -98,7 +72,7 @@ public class DgiSoapClientTests : IDisposable
     public async Task EnviarSobre_ArmaElMensajeSegunElWsdlDeLaDgi()
     {
         var handler = new CapturingHandler { Respuesta = Soap(AckSobreRecibido, "WS_eFactura.EFACRECEPCIONSOBRE") };
-        using var soap = new DgiSoapClient(Config(), Http(handler));
+        using var soap = Cliente(handler);
 
         await soap.EnviarSobreAsync("<EnvioCFE xmlns=\"http://cfe.dgi.gub.uy\"/>");
 
@@ -133,7 +107,7 @@ public class DgiSoapClientTests : IDisposable
     public async Task EnviarSobre_FirmaElBodyConWsSecurity_YLaFirmaEsVerificable(AlgoritmoFirma algoritmo)
     {
         var handler = new CapturingHandler { Respuesta = Soap(AckSobreRecibido, "WS_eFactura.EFACRECEPCIONSOBRE") };
-        using var soap = new DgiSoapClient(Config(algoritmo: algoritmo), Http(handler));
+        using var soap = Cliente(handler, Config(algoritmo));
 
         await soap.EnviarSobreAsync("<x/>");
 
@@ -189,12 +163,12 @@ public class DgiSoapClientTests : IDisposable
     public async Task EnviarSobre_Recibido_ExtraeIdReceptorYTokenDelAckSobre()
     {
         var handler = new CapturingHandler { Respuesta = Soap(AckSobreRecibido, "WS_eFactura.EFACRECEPCIONSOBRE") };
-        using var soap = new DgiSoapClient(Config(), Http(handler));
+        using var soap = Cliente(handler);
 
         var r = await soap.EnviarSobreAsync("<x/>");
 
-        Assert.True(r.Exitoso);
-        Assert.Equal("AS", r.Codigo);
+        Assert.True(r.Recibido);
+        Assert.Equal("AS", r.Estado);
         Assert.Equal("987654", r.IdReceptor);
         Assert.Equal("dG9rZW4=", r.Token);
         Assert.Equal(new DateTimeOffset(2026, 6, 15, 10, 0, 0, TimeSpan.FromHours(-3)), r.ConsultarDesde);
@@ -208,18 +182,18 @@ public class DgiSoapClientTests : IDisposable
             <Detalle><Estado>BS</Estado><MotivosRechazo><Motivo>S03</Motivo><Glosa>Certificado inválido</Glosa></MotivosRechazo></Detalle></ACKSobre>
             """;
         var handler = new CapturingHandler { Respuesta = Soap(ack, "WS_eFactura.EFACRECEPCIONSOBRE") };
-        using var soap = new DgiSoapClient(Config(), Http(handler));
+        using var soap = Cliente(handler);
 
         var r = await soap.EnviarSobreAsync("<x/>");
 
-        Assert.False(r.Exitoso);
-        Assert.Equal("BS", r.Codigo);
+        Assert.False(r.Recibido);
+        Assert.Equal("BS", r.Estado);
         Assert.Contains("S03", r.Mensaje);
-        Assert.Contains("Certificado inválido", r.Mensaje);
+        Assert.Equal(["S03 Certificado inválido"], r.Motivos);
     }
 
     [Fact]
-    public async Task EnviarSobre_SoapFault_RetornaError()
+    public async Task EnviarSobre_SoapFault_LanzaDgiCommunicationException()
     {
         var fault = """
             <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body>
@@ -227,28 +201,28 @@ public class DgiSoapClientTests : IDisposable
             </soapenv:Body></soapenv:Envelope>
             """;
         var handler = new CapturingHandler { Respuesta = fault, Status = HttpStatusCode.InternalServerError };
-        using var soap = new DgiSoapClient(Config(), Http(handler));
+        using var soap = Cliente(handler);
 
-        var r = await soap.EnviarSobreAsync("<x/>");
+        var ex = await Assert.ThrowsAsync<DgiCommunicationException>(() => soap.EnviarSobreAsync("<x/>"));
 
-        Assert.False(r.Exitoso);
-        Assert.Equal("SOAP_FAULT", r.Codigo);
-        Assert.Contains("Firma inválida", r.Mensaje);
+        Assert.Equal("SOAP_FAULT", ex.CodigoRespuesta);
+        Assert.Contains("Firma inválida", ex.Message);
+        Assert.Contains("Fault", ex.Respuesta);
     }
 
     [Theory]
     [InlineData("Bad Gateway")]
     [InlineData("<html><body><h1>502 Bad Gateway</h1></body></html>")]
     [InlineData("<!DOCTYPE html><html><body>Bad Gateway</body></html>")]
-    public async Task EnviarSobre_Http502SinSoap_RetornaErrorConCodigoHttp(string cuerpo)
+    public async Task EnviarSobre_Http502SinSoap_LanzaConElCodigoHttp(string cuerpo)
     {
         var handler = new CapturingHandler { Respuesta = cuerpo, Status = HttpStatusCode.BadGateway };
-        using var soap = new DgiSoapClient(Config(), Http(handler));
+        using var soap = Cliente(handler);
 
-        var r = await soap.EnviarSobreAsync("<x/>");
+        var ex = await Assert.ThrowsAsync<DgiCommunicationException>(() => soap.EnviarSobreAsync("<x/>"));
 
-        Assert.False(r.Exitoso);
-        Assert.Equal("502", r.Codigo);
+        Assert.Equal("502", ex.CodigoRespuesta);
+        Assert.Equal(cuerpo, ex.Respuesta);
     }
 
     [Fact]
@@ -274,7 +248,7 @@ public class DgiSoapClientTests : IDisposable
     public async Task EnviarSobre_CancelacionDelUsuario_PropagaOperationCanceledException()
     {
         var handler = new CapturingHandler { Retardo = TimeSpan.FromSeconds(10) };
-        using var soap = new DgiSoapClient(Config(), Http(handler));
+        using var soap = Cliente(handler);
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => soap.EnviarSobreAsync("<x/>", cts.Token));
@@ -284,17 +258,10 @@ public class DgiSoapClientTests : IDisposable
     public async Task EnviarSobre_ErrorDeRed_LanzaDgiCommunicationException()
     {
         var handler = new CapturingHandler { Error = new HttpRequestException("sin red") };
-        using var soap = new DgiSoapClient(Config(), Http(handler));
+        using var soap = Cliente(handler);
 
         var ex = await Assert.ThrowsAsync<DgiCommunicationException>(() => soap.EnviarSobreAsync("<x/>"));
         Assert.Contains("sin red", ex.Message);
-    }
-
-    [Fact]
-    public async Task EnviarSobre_SinCertificado_LanzaUruFacturaException()
-    {
-        using var soap = new DgiSoapClient(Config(conCertificado: false), Http(new CapturingHandler()));
-        await Assert.ThrowsAsync<UruFacturaException>(() => soap.EnviarSobreAsync("<x/>"));
     }
 
     // ------------------------------------------------------------------ otras operaciones
@@ -309,9 +276,9 @@ public class DgiSoapClientTests : IDisposable
               <MotivosRechazoCF><Motivo>E01</Motivo><Glosa>Número fuera de rango</Glosa></MotivosRechazoCF></ACKCFE_Det></ACKCFE>
             """;
         var handler = new CapturingHandler { Respuesta = Soap(ack, "WS_eFactura.EFACCONSULTARESTADOENVIO") };
-        using var soap = new DgiSoapClient(Config(), Http(handler));
+        using var soap = Cliente(handler);
 
-        var r = await soap.ConsultarEstadoEnvioAsync("987654", "dG9rZW4=");
+        var r = await soap.ConsultarEnvioAsync("987654", "dG9rZW4=");
 
         Assert.Equal("\"http://dgi.gub.uyaction/AWS_EFACTURA.EFACCONSULTARESTADOENVIO\"", handler.Headers["SOAPAction"]);
         var doc = new XmlDocument();
@@ -321,8 +288,8 @@ public class DgiSoapClientTests : IDisposable
         Assert.Equal("987654", consulta.DocumentElement!["IdReceptor", "http://dgi.gub.uy"]!.InnerText);
         Assert.Equal("dG9rZW4=", consulta.DocumentElement["Token", "http://dgi.gub.uy"]!.InnerText);
 
-        Assert.False(r.Exitoso);
-        Assert.Equal("BE", r.Codigo);
+        Assert.True(r.Procesado);
+        Assert.False(r.TodosAceptados);
         Assert.Equal(2, r.Comprobantes.Count);
         Assert.Equal("AE", r.Comprobantes[0].Estado);
         Assert.Equal(2, r.Comprobantes[1].Numero);
@@ -336,12 +303,11 @@ public class DgiSoapClientTests : IDisposable
             <ACKCFE xmlns="http://cfe.dgi.gub.uy"><ACKCFE_Det><Nro_ordinal>1</Nro_ordinal><Estado>AE</Estado></ACKCFE_Det></ACKCFE>
             """;
         var handler = new CapturingHandler { Respuesta = Soap(ack, "WS_eFactura.EFACCONSULTARESTADOENVIO") };
-        using var soap = new DgiSoapClient(Config(), Http(handler));
+        using var soap = Cliente(handler);
 
-        var r = await soap.ConsultarEstadoEnvioAsync("1", "t");
+        var r = await soap.ConsultarEnvioAsync("1", "t");
 
-        Assert.True(r.Exitoso);
-        Assert.Equal("AE", r.Codigo);
+        Assert.True(r.TodosAceptados);
     }
 
     [Fact]
@@ -355,9 +321,9 @@ public class DgiSoapClientTests : IDisposable
             </Ackconsultaestadocfe></WS_eFactura_Consultas.EFACCONSULTARESTADOCFEResponse></soapenv:Body></soapenv:Envelope>
             """;
         var handler = new CapturingHandler { Respuesta = respuesta };
-        using var soap = new DgiSoapClient(Config(), Http(handler));
+        using var soap = Cliente(handler);
 
-        var r = await soap.ConsultarEstadoCfeAsync(101, "A", 7);
+        var r = await soap.ConsultarCfeAsync(TipoCfe.ETicket, "A", 7);
 
         Assert.Equal("https://efactura.dgi.gub.uy:6460/ePrueba/ws_consultasPrueba", handler.Url);
         Assert.Equal("\"http://dgi.gub.uyaction/AWS_EFACTURA_CONSULTAS.EFACCONSULTARESTADOCFE\"", handler.Headers["SOAPAction"]);
@@ -370,9 +336,9 @@ public class DgiSoapClientTests : IDisposable
         Assert.Equal("A", doc.SelectSingleNode(cfeid + "/dgi:Serie", nsm)!.InnerText);
         Assert.Equal("7", doc.SelectSingleNode(cfeid + "/dgi:Nro", nsm)!.InnerText);
 
-        Assert.True(r.Exitoso);
-        Assert.Equal("AE", r.Codigo);
-        Assert.Equal("129", r.IdReceptor);
+        Assert.True(r.Aceptado);
+        Assert.Equal("AE", r.Estado);
+        Assert.Equal((101, "A", 7L), (r.TipoCfe!.Value, r.Serie!, r.Numero!.Value));
     }
 
     [Fact]
@@ -382,14 +348,14 @@ public class DgiSoapClientTests : IDisposable
             <ACKRepDiario xmlns="http://cfe.dgi.gub.uy"><Caratula/><Detalle><Estado>AR</Estado></Detalle></ACKRepDiario>
             """;
         var handler = new CapturingHandler { Respuesta = Soap(ack, "WS_eFactura.EFACRECEPCIONREPORTE") };
-        using var soap = new DgiSoapClient(Config(), Http(handler));
+        using var soap = Cliente(handler);
 
-        var r = await soap.EnviarReporteDiarioAsync("<Reporte xmlns=\"http://cfe.dgi.gub.uy\"/>");
+        var r = await soap.EnviarReporteAsync("<Reporte xmlns=\"http://cfe.dgi.gub.uy\"/>");
 
         Assert.Equal("\"http://dgi.gub.uyaction/AWS_EFACTURA.EFACRECEPCIONREPORTE\"", handler.Headers["SOAPAction"]);
         Assert.Contains("WS_eFactura.EFACRECEPCIONREPORTE", handler.Cuerpo);
-        Assert.True(r.Exitoso);
-        Assert.Equal("AR", r.Codigo);
+        Assert.True(r.Recibido);
+        Assert.Equal("AR", r.Estado);
     }
 
     [Fact]
@@ -399,11 +365,11 @@ public class DgiSoapClientTests : IDisposable
             <ACKRepDiario xmlns="http://cfe.dgi.gub.uy"><Detalle><Estado>BR</Estado><MotivosRechazo><Motivo>R05</Motivo><Glosa>Fecha</Glosa></MotivosRechazo></Detalle></ACKRepDiario>
             """;
         var handler = new CapturingHandler { Respuesta = Soap(ack, "WS_eFactura.EFACRECEPCIONREPORTE") };
-        using var soap = new DgiSoapClient(Config(), Http(handler));
+        using var soap = Cliente(handler);
 
-        var r = await soap.EnviarReporteDiarioAsync("<x/>");
+        var r = await soap.EnviarReporteAsync("<x/>");
 
-        Assert.False(r.Exitoso);
+        Assert.False(r.Recibido);
         Assert.Contains("R05", r.Mensaje);
     }
 
@@ -417,7 +383,7 @@ public class DgiSoapClientTests : IDisposable
             UrlEnvio = "https://dgi.example/envio",
             UrlConsultas = "https://dgi.example/consultas",
         };
-        using var soap = new DgiSoapClient(config, Http(handler));
+        using var soap = Cliente(handler, config);
 
         await soap.EnviarSobreAsync("<x/>");
 

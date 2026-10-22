@@ -29,8 +29,8 @@ Al ejecutar este runbook, el agente debe responder cada punto y actuar si es nec
 ### 2.1 Versión del formato CFE
 
 - [ ] ¿La DGI publicó una nueva versión del esquema CFE? (actualmente implementada: documento de formato **v25.2**, paquete XSD **1.44.2**; el atributo `version` del XML es `1.0`)
-  - Si sí: actualizar `version="xx.xx"` en `src/UruFactura/Xml/CfeXmlBuilder.cs` (línea con `WriteAttributeString("version", ...)`)
-  - Actualizar el comentario del `summary` de la clase `CfeXmlBuilder`
+  - Si sí: actualizar `version="xx.xx"` en `src/UruFactura/Xml/CfeXml.cs` (línea con `WriteAttributeString("version", ...)`)
+  - Actualizar el comentario del `summary` de la clase `CfeXml`
 
 ### 2.2 Nuevos campos o cambios en campos existentes
 
@@ -38,7 +38,7 @@ Para cada cambio de campo en el nuevo formato, evaluar:
 
 | Zona | Pregunta |
 |------|---------|
-| **A — IdDoc** | ¿Nuevos campos en `EscribirIdDoc`? ¿Cambios en `FmaPago`, `MntBruto`, `IndTraslado`? |
+| **A — IdDoc** | ¿Nuevos campos en `EscribirIdDoc`? ¿Cambios en `FmaPago`, `MntBruto`, `TipoTraslado` (el `IndTraslado` del modelo)? |
 | **B — Emisor** | ¿Nuevos campos obligatorios del emisor? |
 | **C — Receptor** | ¿Nuevos campos obligatorios del receptor? |
 | **D — Totales** | ¿Nuevas tasas de IVA? ¿Nuevos elementos de totales? |
@@ -50,28 +50,31 @@ Para cada cambio de campo en el nuevo formato, evaluar:
 
 | Cambio | Archivo |
 |--------|---------|
-| Nuevo campo en el XML | `src/UruFactura/Xml/CfeXmlBuilder.cs` |
-| Nuevo campo en modelo | `src/UruFactura/Models/Cfe.cs`, `RefCfe.cs`, `Receptor.cs`, `LineaDetalle.cs` |
+| Nuevo campo en el XML | `src/UruFactura/Xml/CfeXml.cs` |
+| Nuevo campo en modelo | `src/UruFactura/Models/Cfe.cs`, `RefCfe.cs`, `Receptor.cs`, `LineaDetalle.cs` (records inmutables) |
+| Nuevo dato del emisor | `src/UruFactura/Emisor.cs` (incluye su validación) |
 | Nuevo valor de enum | `src/UruFactura/Enums/*.cs` |
 | Nueva validación de negocio | `src/UruFactura/Models/Cfe.cs` (método `Validar`) |
-| Nuevo campo obligatorio de config | `src/UruFactura/Configuration/UruFacturaConfig.cs` |
+| Nuevo campo obligatorio de config | `src/UruFactura/UruFacturaConfig.cs` (método `Validar`) |
+| Cambio en el reporte diario | `src/UruFactura/Xml/ReporteDiario.cs` |
+| Cambio en la representación impresa | `src/UruFactura.Pdf/CfePdf.cs` y `CfeEmitido.UrlQr` (QR) |
 
 ### 2.3 Nuevos tipos de CFE
 
 - [ ] ¿La DGI habilitó nuevos tipos de comprobante?
   - Si sí: agregar en `src/UruFactura/Enums/TipoCfe.cs`
-  - Agregar método de creación en `src/UruFactura/UruFacturaClient.cs`
-  - Actualizar arrays `TiposCorreccion`, `TiposFactura`, `TiposRemito`, `TiposExportacion` en `Cfe.cs` y la familia (`eTck`, `eFact`, ...) en `CfeXmlBuilder`
+  - Clasificarlo en `src/UruFactura/Enums/TipoCfeExtensions.cs`: `Familia()` (elemento raíz `eTck`, `eFact`, ... que usa `CfeXml`), `EsNotaCorreccion()`, `EsCuentaAjena()`, `RequiereReceptor()`, etc. `Cfe.Validar()` y `CfeXml` se basan en esas extensiones
+  - Agregar su resumen en la tabla `Resumenes` de `src/UruFactura/Xml/ReporteDiario.cs` y su nombre impreso en `CfePdf.NombreCompleto`
 
 ### 2.4 Cambios en endpoints SOAP
 
 - [ ] ¿Cambiaron las URLs de los servicios SOAP de la DGI (homologación o producción)?
-  - Si sí: actualizar `DgiEnvioUrl` / `DgiConsultasUrl` en `src/UruFactura/Configuration/UruFacturaConfig.cs` y los WSDL de `tests/UruFactura.Tests/Schemas/dgi`
+  - Si sí: actualizar `UrlEnvioHomologacion` / `UrlConsultasHomologacion` en `src/UruFactura/UruFacturaConfig.cs` y los WSDL de `tests/UruFactura.Tests/Schemas/dgi`
 
 ### 2.5 Cambios en tasas de IVA
 
 - [ ] ¿La DGI modificó alguna tasa de IVA?
-  - Si sí: actualizar constantes en `src/UruFactura/Models/Cfe.cs` (método `CalcularTotales`)
+  - Si sí: actualizar las tasas en `src/UruFactura/Models/Cfe.cs` (método `CalcularTotales`) y las que se informan en `Xml/CfeXml.cs` y `Xml/ReporteDiario.cs` (`IVATasaMin`, `IVATasaBasica`)
   - Actualizar tabla en `docs/FACTURACION_URUGUAY.md`
 
 ---

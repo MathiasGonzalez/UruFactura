@@ -2,7 +2,6 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Security.Cryptography.Xml;
 using System.Xml;
-using UruFactura.Enums;
 
 namespace UruFactura.Soap;
 
@@ -67,7 +66,7 @@ internal static class WsSecurity
         security.AppendChild(token);
 
         using var rsa = certificado.GetRSAPrivateKey()
-            ?? throw new Exceptions.FirmaDigitalException(
+            ?? throw new FirmaDigitalException(
                 "No se pudo obtener la clave RSA privada del certificado para WS-Security.");
 
         var signedXml = new SignedXmlWsu(doc) { SigningKey = rsa };

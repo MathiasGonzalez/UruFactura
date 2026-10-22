@@ -1,125 +1,107 @@
-using UruFactura.Configuration;
-using UruFactura.Enums;
-using UruFactura.Exceptions;
-using Xunit;
-
 namespace UruFactura.Tests;
 
 public class UruFacturaConfigTests
 {
-    private static UruFacturaConfig ConfigValida() => new()
-    {
-        RutEmisor = "219999820013",
-        RazonSocialEmisor = "Empresa Test S.A.",
-        DomicilioFiscal = "Av. 18 de Julio 1234",
-        Ciudad = "Montevideo",
-        Departamento = "Montevideo",
-        Ambiente = Ambiente.Homologacion,
-        RutaCertificado = "/tmp/cert.p12",
-        PasswordCertificado = "secret",
-    };
+    [Fact]
+    public void ConfigValida_NoTieneErrores() => Assert.Empty(TestData.Config().Validar());
 
     [Fact]
-    public void Validate_ConfigValida_NoLanzaExcepcion()
-    {
-        var config = ConfigValida();
-        var ex = Record.Exception(() => config.Validate());
-        Assert.Null(ex);
-    }
+    public void ConRutaDeCertificado_EsValida() =>
+        Assert.Empty((TestData.Config() with { Certificado = null, RutaCertificado = "/c.p12" }).Validar());
 
     [Fact]
-    public void Validate_SinRut_LanzaExcepcion()
-    {
-        var config = ConfigValida() with { RutEmisor = "" };
-        Assert.Throws<UruFacturaException>(() => config.Validate());
-    }
+    public void SinCertificado_TieneError() =>
+        Assert.Contains((TestData.Config() with { Certificado = null }).Validar(), e => e.Contains("certificado"));
 
-    [Fact]
-    public void Validate_SinRazonSocial_LanzaExcepcion()
-    {
-        var config = ConfigValida() with { RazonSocialEmisor = "" };
-        Assert.Throws<UruFacturaException>(() => config.Validate());
-    }
+    [Theory]
+    [InlineData("")]
+    [InlineData("210000000012")] // dígito verificador inválido
+    public void RutEmisorInvalido_TieneError(string rut) =>
+        Assert.Contains((TestData.Config() with { Emisor = TestData.Emisor() with { Rut = rut } }).Validar(), e => e.Contains("Emisor.Rut"));
 
-    [Fact]
-    public void Validate_SinCertificado_LanzaExcepcion()
+    [Theory]
+    [InlineData(nameof(Emisor.RazonSocial))]
+    [InlineData(nameof(Emisor.DomicilioFiscal))]
+    [InlineData(nameof(Emisor.Ciudad))]
+    [InlineData(nameof(Emisor.Departamento))]
+    public void DatosObligatoriosDelEmisor(string campo)
     {
-        var config = ConfigValida() with { RutaCertificado = "" };
-        Assert.Throws<UruFacturaException>(() => config.Validate());
-    }
-
-    [Fact]
-    public void Urls_Homologacion_ApuntanAlServicioDePruebaDeLaDgi()
-    {
-        var config = ConfigValida();
-        Assert.Equal("https://efactura.dgi.gub.uy:6443/ePrueba/ws_eprueba", config.DgiEnvioUrl);
-        Assert.Equal("https://efactura.dgi.gub.uy:6460/ePrueba/ws_consultasPrueba", config.DgiConsultasUrl);
-    }
-
-    [Fact]
-    public void Urls_Produccion_SinConfigurar_LanzaExcepcion()
-    {
-        var config = ConfigValida() with { Ambiente = Ambiente.Produccion };
-        Assert.Throws<UruFacturaException>(() => config.DgiEnvioUrl);
-        Assert.Throws<UruFacturaException>(() => config.DgiConsultasUrl);
-        Assert.Throws<UruFacturaException>(() => config.Validate());
-    }
-
-    [Fact]
-    public void Urls_Configuradas_TienenPrioridad()
-    {
-        var config = ConfigValida() with
+        var emisor = campo switch
         {
-            Ambiente = Ambiente.Produccion,
-            UrlEnvio = "https://dgi.example/envio",
-            UrlConsultas = "https://dgi.example/consultas",
+            nameof(Emisor.RazonSocial) => TestData.Emisor() with { RazonSocial = "" },
+            nameof(Emisor.DomicilioFiscal) => TestData.Emisor() with { DomicilioFiscal = "" },
+            nameof(Emisor.Ciudad) => TestData.Emisor() with { Ciudad = "" },
+            _ => TestData.Emisor() with { Departamento = "" },
         };
-        Assert.Equal("https://dgi.example/envio", config.DgiEnvioUrl);
-        Assert.Equal("https://dgi.example/consultas", config.DgiConsultasUrl);
-        config.Validate();
+
+        Assert.Contains((TestData.Config() with { Emisor = emisor }).Validar(), e => e.Contains(campo));
     }
 
     [Theory]
     [InlineData(0)]
     [InlineData(10000)]
-    public void Validate_CodigoSucursalInvalido_LanzaExcepcion(int sucursal)
+    public void CodigoSucursalFueraDeRango_TieneError(int sucursal) =>
+        Assert.Contains((TestData.Config() with { Emisor = TestData.Emisor() with { CodigoSucursal = sucursal } }).Validar(),
+            e => e.Contains("CodigoSucursal"));
+
+    [Fact]
+    public void MasDeDosTelefonos_TieneError() =>
+        Assert.Contains((TestData.Config() with { Emisor = TestData.Emisor() with { Telefonos = ["1", "2", "3"] } }).Validar(),
+            e => e.Contains("Telefonos"));
+
+    [Fact]
+    public void NombreComercialMuyLargo_TieneError() =>
+        Assert.Contains((TestData.Config() with { Emisor = TestData.Emisor() with { NombreComercial = new string('x', 31) } }).Validar(),
+            e => e.Contains("NombreComercial"));
+
+    [Fact]
+    public void Produccion_SinUrls_TieneError() =>
+        Assert.Contains((TestData.Config() with { Ambiente = Ambiente.Produccion }).Validar(), e => e.Contains("UrlEnvio"));
+
+    [Fact]
+    public void Produccion_ConUrls_EsValida() =>
+        Assert.Empty((TestData.Config() with { Ambiente = Ambiente.Produccion, UrlEnvio = "https://e", UrlConsultas = "https://c" }).Validar());
+
+    [Fact]
+    public void Homologacion_SinUrls_UsaLosServiciosDePruebaDeLaDgi()
     {
-        var config = ConfigValida() with { CodigoSucursal = sucursal };
-        Assert.Throws<UruFacturaException>(() => config.Validate());
+        var config = TestData.Config();
+
+        Assert.Equal("https://efactura.dgi.gub.uy:6443/ePrueba/ws_eprueba", config.UrlEnvioEfectiva);
+        Assert.Equal("https://efactura.dgi.gub.uy:6460/ePrueba/ws_consultasPrueba", config.UrlConsultasEfectiva);
     }
 
     [Fact]
-    public void OmitirValidacionSsl_PorDefecto_EsFalse()
+    public void UrlsConfiguradas_TienenPrioridad()
     {
-        var config = ConfigValida();
+        var config = TestData.Config() with { UrlEnvio = "https://e", UrlConsultas = "https://c" };
+
+        Assert.Equal("https://e", config.UrlEnvioEfectiva);
+        Assert.Equal("https://c", config.UrlConsultasEfectiva);
+    }
+
+    [Fact]
+    public void ValoresPorDefecto()
+    {
+        var config = new UruFacturaConfig();
+
+        Assert.Equal(Ambiente.Homologacion, config.Ambiente);
+        Assert.Equal(TimeSpan.FromSeconds(30), config.Timeout);
+        Assert.Equal(AlgoritmoFirma.Sha256, config.AlgoritmoFirma);
         Assert.False(config.OmitirValidacionSsl);
+        Assert.Equal(1, config.Emisor.CodigoSucursal);
     }
 
     [Fact]
-    public void OmitirValidacionSsl_CuandoSeActiva_EsTrue()
+    public void ToString_NoMuestraLaContrasena()
     {
-        var config = ConfigValida() with { OmitirValidacionSsl = true };
-        Assert.True(config.OmitirValidacionSsl);
+        var texto = (TestData.Config() with { Certificado = null, RutaCertificado = "/c.p12", PasswordCertificado = "s3cr3t" }).ToString();
+
+        Assert.DoesNotContain("s3cr3t", texto);
+        Assert.Contains("219999820013", texto);
     }
 
     [Fact]
-    public void SoapTimeoutSegundos_PorDefecto_EsTreinta()
-    {
-        var config = ConfigValida();
-        Assert.Equal(30, config.SoapTimeoutSegundos);
-    }
-
-    [Fact]
-    public void Validate_SinCiudad_LanzaExcepcion()
-    {
-        var config = ConfigValida() with { Ciudad = "" };
-        Assert.Throws<UruFacturaException>(() => config.Validate());
-    }
-
-    [Fact]
-    public void Validate_SinDepartamento_LanzaExcepcion()
-    {
-        var config = ConfigValida() with { Departamento = "" };
-        Assert.Throws<UruFacturaException>(() => config.Validate());
-    }
+    public void ValorUnidadIndexadaNoPositivo_TieneError() =>
+        Assert.Contains((TestData.Config() with { ValorUnidadIndexada = 0 }).Validar(), e => e.Contains("ValorUnidadIndexada"));
 }

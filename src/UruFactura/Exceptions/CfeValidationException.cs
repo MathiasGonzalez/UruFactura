@@ -1,4 +1,4 @@
-namespace UruFactura.Exceptions;
+namespace UruFactura;
 
 /// <summary>
 /// Error de validación del CFE antes de enviarlo a la DGI.

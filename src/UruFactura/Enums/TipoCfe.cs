@@ -1,4 +1,4 @@
-namespace UruFactura.Enums;
+namespace UruFactura;
 
 /// <summary>
 /// Tipos de CFE soportados, con el código numérico del formato CFE de la DGI (<c>TipoCFE</c>).
@@ -12,7 +12,7 @@ public enum TipoCfe
     /// <summary>Nota de débito de e-Ticket (103).</summary>
     NotaDebitoETicket = 103,
 
-    /// <summary>e-Ticket venta por cuenta ajena (131). Requiere <see cref="Models.Cfe.Mandante"/>.</summary>
+    /// <summary>e-Ticket venta por cuenta ajena (131). Requiere <see cref="Cfe.Mandante"/>.</summary>
     ETicketCuentaAjena = 131,
     /// <summary>Nota de crédito de e-Ticket venta por cuenta ajena (132).</summary>
     NotaCreditoETicketCuentaAjena = 132,
@@ -35,7 +35,7 @@ public enum TipoCfe
     /// <summary>e-Remito de exportación (124).</summary>
     ERemitoExportacion = 124,
 
-    /// <summary>e-Factura venta por cuenta ajena (141). Requiere <see cref="Models.Cfe.Mandante"/>.</summary>
+    /// <summary>e-Factura venta por cuenta ajena (141). Requiere <see cref="Cfe.Mandante"/>.</summary>
     EFacturaCuentaAjena = 141,
     /// <summary>Nota de crédito de e-Factura venta por cuenta ajena (142).</summary>
     NotaCreditoEFacturaCuentaAjena = 142,
@@ -83,6 +83,6 @@ public enum TipoCfe
 
     /// <summary>e-Remito (181).</summary>
     ERemito = 181,
-    /// <summary>e-Resguardo (182). Informa retenciones/percepciones en <see cref="Models.LineaDetalle.Retenciones"/>.</summary>
+    /// <summary>e-Resguardo (182). Informa retenciones/percepciones en <see cref="LineaDetalle.Retenciones"/>.</summary>
     EResguardo = 182,
 }

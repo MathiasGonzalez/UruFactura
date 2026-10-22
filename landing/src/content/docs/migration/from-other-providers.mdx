@@ -22,7 +22,7 @@ Esta guía te ayuda a migrar a UruFactura desde diferentes puntos de partida, ya
     Soporte para las últimas versiones de .NET. Sin librerías legacy ni WCF.
   </Card>
   <Card title="Todo incluido" icon="document">
-    XML, firma digital, SOAP, CAE, PDFs. Una sola dependencia.
+    XML, firma digital, SOAP, numeración con CAE y reporte diario en un paquete; PDF y base de datos como complementos.
   </Card>
 </CardGrid>
 
@@ -61,19 +61,13 @@ var response = await httpClient.PostAsync(dgiEndpoint, soapContent);
 ### Después (UruFactura)
 
 ```csharp
-// ✅ Después: API de alto nivel
-var eticket = client.CrearETicket();
-client.AsignarCae(eticket);   // toma el próximo número del CAE
-eticket.Detalle.Add(new LineaDetalle
+// ✅ Después: describís el comprobante; UruFactura lo valida, numera, firma y envía
+var eticket = await client.EmitirAsync(new Cfe(TipoCfe.ETicket)
 {
-    NroLinea       = 1,
-    NombreItem     = "Servicio",
-    Cantidad       = 1,
-    PrecioUnitario = 1000m,
-    IndFactIva     = TipoIva.Basico,
+    Detalle = [new LineaDetalle { NombreItem = "Servicio", Cantidad = 1, PrecioUnitario = 1000m }],
 });
 
-var respuesta = await client.EnviarCfeAsync(eticket);
+var acuse = await client.EnviarAsync(eticket);
 ```
 
 ---
@@ -86,12 +80,13 @@ Si estás migrando desde un módulo de facturación electrónica de un ERP (Bisc
 
 | Tu sistema actual | UruFactura |
 |------------------|----------------|
-| Comprobante / Documento | `Cfe` (base) + `ETicket`, `EFactura`, etc. |
+| Comprobante / Documento | `Cfe` para describirlo (un solo modelo: `new Cfe(TipoCfe.ETicket)`, …) y `CfeEmitido` una vez emitido |
 | Línea de artículo / ítem | `LineaDetalle` |
 | Proveedor / Receptor | `Receptor` |
 | Rango CAE / Talonario | `Cae` con `RangoDesde` / `RangoHasta` |
-| Estado del comprobante | `RespuestaDgi.Exitoso` + `RespuestaDgi.Codigo` |
-| Representación impresa | `client.GenerarPdfA4()` / `GenerarPdfTermico()` |
+| Acuse del envío | `AcuseSobre.Recibido` + `AcuseSobre.Estado` (`AS` = sobre recibido) |
+| Estado del comprobante | `ConsultarEnvioAsync` → `CfeEmitido.AceptadoPorDgi` (`AE` = aceptado) |
+| Representación impresa | `CfePdf.GenerarA4(emitido)` / `GenerarTermico(emitido)` (paquete `UruFactura.Pdf`) |
 
 ### Estrategia de migración
 
@@ -119,10 +114,9 @@ Si estás migrando desde un módulo de facturación electrónica de un ERP (Bisc
 
    ```csharp
    // Convertir entidad de tu sistema a LineaDetalle
-   static LineaDetalle ConvertirLinea(MiLineaFactura linea, int nroLinea) =>
+   static LineaDetalle ConvertirLinea(MiLineaFactura linea) =>
        new LineaDetalle
        {
-           NroLinea       = nroLinea,
            NombreItem     = linea.DescripcionProducto,
            Cantidad       = linea.Cantidad,
            PrecioUnitario = linea.PrecioUnitario,
@@ -135,44 +129,36 @@ Si estás migrando desde un módulo de facturación electrónica de un ERP (Bisc
 4. **Implementar una capa de servicio**
 
    ```csharp
-   public class FacturacionService
+   public class FacturacionService(IUruFacturaClient client)
    {
-       private readonly UruFacturaClient _client;
-
        public async Task<ResultadoEmision> EmitirAsync(ComprobanteDTO dto)
        {
-           var cfe = dto.Tipo switch
+           var cfe = new Cfe(MapearTipo(dto.Tipo))
            {
-               "TICKET"  => (Cfe)_client.CrearETicket(),
-               "FACTURA" => _client.CrearEFactura(),
-               _         => throw new ArgumentException($"Tipo no soportado: {dto.Tipo}")
+               NroInterno = dto.Id,   // para buscarlo después y evitar emitirlo dos veces
+               Receptor = dto.Receptor is null ? null : new Receptor
+               {
+                   Documento   = dto.Receptor.Rut,
+                   RazonSocial = dto.Receptor.Nombre,
+                   Direccion   = dto.Receptor.Direccion,
+                   Ciudad      = dto.Receptor.Ciudad,
+               },
+               Detalle = [.. dto.Lineas.Select(ConvertirLinea)],
            };
 
-           client.AsignarCae(cfe);   // toma el próximo número del CAE
+           var emitido = await client.EmitirAsync(cfe);   // valida, numera, firma y registra
 
-            if (dto.Receptor != null)
-            {
-                cfe.Receptor = new Receptor
-                {
-                    Documento   = dto.Receptor.Rut,
-                    RazonSocial = dto.Receptor.Nombre,
-                    Direccion   = dto.Receptor.Direccion,
-                    Ciudad      = dto.Receptor.Ciudad,
-                };
-            }
-
-           int nroLinea = 1;
-           foreach (var linea in dto.Lineas)
-               cfe.Detalle.Add(ConvertirLinea(linea, nroLinea++));
-
-           var respuesta = await _client.EnviarCfeAsync(cfe);
+           // 1) Acuse del sobre (AS = recibido); 2) resultado del comprobante (AE = aceptado)
+           var acuse = await client.EnviarAsync(emitido);
+           if (acuse.Recibido)
+               await client.ConsultarEnvioAsync(acuse);
 
            return new ResultadoEmision
            {
-               Exitoso = respuesta.Exitoso,
-               Codigo  = respuesta.Codigo,
-               Mensaje = respuesta.Mensaje,
-               PdfA4   = respuesta.Exitoso ? _client.GenerarPdfA4(cfe) : null,
+               Numero  = $"{emitido.Serie}-{emitido.Numero}",
+               Estado  = emitido.EstadoDgi ?? acuse.Estado,
+               Mensaje = emitido.MensajeDgi ?? acuse.Mensaje,
+               PdfA4   = CfePdf.GenerarA4(emitido),
            };
        }
    }
@@ -187,7 +173,7 @@ Si estás migrando desde un módulo de facturación electrónica de un ERP (Bisc
    Solicitá nuevos CAEs en DGI o trasladá los existentes. Registralos con:
 
    ```csharp
-   client.Cae.RegistrarCae(new Cae { ... });
+   await client.RegistrarCaeAsync(new Cae { NumeroAutorizacion = "…", TipoCfe = TipoCfe.ETicket, Serie = "A", RangoDesde = 1, RangoHasta = 1000, FechaVencimiento = … });
    ```
 
 7. **Cambiar a producción**
@@ -209,32 +195,29 @@ Si estás usando otra librería .NET de facturación electrónica uruguaya:
 
   | Operación | Librería genérica | UruFactura |
   |-----------|-----------------|----------------|
-  | Crear comprobante | `new Comprobante(tipo)` | `client.CrearETicket()` |
-  | Agregar ítem | `comprobante.AddItem(...)` | `cfe.Detalle.Add(new LineaDetalle {...})` |
-  | Firmar XML | `firma.Sign(xml, cert)` | Automático en `EnviarCfeAsync` |
-  | Enviar a DGI | `soap.Send(xml)` | `await client.EnviarCfeAsync(cfe)` |
-  | Generar PDF | `pdf.Render(comprobante)` | `client.GenerarPdfA4(cfe)` |
-  | Estado CFE | `soap.ConsultarEstado(id)` | `await client.ConsultarEstadoCfeAsync(cfe)` |
+  | Crear comprobante | `new Comprobante(tipo)` | `new Cfe(TipoCfe.ETicket) { … }` |
+  | Agregar ítems | `comprobante.AddItem(...)` | `Detalle = [new LineaDetalle { … }, …]` |
+  | Numerar y firmar | `cae.Next()`, `firma.Sign(xml, cert)` | `await client.EmitirAsync(cfe)` |
+  | Enviar a DGI | `soap.Send(xml)` | `await client.EnviarAsync(emitido)` |
+  | Generar PDF | `pdf.Render(comprobante)` | `CfePdf.GenerarA4(emitido)` |
+  | Estado CFE | `soap.ConsultarEstado(id)` | `await client.ConsultarEnvioAsync(acuse)` / `ConsultarCfeAsync(emitido)` |
 
   </TabItem>
   <TabItem label="Manejo de respuestas">
 
   ```csharp
-  // UruFactura — respuesta tipada
-  var respuesta = await client.EnviarCfeAsync(cfe);
+  // UruFactura — respuestas tipadas
+  var acuse = await client.EnviarAsync(emitido);
 
-  // respuesta.Exitoso: bool
-  // respuesta.Codigo: string ("AS", "BS", "AE", "BE", ... — ver Códigos DGI)
-  // respuesta.Mensaje: string (descripción DGI)
+  // acuse.Recibido: bool (AS)
+  // acuse.Estado: string ("AS", "BS", "BA" — ver Códigos DGI)
+  // acuse.Mensaje / acuse.Motivos: descripción y motivos de la DGI
 
-  if (respuesta.Exitoso)
+  if (acuse.Recibido)
   {
-      // Sobre recibido (AS): consultar luego el estado del comprobante con ConsultarEstadoEnvioAsync
+      var estado = await client.ConsultarEnvioAsync(acuse);   // emitido.AceptadoPorDgi, emitido.EstadoDgi
   }
-  else
-  {
-      // Revisar respuesta.Codigo y respuesta.Mensaje
-  }
+  // Los errores de comunicación (red, SOAP Fault, HTTP) se lanzan como DgiCommunicationException
   ```
 
   </TabItem>
@@ -261,9 +244,9 @@ Antes de ir a producción, verificá:
 
 ## ¿Necesitás ayuda?
 
-- 📖 [Documentación completa](../getting-started/installation/)
+- 📖 [Documentación completa](../../getting-started/installation/)
 - 💬 [Issues en GitHub](https://github.com/MathiasGonzalez/UruFactura/issues)
-- 🔍 [API Reference](../reference/api/)
+- 🔍 [API Reference](../../reference/api/)
 
 <Aside type="tip">
   Si encontrás una operación que hacías en tu sistema anterior y no sabés cómo replicarla en UruFactura, abrí un issue en GitHub con el caso de uso — lo documentamos y, si es necesario, lo incorporamos al proyecto.

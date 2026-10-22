@@ -1,4 +1,4 @@
-namespace UruFactura.Enums;
+namespace UruFactura;
 
 /// <summary>
 /// Indicadores de tipo de moneda según nomenclatura DGI / ISO 4217.

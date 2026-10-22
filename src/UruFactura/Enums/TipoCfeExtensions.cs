@@ -1,4 +1,4 @@
-namespace UruFactura.Enums;
+namespace UruFactura;
 
 /// <summary>Familia de comprobante según el elemento raíz del esquema CFE de la DGI.</summary>
 public enum FamiliaCfe
@@ -56,7 +56,7 @@ public static class TipoCfeExtensions
     public static bool EsRemito(this TipoCfe tipo) =>
         tipo.Familia() is FamiliaCfe.Remito or FamiliaCfe.RemitoExportacion;
 
-    /// <summary>e-Factura o e-Factura de exportación: el receptor es obligatorio.</summary>
+    /// <summary>e-Factura, e-Factura de exportación y e-Resguardo: el receptor es obligatorio.</summary>
     public static bool RequiereReceptor(this TipoCfe tipo) =>
         tipo.Familia() is FamiliaCfe.Factura or FamiliaCfe.FacturaExportacion or FamiliaCfe.Resguardo;
 }

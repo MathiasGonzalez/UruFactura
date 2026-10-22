@@ -7,137 +7,124 @@ sidebar:
 
 import { Aside } from '@astrojs/starlight/components';
 
-## `UruFacturaConfig`
-
-La clase `UruFacturaConfig` es el punto central de configuración. Se pasa al constructor de `UruFacturaClient`.
+`UruFacturaConfig` es un record inmutable que se pasa al construir el cliente. El constructor la valida (lanza `UruFacturaException` con todos los errores) y carga el certificado, así que una configuración incorrecta falla al iniciar la aplicación y no al emitir.
 
 ```csharp
-var config = new UruFacturaConfig
-{
-    // ... propiedades
-};
 using var client = new UruFacturaClient(config);
 ```
 
 ---
 
-## Propiedades
-
-### Identificación del emisor
+## Emisor (`config.Emisor`)
 
 | Propiedad | Tipo | Requerido | Descripción |
 |-----------|------|-----------|-------------|
-| `RutEmisor` | `string` | ✅ | RUT del emisor — 12 dígitos sin puntos ni guión (ej: `"219999820013"`) |
-| `RazonSocialEmisor` | `string` | ✅ | Razón social del emisor tal como figura en DGI |
-| `NombreComercialEmisor` | `string?` | — | Nombre comercial o de fantasía del emisor |
-| `Giro` | `string?` | — | Giro o actividad económica del emisor |
-| `DomicilioFiscal` | `string` | ✅ | Domicilio fiscal del emisor |
-| `Ciudad` | `string` | ✅ | Ciudad del domicilio fiscal |
-| `Departamento` | `string` | ✅ | Departamento del domicilio fiscal |
+| `Rut` | `string` | ✅ | RUT del emisor: 12 dígitos con dígito verificador válido (ej: `"219999820013"`) |
+| `RazonSocial` | `string` | ✅ | Razón social (hasta 150 caracteres) |
+| `DomicilioFiscal` | `string` | ✅ | Domicilio fiscal (hasta 70) |
+| `Ciudad` / `Departamento` | `string` | ✅ | Hasta 30 caracteres cada uno |
+| `NombreComercial` | `string?` | — | Nombre de fantasía (hasta 30) |
+| `Giro` | `string?` | — | Actividad económica (hasta 100) |
+| `CodigoSucursal` | `int` | — | `CdgDGISucur` asignado por la DGI (1-9999, default `1`) |
+| `Sucursal` | `string?` | — | Nombre de la sucursal (`EmiSucursal`, hasta 20) |
+| `Telefonos` | `IReadOnlyList<string>` | — | Hasta 2, de hasta 20 caracteres |
+| `Correo` / `InfoAdicional` | `string?` | — | Correo (hasta 80) e información adicional (hasta 150) |
+| `FechaIncorporacion` | `string?` | — | Leyenda "Fecha emisor" del pie impreso (fecha o `Res. N/año`) |
+| `UrlVerificacion` | `string?` | — | Sitio de verificación impreso en los e-Tickets (por defecto el de la DGI) |
 
-### Certificado digital
+Un `Cfe` puede usar otro emisor (por ejemplo, otra sucursal) con `Emisor = config.Emisor with { CodigoSucursal = 3 }`; el RUT tiene que ser el mismo.
 
-| Propiedad | Tipo | Requerido | Descripción |
-|-----------|------|-----------|-------------|
-| `RutaCertificado` | `string` | ✅ | Ruta absoluta o relativa al archivo `.p12` / `.pfx` |
-| `PasswordCertificado` | `string` | ✅ | Contraseña del certificado digital |
+## Certificado
+
+| Propiedad | Tipo | Descripción |
+|-----------|------|-------------|
+| `RutaCertificado` | `string?` | Ruta del `.p12` / `.pfx` |
+| `PasswordCertificado` | `string?` | Su contraseña |
+| `Certificado` | `X509Certificate2?` | Certificado ya cargado, con clave privada (Azure Key Vault, HSM, …). Tiene prioridad sobre la ruta; el cliente no lo libera |
+
+Se requiere uno de los dos. Un archivo inexistente, una contraseña incorrecta o un certificado sin clave privada lanzan `FirmaDigitalException` al construir el cliente.
 
 <Aside type="caution">
-  **Seguridad:** Nunca escribas `PasswordCertificado` directamente en el código. Usá variables de entorno (`Environment.GetEnvironmentVariable`), .NET User Secrets, o un servicio como Azure Key Vault / AWS Secrets Manager.
+  **Seguridad:** nunca escribas `PasswordCertificado` en el código. Usá variables de entorno, .NET User Secrets o un gestor de secretos. `config.ToString()` no la muestra, así que podés loguear la configuración.
 </Aside>
 
-### Ambiente
+## DGI
 
-| Propiedad | Tipo | Valor por defecto | Descripción |
-|-----------|------|-------------------|-------------|
-| `Ambiente` | `Ambiente` | `Ambiente.Homologacion` | Define el endpoint DGI a usar |
-| `UrlEnvio` | `string?` | *(Homologación: servicio de prueba)* | URL del servicio `ws_efactura` (sobres, reporte diario, estado del envío). **Obligatoria en Producción** |
-| `UrlConsultas` | `string?` | *(Homologación: servicio de prueba)* | URL del servicio `ws_consultas` (estado de un CFE). **Obligatoria en Producción** |
-| `TelefonosEmisor` | `IReadOnlyList<string>` | vacío | Hasta 2 teléfonos del emisor (hasta 20 caracteres) que se informan en cada CFE |
-| `CorreoEmisor` / `SucursalEmisor` | `string?` | — | Correo (hasta 80) y sucursal (hasta 20) del emisor |
-| `ValorUnidadIndexada` | `decimal?` | — | Si se informa, se valida el tope de 5.000 UI para e-Tickets sin receptor |
-| `FechaIncorporacionEmisor` | `string?` | — | Leyenda "Fecha emisor" del pie impreso (fecha o `Res. N/año`) |
-| `UrlVerificacionEmisor` | `string?` | — | Leyenda de verificación de los e-Tickets (por defecto www.dgi.gub.uy) |
-| `CodigoSucursal` | `int` | `1` | Código de sucursal asignado por la DGI (`CdgDGISucur`, 1-9999) |
-| `AlgoritmoFirma` | `AlgoritmoFirma` | `Sha256` | Algoritmo de la firma del CFE y de WS-Security (`Sha1` si la DGI rechaza SHA-256) |
-| `SoapTimeoutSegundos` | `int` | `30` | Timeout en segundos para las llamadas SOAP a DGI |
-| `OmitirValidacionSsl` | `bool` | `false` | Deshabilita la validación TLS del servidor. Activar solo cuando el ambiente de Homologación tenga una CA no reconocida por el sistema. **Nunca activar en Producción.** |
+| Propiedad | Tipo | Default | Descripción |
+|-----------|------|---------|-------------|
+| `Ambiente` | `Ambiente` | `Homologacion` | Ambiente de la DGI |
+| `UrlEnvio` | `string?` | servicio de prueba | URL de `ws_efactura` (sobres, reporte diario, estado del envío). **Obligatoria en Producción** |
+| `UrlConsultas` | `string?` | servicio de prueba | URL de `ws_consultas` (estado de un CFE). **Obligatoria en Producción** |
+| `AlgoritmoFirma` | `AlgoritmoFirma` | `Sha256` | Firma del CFE y de WS-Security (`Sha1` si la DGI rechaza SHA-256) |
+| `Timeout` | `TimeSpan` | 30 s | Timeout de las llamadas a la DGI |
+| `OmitirValidacionSsl` | `bool` | `false` | Deshabilita la validación TLS del servidor. Solo en Homologación con una CA no reconocida. **Nunca en Producción** |
+| `ValorUnidadIndexada` | `decimal?` | — | Si se informa, los e-Tickets con neto mayor a 5.000 UI deben identificar al receptor |
 
-Valores del enum `Ambiente`:
-
-| Valor | Endpoint DGI |
-|-------|-------------|
+| Ambiente | Servicios |
+|----------|-----------|
 | `Ambiente.Homologacion` | Envío: `https://efactura.dgi.gub.uy:6443/ePrueba/ws_eprueba` · Consultas: `https://efactura.dgi.gub.uy:6460/ePrueba/ws_consultasPrueba` |
-| `Ambiente.Produccion` | Se debe configurar `UrlEnvio` y `UrlConsultas` con las URL que entrega la DGI al habilitar el ambiente |
+| `Ambiente.Produccion` | Configurar `UrlEnvio` y `UrlConsultas` con las URL que entrega la DGI al habilitar el ambiente |
 
 ---
 
 ## Ejemplo completo
 
 ```csharp
+var produccion = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Production";
+
 var config = new UruFacturaConfig
 {
-    // Identificación
-    RutEmisor           = "219999820013",
-    RazonSocialEmisor   = "Mi Empresa S.A.",
-    DomicilioFiscal     = "Av. 18 de Julio 1234, Apto. 201",
-    Ciudad              = "Montevideo",
-    Departamento        = "Montevideo",
+    Emisor = new Emisor
+    {
+        Rut             = "219999820013",
+        RazonSocial     = "Mi Empresa S.A.",
+        DomicilioFiscal = "Av. 18 de Julio 1234, Apto. 201",
+        Ciudad          = "Montevideo",
+        Departamento    = "Montevideo",
+        Telefonos       = ["29001234"],
+    },
 
-    // Certificado (desde variables de entorno en producción)
-    RutaCertificado     = Environment.GetEnvironmentVariable("CERT_PATH")
-                          ?? "/ruta/por/defecto/certificado.p12",
-    PasswordCertificado = Environment.GetEnvironmentVariable("CERT_PASSWORD")!,
+    RutaCertificado     = Environment.GetEnvironmentVariable("CERT_PATH"),
+    PasswordCertificado = Environment.GetEnvironmentVariable("CERT_PASSWORD"),
 
-    // Ambiente
-    Ambiente = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Production"
-               ? Ambiente.Produccion
-               : Ambiente.Homologacion,
+    Ambiente     = produccion ? Ambiente.Produccion : Ambiente.Homologacion,
+    // Obligatorias en Producción; en Homologación, si quedan vacías, se usan los servicios de prueba.
+    UrlEnvio     = Environment.GetEnvironmentVariable("DGI_URL_ENVIO"),
+    UrlConsultas = Environment.GetEnvironmentVariable("DGI_URL_CONSULTAS"),
 };
 ```
 
 ---
 
-## Configuración con .NET Options Pattern
+## Desde `appsettings.json`
 
-Para proyectos ASP.NET Core, es recomendable usar el patrón de opciones:
+La configuración se puede leer con el binder de .NET (las propiedades `init` se completan igual):
 
-```csharp
-// appsettings.json
+```json
 {
   "UruFactura": {
-    "RutEmisor": "219999820013",
-    "RazonSocialEmisor": "Mi Empresa S.A.",
-    "DomicilioFiscal": "Av. 18 de Julio 1234",
-    "Ciudad": "Montevideo",
-    "Departamento": "Montevideo",
+    "Emisor": {
+      "Rut": "219999820013",
+      "RazonSocial": "Mi Empresa S.A.",
+      "DomicilioFiscal": "Av. 18 de Julio 1234",
+      "Ciudad": "Montevideo",
+      "Departamento": "Montevideo"
+    },
     "Ambiente": "Homologacion",
-    "RutaCertificado": "/ruta/al/certificado.p12"
+    "RutaCertificado": "/ruta/al/certificado.p12",
+    "Timeout": "00:00:45"
   }
 }
 ```
 
 ```csharp
-// Program.cs
-builder.Services.Configure<UruFacturaConfig>(
-    builder.Configuration.GetSection("UruFactura")
-);
+// Program.cs — la contraseña llega por User Secrets o por la variable de entorno
+// UruFactura__PasswordCertificado, que el binder lee igual que el appsettings.
+var config = builder.Configuration.GetSection("UruFactura").Get<UruFacturaConfig>()!;
 
-// La contraseña viene de secretos seguros, no del appsettings
-builder.Services.PostConfigure<UruFacturaConfig>(config =>
-{
-    config.PasswordCertificado = builder.Configuration["UruFactura:PasswordCertificado"]
-        ?? Environment.GetEnvironmentVariable("CERT_PASSWORD")
-        ?? throw new InvalidOperationException("Certificado no configurado");
-});
-
-builder.Services.AddSingleton<UruFacturaClient>(sp =>
-{
-    var config = sp.GetRequiredService<IOptions<UruFacturaConfig>>().Value;
-    return new UruFacturaClient(config);
-});
+builder.Services.AddSingleton<IUruFacturaClient>(_ => new UruFacturaClient(config));
 ```
 
 <Aside type="tip">
-  En producción, usá [.NET User Secrets](https://learn.microsoft.com/en-us/aspnet/core/security/app-secrets) para desarrollo local y variables de entorno (o Key Vault) en el servidor.
+  Para tests: `new UruFacturaClient(config, dgiClient: miDgiFalsa, reloj: miReloj)` reemplaza la comunicación con la DGI (`IDgiClient`) y el reloj de las fechas fiscales (`TimeProvider`).
 </Aside>

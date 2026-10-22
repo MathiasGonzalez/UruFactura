@@ -1,4 +1,4 @@
-namespace UruFactura.Enums;
+namespace UruFactura;
 
 /// <summary>
 /// Indicador del motivo de traslado para e-Remito (181) y e-Remito Despachante (131),

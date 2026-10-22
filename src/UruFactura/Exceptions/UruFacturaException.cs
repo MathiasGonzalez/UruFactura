@@ -1,4 +1,4 @@
-namespace UruFactura.Exceptions;
+namespace UruFactura;
 
 /// <summary>
 /// Excepción base de UruFactura.
