@@ -48,9 +48,9 @@ public class Cae
     }
 
     /// <summary>
-    /// Indica si el CAE está vigente (no vencido).
+    /// Indica si el CAE está vigente (no vencido) en la fecha actual de Uruguay.
     /// </summary>
-    public bool EsVigente => DateOnly.FromDateTime(DateTime.Today) <= FechaVencimiento;
+    public bool EsVigente => HoraUruguay.Hoy() <= FechaVencimiento;
 
     /// <summary>
     /// Indica si el CAE tiene números disponibles.
@@ -89,7 +89,8 @@ public class Cae
                 throw new Exceptions.CaeException(
                     $"El CAE {NroSerie} no tiene números disponibles (rango hasta {RangoHasta}).");
 
-            _ultimoNroUsado = _ultimoNroUsado == 0 ? RangoDesde : _ultimoNroUsado + 1;
+            // Max: un contador por debajo del rango (0, o heredado de un CAE anterior) arranca en RangoDesde.
+            _ultimoNroUsado = Math.Max(_ultimoNroUsado + 1, RangoDesde);
             return _ultimoNroUsado;
         }
     }
@@ -102,7 +103,7 @@ public class Cae
         if (!EsVigente)
             return $"⚠️ CAE {NroSerie} VENCIDO el {FechaVencimiento:dd/MM/yyyy}.";
 
-        var diasRestantes = FechaVencimiento.DayNumber - DateOnly.FromDateTime(DateTime.Today).DayNumber;
+        var diasRestantes = FechaVencimiento.DayNumber - HoraUruguay.Hoy().DayNumber;
         if (diasRestantes <= diasAlertaVencimiento)
             return $"⚠️ CAE {NroSerie} vence en {diasRestantes} día(s) ({FechaVencimiento:dd/MM/yyyy}).";
 

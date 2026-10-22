@@ -19,7 +19,7 @@ public class CaeManagerTests
             TipoCfe = tipo,
             RangoDesde = desde,
             RangoHasta = hasta,
-            FechaVencimiento = fechaVencimiento ?? DateOnly.FromDateTime(DateTime.Today.AddMonths(3)),
+            FechaVencimiento = fechaVencimiento ?? HoraUruguay.Hoy().AddMonths(3),
             UltimoNroUsado = ultimoUsado,
         };
 
@@ -30,9 +30,18 @@ public class CaeManagerTests
             TipoCfe = TipoCfe.ETicket,
             RangoDesde = 1,
             RangoHasta = 100,
-            FechaVencimiento = DateOnly.FromDateTime(DateTime.Today.AddDays(-1)),
+            FechaVencimiento = HoraUruguay.Hoy().AddDays(-1),
             UltimoNroUsado = 0,
         };
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(500)] // contador heredado por debajo del rango del CAE
+    public void ObtenerProximoNumero_ContadorPorDebajoDelRango_EmpiezaEnRangoDesde(long ultimoUsado)
+    {
+        var cae = CrearCaeVigente(desde: 1001, hasta: 2000, ultimoUsado: ultimoUsado);
+        Assert.Equal(1001, cae.ObtenerProximoNumero());
+    }
 
     [Fact]
     public void RegistrarCae_YObtenerCaeActivo_RetornaCae()
@@ -69,7 +78,7 @@ public class CaeManagerTests
     {
         var manager = new Cae.CaeManager();
         manager.RegistrarCae(CrearCaeVigente(
-            desde: 1, hasta: 100, ultimoUsado: 10, fechaVencimiento: DateOnly.FromDateTime(DateTime.Today.AddDays(10))));
+            desde: 1, hasta: 100, ultimoUsado: 10, fechaVencimiento: HoraUruguay.Hoy().AddDays(10)));
         manager.RegistrarCae(new Models.Cae
         {
             NroSerie = "CAE-MAS-LARGO",
@@ -77,7 +86,7 @@ public class CaeManagerTests
             RangoDesde = 1,
             RangoHasta = 20,
             UltimoNroUsado = 1,
-            FechaVencimiento = DateOnly.FromDateTime(DateTime.Today.AddDays(30)),
+            FechaVencimiento = HoraUruguay.Hoy().AddDays(30),
         });
 
         var activo = manager.ObtenerCaeActivo(TipoCfe.ETicket);
@@ -89,7 +98,7 @@ public class CaeManagerTests
     public void ObtenerCaeActivo_MismaFechaPriorizaMasDisponibles()
     {
         var manager = new Cae.CaeManager();
-        var mismaFecha = DateOnly.FromDateTime(DateTime.Today.AddDays(20));
+        var mismaFecha = HoraUruguay.Hoy().AddDays(20);
         manager.RegistrarCae(new Models.Cae
         {
             NroSerie = "CAE-POCOS",
@@ -161,7 +170,7 @@ public class CaeManagerTests
             TipoCfe = TipoCfe.ETicket,
             RangoDesde = 1,
             RangoHasta = 100,
-            FechaVencimiento = DateOnly.FromDateTime(DateTime.Today.AddDays(3)), // vence en 3 días
+            FechaVencimiento = HoraUruguay.Hoy().AddDays(3), // vence en 3 días
             UltimoNroUsado = 0,
         };
         manager.RegistrarCae(cae);

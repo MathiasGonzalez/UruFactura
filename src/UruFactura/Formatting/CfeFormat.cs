@@ -12,15 +12,17 @@ internal static class CfeFormat
     internal static string DateIso(DateOnly value) =>
         value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
-    internal static string DateCompact(DateTime value) =>
-        value.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
-
-    internal static string DateCompact(DateOnly value) =>
-        value.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
-
     internal static string DecimalInvariant(decimal value, string format) =>
         value.ToString(format, CultureInfo.InvariantCulture);
 
     internal static string MonetaryPdf(decimal value, string format = "N2") =>
         value.ToString(format, PdfMonetaryCulture);
+
+    /// <summary>
+    /// Redondeo comercial (la mitad hacia arriba), el mismo que aplica <c>ToString("F2")</c> al
+    /// escribir el XML. <see cref="Math.Round(decimal, int)"/> redondea al par por defecto y daría
+    /// montos que no coinciden con los escritos.
+    /// </summary>
+    internal static decimal Redondear(decimal value, int decimals = 2) =>
+        Math.Round(value, decimals, MidpointRounding.AwayFromZero);
 }

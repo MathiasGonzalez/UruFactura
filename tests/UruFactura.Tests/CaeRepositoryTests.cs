@@ -19,7 +19,7 @@ public class CaeRepositoryTests
             TipoCfe          = tipo,
             RangoDesde       = desde,
             RangoHasta       = hasta,
-            FechaVencimiento = fechaVencimiento ?? DateOnly.FromDateTime(DateTime.Today.AddMonths(3)),
+            FechaVencimiento = fechaVencimiento ?? HoraUruguay.Hoy().AddMonths(3),
             UltimoNroUsado   = ultimoUsado,
         };
 
@@ -76,6 +76,30 @@ public class CaeRepositoryTests
 
         Assert.Single(caes);
         Assert.Equal(500, caes[0].RangoHasta);
+    }
+
+    [Fact]
+    public async Task GuardarCaeAsync_ConContadorMenorAlGuardado_NoLoRetrocede()
+    {
+        var repo = new InMemoryCaeRepository();
+        await repo.GuardarCaeAsync(CrearCae("CAE-001", ultimoUsado: 42));
+        await repo.GuardarCaeAsync(CrearCae("CAE-001", hasta: 500, ultimoUsado: 0));
+
+        var cae = (await repo.CargarTodosAsync()).Single();
+
+        Assert.Equal(42, cae.UltimoNroUsado);
+        Assert.Equal(500, cae.RangoHasta);
+    }
+
+    [Fact]
+    public async Task ActualizarUltimoNroUsadoAsync_ValorMenor_SeIgnora()
+    {
+        var repo = new InMemoryCaeRepository();
+        await repo.GuardarCaeAsync(CrearCae("CAE-001"));
+        await repo.ActualizarUltimoNroUsadoAsync("CAE-001", 30);
+        await repo.ActualizarUltimoNroUsadoAsync("CAE-001", 10);
+
+        Assert.Equal(30, (await repo.CargarTodosAsync()).Single().UltimoNroUsado);
     }
 
     [Fact]

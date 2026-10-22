@@ -45,6 +45,20 @@ jobs:
           --configuration Release
           --output /tmp/nupkg-ci
 
+      - name: Pack UruFactura.EntityFrameworkCore (verify)
+        run: >
+          dotnet pack src/UruFactura.EntityFrameworkCore/UruFactura.EntityFrameworkCore.csproj
+          --no-build
+          --configuration Release
+          --output /tmp/nupkg-ci
+
+      - name: Pack UruFactura.Lite.EntityFrameworkCore (verify)
+        run: >
+          dotnet pack src/UruFactura.Lite.EntityFrameworkCore/UruFactura.Lite.EntityFrameworkCore.csproj
+          --no-build
+          --configuration Release
+          --output /tmp/nupkg-ci
+
       - name: Upload coverage reports
         uses: actions/upload-artifact@v4
         if: always()

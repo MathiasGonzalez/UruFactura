@@ -34,13 +34,15 @@ public interface ICaeRepository
 
     /// <summary>
     /// Persiste un nuevo CAE o sobreescribe uno existente con el mismo <see cref="Models.Cae.NroSerie"/>.
+    /// El <see cref="Models.Cae.UltimoNroUsado"/> guardado nunca debe retroceder: si el existente es
+    /// mayor, se conserva (volver a guardar un CAE con un contador viejo repetiría números).
     /// </summary>
     /// <param name="cae">CAE a guardar.</param>
     ValueTask GuardarCaeAsync(Models.Cae cae);
 
     /// <summary>
     /// Actualiza el último número de comprobante utilizado de un CAE ya guardado.
-    /// Debe llamarse inmediatamente después de cada emisión exitosa.
+    /// Debe llamarse inmediatamente después de cada emisión exitosa. Un valor menor al guardado se ignora.
     /// </summary>
     /// <param name="nroSerie">Número de serie del CAE a actualizar.</param>
     /// <param name="ultimoNroUsado">Último número emitido.</param>

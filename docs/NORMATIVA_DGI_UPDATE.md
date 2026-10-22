@@ -108,6 +108,7 @@ Los tests validan el XML generado contra los XSD oficiales (`tests/UruFactura.Te
 
 | Fecha | Versión CFE | Cambios implementados |
 |-------|-------------|----------------------|
+| 2026-10-13 | XSD 1.44.2 | Soporte de e-Resguardo (retenciones), venta por cuenta ajena, contingencia, descuentos/recargos globales en monto, medios de pago, datos adicionales; QR y pie de la representación impresa según el formato; validación del RUT (dígito verificador), tope de 5.000 UI para e-Tickets y límites de longitud del XSD; carga de CAE desde el repositorio |
 | 2026-10-12 | XSD 1.44.2 | Alineación con los XSD y WSDL oficiales de la DGI: `version="1.0"`, estructura `eTck`/`eFact`/..., `CAEData`, `TmstFirma`, sobre `EnvioCFE`, SOAP `Datain/xmlData` con WS-Security, reporte diario agregado; corrección de códigos de tipo (182 = e-Resguardo, 124 = e-Remito de exportación) |
 | 2026-06-08 | v25.2 | Versión XML 25.01→25.2 tras revisión normativa DGI de junio 2026 |
 | 2026-05-21 | v25.01 | Versión XML 23.01→25.01; campos F-C8 (MntCFERef), F-C9 (MonedaCFERef), F-C10 (TpoCambioCFERef) en RefCfe; validación de Ciudad y Departamento del emisor; validación de MontoCfeRef/MonedaCfeRef en notas correctivas |

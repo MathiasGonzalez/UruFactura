@@ -40,7 +40,7 @@ public class UruFacturaClientBuilderTests : IDisposable
 
     private UruFacturaConfig ConfigValida() => new()
     {
-        RutEmisor = "210000000012",
+        RutEmisor = "219999820013",
         RazonSocialEmisor = "Empresa Test S.A.",
         DomicilioFiscal = "Av. 18 de Julio 1234",
         Ciudad = "Montevideo",
@@ -127,6 +127,44 @@ public class UruFacturaClientBuilderTests : IDisposable
     }
 
     [Fact]
+    public void Build_ConFirmanteYSoapInyectados_NoCargaElCertificadoDelDisco()
+    {
+        // Si los predeterminados se crearan igual, leer este archivo inexistente fallaría.
+        var config = ConfigValida() with { RutaCertificado = "/no/existe/certificado.p12" };
+
+        using var client = UruFacturaClientBuilder.WithDefaults(config)
+            .WithSigner(new FirmanteStub())
+            .WithSoapClient(new SoapClientStub())
+            .Build();
+
+        Assert.NotNull(client);
+    }
+
+    [Fact]
+    public void Build_DosVeces_CadaClienteTieneSusPropiasDependenciasPredeterminadas()
+    {
+        var builder = UruFacturaClientBuilder.WithDefaults(ConfigValida());
+        using var primero = builder.Build();
+        using var segundo = builder.Build();
+
+        primero.Dispose();
+
+        // El segundo sigue usable: no comparte el firmante ni el cliente SOAP ya liberados.
+        Assert.NotSame(primero.Cae, segundo.Cae);
+        Assert.NotNull(segundo.GenerarXml(CfeParaGenerar(segundo)));
+    }
+
+    private static Models.Cfe CfeParaGenerar(UruFacturaClient client)
+    {
+        var cfe = client.CrearETicket();
+        cfe.Serie = "A";
+        cfe.Numero = 1;
+        cfe.CaeData = TestData.CaeValido();
+        cfe.Detalle.Add(new Models.LineaDetalle { NombreItem = "x", Cantidad = 1, PrecioUnitario = 10m });
+        return cfe;
+    }
+
+    [Fact]
     public void WithXmlBuilder_UsaBuilderInyectado()
     {
         var xmlStub = new XmlBuilderStub("<CFE/>");
@@ -180,6 +218,7 @@ public class UruFacturaClientBuilderTests : IDisposable
     {
         var pdfStub = new PdfGeneratorStub();
         using var client = UruFacturaClientBuilder.WithDefaults(ConfigValida())
+            .WithXmlBuilder(new XmlBuilderStub())
             .WithSigner(new FirmanteStub())
             .WithSoapClient(new SoapClientStub())
             .WithPdfGenerator(pdfStub)
@@ -223,52 +262,6 @@ public class UruFacturaClientBuilderTests : IDisposable
     // -----------------------------------------------------------------------
     // Stubs internos
     // -----------------------------------------------------------------------
-
-    private sealed class XmlBuilderStub(string xml = "<CFE/>") : ICfeXmlBuilder
-    {
-        public bool LlamadoGenerar { get; private set; }
-        public string Generar(Cfe cfe) { LlamadoGenerar = true; return xml; }
-    }
-
-    private sealed class FirmanteStub : ICfeFirmante
-    {
-        public bool LlamadoFirmar { get; private set; }
-        public string Firmar(string xmlSinFirmar) { LlamadoFirmar = true; return xmlSinFirmar.Replace("<CFE/>", "<CFE><Firmado/></CFE>"); }
-        public byte[] ObtenerCertificadoDer() => [1, 2, 3];
-        public void Dispose() { }
-    }
-
-    private sealed class SoapClientStub : IDgiSoapClient
-    {
-        public bool LlamadoEnviarCfe { get; private set; }
-
-        public Task<RespuestaDgi> EnviarSobreAsync(string sobreXml, CancellationToken ct = default)
-        {
-            LlamadoEnviarCfe = true;
-            return Task.FromResult(RespuestaDgi.Exito("AS", "OK"));
-        }
-
-        public Task<RespuestaDgi> ConsultarEstadoEnvioAsync(string idReceptor, string token, CancellationToken ct = default)
-            => Task.FromResult(RespuestaDgi.Exito("AE", "OK"));
-
-        public Task<RespuestaDgi> ConsultarEstadoCfeAsync(int tipo, string serie, long numero, CancellationToken ct = default)
-            => Task.FromResult(RespuestaDgi.Exito("AE", "OK"));
-
-        public Task<RespuestaDgi> EnviarReporteDiarioAsync(string reporteFirmadoXml, CancellationToken ct = default)
-            => Task.FromResult(RespuestaDgi.Exito("AR", "OK"));
-
-        public IDgiSoapClient WithHttpClient(HttpClient httpClient) => this;
-
-        public void Dispose() { }
-    }
-
-    private sealed class PdfGeneratorStub : ICfePdfGenerator
-    {
-        public bool LlamadoGenerarA4 { get; private set; }
-        public bool LlamadoGenerarTermico { get; private set; }
-        public byte[] GenerarA4(Cfe cfe) { LlamadoGenerarA4 = true; return [1, 2, 3]; }
-        public byte[] GenerarTermico(Cfe cfe) { LlamadoGenerarTermico = true; return [4, 5, 6]; }
-    }
 
     private sealed class CaeManagerStub : ICaeManager
     {

@@ -1,5 +1,3 @@
-using UruFactura.Enums;
-
 namespace UruFactura.Cae;
 
 /// <summary>
@@ -14,17 +12,16 @@ namespace UruFactura.Cae;
 /// </summary>
 public class InMemoryCaeRepository : ICaeRepository
 {
-    private readonly Dictionary<string, CaeSnapshot> _datos = new();
+    // Guarda y devuelve copias: el CaeManager incrementa el contador de las instancias que registra.
+    private readonly Dictionary<string, Models.Cae> _datos = new();
     private readonly Lock _lock = new();
 
     /// <inheritdoc/>
     public virtual ValueTask<IEnumerable<Models.Cae>> CargarTodosAsync()
     {
         lock (_lock)
-        {
-            var caes = _datos.Values.Select(s => s.ToCae()).ToList();
-            return new ValueTask<IEnumerable<Models.Cae>>(caes);
-        }
+            return ValueTask.FromResult<IEnumerable<Models.Cae>>(
+                _datos.Values.Select(c => Copia(c, c.UltimoNroUsado)).ToList());
     }
 
     /// <inheritdoc/>
@@ -34,7 +31,10 @@ public class InMemoryCaeRepository : ICaeRepository
 
         lock (_lock)
         {
-            _datos[cae.NroSerie] = CaeSnapshot.FromCae(cae);
+            var ultimo = _datos.TryGetValue(cae.NroSerie, out var existente)
+                ? Math.Max(cae.UltimoNroUsado, existente.UltimoNroUsado)
+                : cae.UltimoNroUsado;
+            _datos[cae.NroSerie] = Copia(cae, ultimo);
         }
 
         return ValueTask.CompletedTask;
@@ -47,51 +47,25 @@ public class InMemoryCaeRepository : ICaeRepository
 
         lock (_lock)
         {
-            if (!_datos.TryGetValue(nroSerie, out var snapshot))
+            if (!_datos.TryGetValue(nroSerie, out var existente))
                 throw new KeyNotFoundException(
                     $"No se encontró un CAE con NroSerie '{nroSerie}'.");
 
-            snapshot.UltimoNroUsado = ultimoNroUsado;
+            _datos[nroSerie] = Copia(existente, Math.Max(existente.UltimoNroUsado, ultimoNroUsado));
         }
 
         return ValueTask.CompletedTask;
     }
 
-    // Clase privada con estado mutable para almacenar datos del CAE en memoria.
-    // Necesaria porque Models.Cae.UltimoNroUsado solo tiene setter init.
-    private sealed class CaeSnapshot
+    private static Models.Cae Copia(Models.Cae cae, long ultimoNroUsado) => new()
     {
-        public string NroSerie { get; set; } = string.Empty;
-        public string NumeroAutorizacion { get; set; } = string.Empty;
-        public string Serie { get; set; } = string.Empty;
-        public TipoCfe TipoCfe { get; set; }
-        public long RangoDesde { get; set; }
-        public long RangoHasta { get; set; }
-        public DateOnly FechaVencimiento { get; set; }
-        public long UltimoNroUsado { get; set; }
-
-        public static CaeSnapshot FromCae(Models.Cae cae) => new()
-        {
-            NroSerie         = cae.NroSerie,
-            NumeroAutorizacion = cae.NumeroAutorizacion,
-            Serie            = cae.Serie,
-            TipoCfe          = cae.TipoCfe,
-            RangoDesde       = cae.RangoDesde,
-            RangoHasta       = cae.RangoHasta,
-            FechaVencimiento = cae.FechaVencimiento,
-            UltimoNroUsado   = cae.UltimoNroUsado,
-        };
-
-        public Models.Cae ToCae() => new()
-        {
-            NroSerie         = NroSerie,
-            NumeroAutorizacion = NumeroAutorizacion,
-            Serie            = Serie,
-            TipoCfe          = TipoCfe,
-            RangoDesde       = RangoDesde,
-            RangoHasta       = RangoHasta,
-            FechaVencimiento = FechaVencimiento,
-            UltimoNroUsado   = UltimoNroUsado,
-        };
-    }
+        NroSerie = cae.NroSerie,
+        NumeroAutorizacion = cae.NumeroAutorizacion,
+        Serie = cae.Serie,
+        TipoCfe = cae.TipoCfe,
+        RangoDesde = cae.RangoDesde,
+        RangoHasta = cae.RangoHasta,
+        FechaVencimiento = cae.FechaVencimiento,
+        UltimoNroUsado = ultimoNroUsado,
+    };
 }

@@ -130,6 +130,28 @@ public class SobreYReporteTests : IDisposable
         Assert.True(errores.Count == 0, string.Join(Environment.NewLine, errores));
     }
 
+    public static IEnumerable<object[]> TodosLosTipos() =>
+        Enum.GetValues<TipoCfe>().Select(t => new object[] { t });
+
+    [Theory]
+    [MemberData(nameof(TodosLosTipos))]
+    public void Reporte_CadaTipoDeCfe_ValidaContraXsd(TipoCfe tipo)
+    {
+        var errores = TestData.ValidarContraXsd(ReporteFirmado([TestData.CfeValido(tipo)], Dia));
+        Assert.True(errores.Count == 0, string.Join(Environment.NewLine, errores));
+    }
+
+    [Fact]
+    public void Reporte_Contingencia_InformaCantCfcEmiSinRangos()
+    {
+        var reporte = ReporteDiarioBuilder.Generar("219999820013", Dia, 0, 77, DateTimeOffset.UtcNow,
+            [TestData.CfeValido(TipoCfe.ETicketContingencia, 1), TestData.CfeValido(TipoCfe.ETicketContingencia, 2)]);
+
+        Assert.Contains("<CantCFCEmi>2</CantCFCEmi>", reporte);
+        Assert.DoesNotContain("CantDocsUtil", reporte);
+        Assert.DoesNotContain("RngDocsUtil", reporte);
+    }
+
     [Fact]
     public void Reporte_Vacio_ValidaContraXsd()
     {
@@ -188,10 +210,10 @@ public class SobreYReporteTests : IDisposable
     [Fact]
     public void Reporte_ConTipoNoSoportado_LanzaUruFacturaException()
     {
-        var resguardo = TestData.CfeValido();
-        resguardo.Tipo = TipoCfe.EResguardo;
+        var desconocido = TestData.CfeValido();
+        desconocido.Tipo = (TipoCfe)999;
 
         Assert.Throws<UruFacturaException>(() =>
-            ReporteDiarioBuilder.Generar("219999820013", Dia, 0, null, DateTimeOffset.UtcNow, [resguardo]));
+            ReporteDiarioBuilder.Generar("219999820013", Dia, 0, null, DateTimeOffset.UtcNow, [desconocido]));
     }
 }

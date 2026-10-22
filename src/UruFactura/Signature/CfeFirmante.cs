@@ -119,8 +119,8 @@ public class CfeFirmante : ICfeFirmante
     {
         try
         {
-            var doc = new XmlDocument { PreserveWhitespace = true };
-            doc.LoadXml(xmlFirmado);
+            // Puede ser un CFE de un tercero: se carga sin DTD.
+            var doc = Xml.XmlSeguro.Cargar(xmlFirmado, preservarEspacios: true);
 
             var signatureNodes = doc.GetElementsByTagName("Signature", SignedXml.XmlDsigNamespaceUrl);
             if (signatureNodes.Count != 1)

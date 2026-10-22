@@ -236,10 +236,13 @@ public class DgiSoapClientTests : IDisposable
         Assert.Contains("Firma inválida", r.Mensaje);
     }
 
-    [Fact]
-    public async Task EnviarSobre_Http502ConHtml_RetornaErrorConCodigoHttp()
+    [Theory]
+    [InlineData("Bad Gateway")]
+    [InlineData("<html><body><h1>502 Bad Gateway</h1></body></html>")]
+    [InlineData("<!DOCTYPE html><html><body>Bad Gateway</body></html>")]
+    public async Task EnviarSobre_Http502SinSoap_RetornaErrorConCodigoHttp(string cuerpo)
     {
-        var handler = new CapturingHandler { Respuesta = "<html>Bad Gateway</html>x".Replace("<html>", "Bad Gateway "), Status = HttpStatusCode.BadGateway };
+        var handler = new CapturingHandler { Respuesta = cuerpo, Status = HttpStatusCode.BadGateway };
         using var soap = new DgiSoapClient(Config(), Http(handler));
 
         var r = await soap.EnviarSobreAsync("<x/>");
@@ -247,6 +250,25 @@ public class DgiSoapClientTests : IDisposable
         Assert.False(r.Exitoso);
         Assert.Equal("502", r.Codigo);
     }
+
+    [Fact]
+    public void ProcesarSobre_ConDtd_SeRechaza()
+    {
+        const string conDtd = """
+            <?xml version="1.0"?>
+            <!DOCTYPE x [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">]>
+            <x>&b;</x>
+            """;
+        Assert.Throws<DgiCommunicationException>(() => DgiRespuestaParser.ProcesarSobre(conDtd));
+    }
+
+    [Theory]
+    [InlineData("2026-06-15T10:00:00", "2026-06-15T10:00:00-03:00")]
+    [InlineData("2026-06-15T13:00:00Z", "2026-06-15T13:00:00+00:00")]
+    [InlineData("2026-06-15T10:00:00-03:00", "2026-06-15T10:00:00-03:00")]
+    public void FechaHora_SinOffsetEsHoraDeUruguay(string texto, string esperado) =>
+        Assert.Equal(DateTimeOffset.Parse(esperado, System.Globalization.CultureInfo.InvariantCulture),
+            DgiRespuestaParser.FechaHora(texto));
 
     [Fact]
     public async Task EnviarSobre_CancelacionDelUsuario_PropagaOperationCanceledException()

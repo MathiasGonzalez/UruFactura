@@ -10,6 +10,38 @@ public class CfeModelTests
     private static Cfe CrearCfeValido() => TestData.CfeValido();
 
     [Fact]
+    public void MontoItem_CantidadConMasDe3Decimales_SeCalculaConLaCantidadDelXml()
+    {
+        // En el XML la cantidad se escribe con 3 decimales (0.333): MontoItem debe ser 0.333 × 100.
+        var linea = new LineaDetalle { NombreItem = "x", Cantidad = 0.3333m, PrecioUnitario = 100m };
+        Assert.Equal(33.30m, linea.MontoTotal);
+    }
+
+    [Fact]
+    public void CalcularTotales_MitadDeCentesimo_RedondeaHaciaArriba()
+    {
+        // IVA mínimo de 1.25 = 0.125: el redondeo al par daría 0.12; el comercial (y el F2 del XML), 0.13.
+        var cfe = TestData.CfeValido();
+        cfe.Detalle[0] = new LineaDetalle { NombreItem = "x", Cantidad = 1, PrecioUnitario = 1.25m, IndFactIva = TipoIva.Minimo };
+
+        cfe.CalcularTotales();
+
+        Assert.Equal(0.13m, cfe.IvaMinimo);
+        Assert.Equal(1.38m, cfe.MontoTotal);
+    }
+
+    [Fact]
+    public void CalcularTotales_DescuentoGlobalConMasDe2Decimales_UsaElValorEscritoEnElXml()
+    {
+        var cfe = TestData.CfeValido(); // 2 × 100 gravado a tasa básica
+        cfe.DescuentosRecargos.Add(new DescuentoRecargoGlobal { Glosa = "d", Monto = 0.125m });
+
+        cfe.CalcularTotales();
+
+        Assert.Equal(199.87m, cfe.MontoNetoBasico); // 200 − 0.13 (ValorDR escrito)
+    }
+
+    [Fact]
     public void Validar_CfeValido_NoRetornaErrores()
     {
         var cfe = CrearCfeValido();
@@ -227,7 +259,7 @@ public class CfeModelTests
     {
         var cfe = CrearCfeValido();
         cfe.Tipo = TipoCfe.EFactura;
-        cfe.Receptor = new Receptor { Documento = "210000000013", TipoDocumento = TipoDocumentoReceptor.Rut };
+        cfe.Receptor = new Receptor { Documento = "214844360018", TipoDocumento = TipoDocumentoReceptor.Rut };
         var errores = cfe.Validar();
         Assert.DoesNotContain(errores, e => e.Contains("receptor"));
     }
@@ -271,6 +303,23 @@ public class CfeModelTests
         cfe.IndTraslado = null;
         var errores = cfe.Validar();
         Assert.Contains(errores, e => e.Contains("traslado") || e.Contains("IndTraslado"));
+    }
+
+    [Fact]
+    public void Validar_ERemitoSinDireccionOCiudadDelReceptor_RetornaError()
+    {
+        var cfe = TestData.CfeValido(TipoCfe.ERemito);
+        cfe.Receptor = new Receptor
+        {
+            Documento = "214844360018",
+            TipoDocumento = TipoDocumentoReceptor.Rut,
+            RazonSocial = "Cliente S.A.",
+            Direccion = null,
+            Ciudad = null,
+        };
+        var errores = cfe.Validar();
+        Assert.Contains(errores, e => e.Contains("e-Remito requiere dirección"));
+        Assert.Contains(errores, e => e.Contains("e-Remito requiere ciudad"));
     }
 
     [Fact]

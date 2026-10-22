@@ -1,0 +1,37 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>UruFactura.EntityFrameworkCore</RootNamespace>
+    <AssemblyName>UruFactura.EntityFrameworkCore</AssemblyName>
+    <Version>1.1.0</Version>
+    <Authors>MathiasGonzalez</Authors>
+    <Description>Persistencia con Entity Framework Core para UruFactura: CAE con numeración atómica entre instancias y registro de CFE emitidos para el reporte diario.</Description>
+    <PackageTags>dgi;uruguay;efactura;cfe;facturacion-electronica;entityframeworkcore</PackageTags>
+    <PackageId>UruFactura.EntityFrameworkCore</PackageId>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/MathiasGonzalez/UruFactura</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/MathiasGonzalez/UruFactura</PackageProjectUrl>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!-- Solo la capa relacional: el proveedor (SQL Server, PostgreSQL, SQLite, ...) lo elige la aplicación. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.13" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\UruFactura\UruFactura.csproj" />
+  </ItemGroup>
+
+</Project>

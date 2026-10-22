@@ -25,7 +25,7 @@ public class UruFacturaClientTests
 
     private static UruFacturaConfig ConfigValida() => new()
     {
-        RutEmisor = "210000000012",
+        RutEmisor = "219999820013",
         RazonSocialEmisor = "Empresa Test S.A.",
         DomicilioFiscal = "Av. 18 de Julio 1234",
         Ciudad = "Montevideo",
@@ -104,14 +104,14 @@ public class UruFacturaClientTests
 
         var cfe = client.CrearETicket();
 
-        Assert.Equal("210000000012", cfe.RutEmisor);
+        Assert.Equal("219999820013", cfe.RutEmisor);
         Assert.Equal("Empresa Test S.A.", cfe.RazonSocialEmisor);
         Assert.Equal("Comercio X", cfe.NombreComercialEmisor);
         Assert.Equal("Venta de servicios", cfe.Giro);
         Assert.Equal("Av. 18 de Julio 1234", cfe.DomicilioFiscalEmisor);
         Assert.Equal("Montevideo", cfe.CiudadEmisor);
         Assert.Equal("Montevideo", cfe.DepartamentoEmisor);
-        Assert.Equal(DateOnly.FromDateTime(DateTime.Today), cfe.FechaEmision);
+        Assert.Equal(HoraUruguay.Hoy(), cfe.FechaEmision);
     }
 
     [Fact]
@@ -119,7 +119,7 @@ public class UruFacturaClientTests
     {
         using var client = CrearCliente();
         var cfe = client.CrearETicket();
-        Assert.Equal(DateOnly.FromDateTime(DateTime.Today), cfe.FechaEmision);
+        Assert.Equal(HoraUruguay.Hoy(), cfe.FechaEmision);
     }
 
     // -----------------------------------------------------------------------
@@ -298,7 +298,7 @@ public class UruFacturaClientTests
         doc.LoadXml(soapStub.UltimoSobre!);
         Assert.Equal("EnvioCFE", doc.DocumentElement!.LocalName);
         Assert.Equal("1", doc.GetElementsByTagName("CantCFE")[0]!.InnerText);
-        Assert.Equal("210000000012", doc.GetElementsByTagName("RUCEmisor")[0]!.InnerText);
+        Assert.Equal("219999820013", doc.GetElementsByTagName("RUCEmisor")[0]!.InnerText);
         Assert.Equal("214844360018", doc.GetElementsByTagName("RutReceptor")[0]!.InnerText);
         Assert.Equal(Convert.ToBase64String(new byte[] { 1, 2, 3 }), doc.GetElementsByTagName("X509Certificate")[0]!.InnerText);
         Assert.Single(doc.GetElementsByTagName("Firmado"));
@@ -396,6 +396,46 @@ public class UruFacturaClientTests
             client.ConsultarEstadoCfeAsync(client.CrearETicket()));
     }
 
+    [Fact]
+    public async Task ConsultarEstadoCfeAsync_SinNumero_NoConsultaALaDgi()
+    {
+        var soapStub = new SoapClientStub();
+        using var client = CrearCliente(soapClient: soapStub);
+        var cfe = client.CrearETicket();
+        cfe.Serie = "A";
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.ConsultarEstadoCfeAsync(cfe));
+        Assert.False(soapStub.LlamadoConsultarEstado);
+    }
+
+    [Fact]
+    public async Task EnviarCfesAsync_MasDe250_FallaAntesDeFirmarYRegistrar()
+    {
+        var firmante = new FirmanteStub();
+        var registro = new CfeRepositorySpy();
+        using var client = new UruFacturaClient(
+            ConfigValida(), new XmlBuilderStub(), firmante, new CaeManager(), new SoapClientStub(), null, null, registro);
+        var cfes = Enumerable.Range(1, 251).Select(_ => client.CrearETicket()).ToList();
+
+        await Assert.ThrowsAsync<UruFactura.Exceptions.UruFacturaException>(() => client.EnviarCfesAsync(cfes));
+        Assert.Equal(0, firmante.ContadorFirmar);
+        Assert.Equal(0, registro.Guardados);
+    }
+
+    private sealed class CfeRepositorySpy : UruFactura.Persistence.ICfeRepository
+    {
+        public int Guardados { get; private set; }
+
+        public ValueTask GuardarAsync(IReadOnlyCollection<Cfe> cfes, CancellationToken ct = default)
+        {
+            Guardados += cfes.Count;
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask<IReadOnlyList<Cfe>> ObtenerPorFechaEmisionAsync(DateOnly fecha, CancellationToken ct = default) =>
+            ValueTask.FromResult<IReadOnlyList<Cfe>>([]);
+    }
+
     // -----------------------------------------------------------------------
     // EnviarReporteDiarioAsync
     // -----------------------------------------------------------------------
@@ -457,6 +497,39 @@ public class UruFacturaClientTests
         Assert.Contains("<CantComprobantes>0</CantComprobantes>", soapStub.UltimoReporte);
     }
 
+    [Fact]
+    public async Task EnviarReporteDiarioAsync_CfeReconstruidoSinDetalle_ConservaLosTotalesGuardados()
+    {
+        var soapStub = new SoapClientStub();
+        using var client = CrearCliente(soapClient: soapStub);
+        var dia = new DateOnly(2026, 6, 15);
+        // Como lo devolvería una base que guarda solo los totales.
+        var guardado = new Cfe
+        {
+            Tipo = TipoCfe.ETicket, Serie = "A", Numero = 7, FechaEmision = dia,
+            MontoNetoBasico = 1000m, IvaBasico = 220m, MontoTotal = 1220m,
+        };
+
+        await client.EnviarReporteDiarioAsync(dia.ToDateTime(TimeOnly.MinValue), [guardado]);
+
+        Assert.Contains("<TotMntTotal>1220.00</TotMntTotal>", soapStub.UltimoReporte);
+        Assert.Equal(1220m, guardado.MontoTotal);
+    }
+
+    [Fact]
+    public async Task EnviarReporteDiarioAsync_PorFechaSinCfeRepository_LanzaInvalidOperation()
+    {
+        using var client = CrearCliente();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.EnviarReporteDiarioAsync(HoraUruguay.Hoy()));
+    }
+
+    [Fact]
+    public async Task RegistrarCfesAsync_SinCfeRepository_LanzaInvalidOperation()
+    {
+        using var client = CrearCliente();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.RegistrarCfesAsync([client.CrearETicket()]));
+    }
+
     // -----------------------------------------------------------------------
     // AsignarCae
     // -----------------------------------------------------------------------
@@ -469,7 +542,7 @@ public class UruFacturaClientTests
         TipoCfe = TipoCfe.ETicket,
         RangoDesde = desde,
         RangoHasta = hasta,
-        FechaVencimiento = DateOnly.FromDateTime(DateTime.Today).AddYears(1),
+        FechaVencimiento = HoraUruguay.Hoy().AddYears(1),
     };
 
     [Fact]
@@ -538,6 +611,58 @@ public class UruFacturaClientTests
 
         var guardado = (await repo.CargarTodosAsync()).Single();
         Assert.Equal(10, guardado.UltimoNroUsado);
+    }
+
+    [Fact]
+    public async Task CargarCaesAsync_RegistraLosDelRepositorioConSuUltimoNumero()
+    {
+        var repo = new InMemoryCaeRepository();
+        var cae = NuevoCae();
+        await repo.GuardarCaeAsync(cae);
+        await repo.ActualizarUltimoNroUsadoAsync(cae.NroSerie, 14);
+        using var client = new UruFacturaClient(
+            ConfigValida(), new XmlBuilderStub(), new FirmanteStub(), new CaeManager(), new SoapClientStub(), null, repo);
+
+        var cargados = await client.CargarCaesAsync();
+        var cfe = client.CrearETicket();
+        client.AsignarCae(cfe);
+
+        Assert.Equal(1, cargados);
+        Assert.Equal(15, cfe.Numero); // continúa donde quedó, sin repetir números
+    }
+
+    [Fact]
+    public async Task CargarCaesAsync_EsIdempotente()
+    {
+        var repo = new InMemoryCaeRepository();
+        await repo.GuardarCaeAsync(NuevoCae());
+        using var client = new UruFacturaClient(
+            ConfigValida(), new XmlBuilderStub(), new FirmanteStub(), new CaeManager(), new SoapClientStub(), null, repo);
+
+        await client.CargarCaesAsync();
+        await client.CargarCaesAsync();
+
+        Assert.Single(client.Cae.ObtenerTodosLosCaes());
+    }
+
+    [Fact]
+    public async Task CargarCaesAsync_SinRepositorio_RetornaCero()
+    {
+        using var client = CrearCliente();
+        Assert.Equal(0, await client.CargarCaesAsync());
+    }
+
+    [Fact]
+    public async Task RegistrarCaeAsync_LoGuardaEnElRepositorio()
+    {
+        var repo = new InMemoryCaeRepository();
+        using var client = new UruFacturaClient(
+            ConfigValida(), new XmlBuilderStub(), new FirmanteStub(), new CaeManager(), new SoapClientStub(), null, repo);
+
+        await client.RegistrarCaeAsync(NuevoCae());
+
+        Assert.Single(client.Cae.ObtenerTodosLosCaes());
+        Assert.Single(await repo.CargarTodosAsync());
     }
 
     [Fact]
@@ -697,93 +822,5 @@ public class UruFacturaClientTests
         var client = CrearCliente(pdfGenerator: pdfStub);
         client.Dispose();
         Assert.Throws<ObjectDisposedException>(() => client.GenerarPdfTermico(new Cfe { Tipo = TipoCfe.ETicket }));
-    }
-
-    // -----------------------------------------------------------------------
-    // Stubs internos
-    // -----------------------------------------------------------------------
-
-    private sealed class XmlBuilderStub(string xml = "<CFE/>") : ICfeXmlBuilder
-    {
-        public bool LlamadoGenerar { get; private set; }
-        public string Generar(Cfe cfe) { LlamadoGenerar = true; return xml; }
-    }
-
-    private sealed class FirmanteStub : ICfeFirmante
-    {
-        public bool LlamadoFirmar => ContadorFirmar > 0;
-        public int ContadorFirmar { get; set; }
-        public bool Disposed { get; private set; }
-
-        public string Firmar(string xmlSinFirmar)
-        {
-            ContadorFirmar++;
-            return xmlSinFirmar.Replace("<CFE/>", "<CFE><Firmado/></CFE>");
-        }
-
-        public byte[] ObtenerCertificadoDer() => [1, 2, 3];
-        public void Dispose() { Disposed = true; }
-    }
-
-    private sealed class SoapClientStub(
-        string codigo = "AS",
-        string mensaje = "OK",
-        bool exitoso = true) : IDgiSoapClient
-    {
-        public bool LlamadoEnviarCfe { get; private set; }
-        public bool LlamadoConsultarEstado { get; private set; }
-        public bool LlamadoEnviarReporte { get; private set; }
-        public bool Disposed { get; private set; }
-        public string? UltimoSobre { get; private set; }
-        public string? UltimoReporte { get; private set; }
-        public string? UltimoIdReceptorConsultado { get; private set; }
-        public List<EstadoComprobante> EstadoEnvio { get; } = [];
-
-        private RespuestaDgi Respuesta() => exitoso
-            ? RespuestaDgi.Exito(codigo, mensaje)
-            : RespuestaDgi.Error(codigo, mensaje);
-
-        public Task<RespuestaDgi> EnviarSobreAsync(string sobreXml, CancellationToken ct = default)
-        {
-            LlamadoEnviarCfe = true;
-            UltimoSobre = sobreXml;
-            var r = Respuesta();
-            r.IdReceptor = "555";
-            r.Token = "tok";
-            return Task.FromResult(r);
-        }
-
-        public Task<RespuestaDgi> ConsultarEstadoEnvioAsync(string idReceptor, string token, CancellationToken ct = default)
-        {
-            LlamadoConsultarEstado = true;
-            UltimoIdReceptorConsultado = idReceptor;
-            var r = Respuesta();
-            r.Comprobantes = EstadoEnvio;
-            return Task.FromResult(r);
-        }
-
-        public Task<RespuestaDgi> ConsultarEstadoCfeAsync(int tipo, string serie, long numero, CancellationToken ct = default)
-        {
-            LlamadoConsultarEstado = true;
-            return Task.FromResult(Respuesta());
-        }
-
-        public Task<RespuestaDgi> EnviarReporteDiarioAsync(string reporteFirmadoXml, CancellationToken ct = default)
-        {
-            LlamadoEnviarReporte = true;
-            UltimoReporte = reporteFirmadoXml;
-            return Task.FromResult(Respuesta());
-        }
-
-        public IDgiSoapClient WithHttpClient(HttpClient httpClient) => this;
-        public void Dispose() { Disposed = true; }
-    }
-
-    private sealed class PdfGeneratorStub : ICfePdfGenerator
-    {
-        public bool LlamadoGenerarA4 { get; private set; }
-        public bool LlamadoGenerarTermico { get; private set; }
-        public byte[] GenerarA4(Cfe cfe) { LlamadoGenerarA4 = true; return [1, 2, 3]; }
-        public byte[] GenerarTermico(Cfe cfe) { LlamadoGenerarTermico = true; return [4, 5, 6]; }
     }
 }

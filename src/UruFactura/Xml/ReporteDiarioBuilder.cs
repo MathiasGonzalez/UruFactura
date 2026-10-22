@@ -1,10 +1,10 @@
 using System.Globalization;
-using System.Text;
 using System.Xml;
 using UruFactura.Enums;
 using UruFactura.Exceptions;
 using UruFactura.Formatting;
 using UruFactura.Models;
+using static UruFactura.Xml.XmlCfe;
 
 namespace UruFactura.Xml;
 
@@ -16,23 +16,48 @@ namespace UruFactura.Xml;
 /// </summary>
 public static class ReporteDiarioBuilder
 {
-    // Orden y nombre de los resúmenes tal como los exige el XSD (los no soportados se omiten).
+    // Orden y nombre de los resúmenes tal como los exige el XSD.
     private static readonly (TipoCfe Tipo, string Elemento, Resumen Clase)[] Resumenes =
     [
-        (TipoCfe.ETicket,                        "Rsmn_Tck",                      Resumen.FacturaYTicket),
-        (TipoCfe.NotaCreditoETicket,             "Rsmn_Tck_Nota_Credito",         Resumen.FacturaYTicket),
-        (TipoCfe.NotaDebitoETicket,              "Rsmn_Tck_Nota_Debito",          Resumen.FacturaYTicket),
-        (TipoCfe.EFactura,                       "Rsmn_Fac",                      Resumen.FacturaYTicket),
-        (TipoCfe.NotaCreditoEFactura,            "Rsmn_Fac_Nota_Credito",         Resumen.FacturaYTicket),
-        (TipoCfe.NotaDebitoEFactura,             "Rsmn_Fac_Nota_Debito",          Resumen.FacturaYTicket),
-        (TipoCfe.EFacturaExportacion,            "Rsmn_Fac_Exp",                  Resumen.Exportacion),
-        (TipoCfe.NotaCreditoEFacturaExportacion, "Rsmn_Fac_Exp_Nota_Credito",     Resumen.Exportacion),
-        (TipoCfe.NotaDebitoEFacturaExportacion,  "Rsmn_Fac_Exp_Nota_Debito",      Resumen.Exportacion),
-        (TipoCfe.ERemito,                        "Rsmn_Rem",                      Resumen.Remito),
-        (TipoCfe.ERemitoExportacion,             "Rsmn_Rem_Exp",                  Resumen.RemitoExportacion),
+        (TipoCfe.ETicket,                                   "Rsmn_Tck",                           Resumen.FacturaYTicket),
+        (TipoCfe.NotaCreditoETicket,                        "Rsmn_Tck_Nota_Credito",              Resumen.FacturaYTicket),
+        (TipoCfe.NotaDebitoETicket,                         "Rsmn_Tck_Nota_Debito",               Resumen.FacturaYTicket),
+        (TipoCfe.ETicketContingencia,                       "Rsmn_Tck_Cont",                      Resumen.FacturaYTicket),
+        (TipoCfe.NotaCreditoETicketContingencia,            "Rsmn_Tck_Cont_Nota_Credito",         Resumen.FacturaYTicket),
+        (TipoCfe.NotaDebitoETicketContingencia,             "Rsmn_Tck_Cont_Nota_Debito",          Resumen.FacturaYTicket),
+        (TipoCfe.ETicketCuentaAjena,                        "Rsmn_Tck_CtaAj",                     Resumen.FacturaYTicket),
+        (TipoCfe.NotaCreditoETicketCuentaAjena,             "Rsmn_Tck_Nota_Credito_CtaAj",        Resumen.FacturaYTicket),
+        (TipoCfe.NotaDebitoETicketCuentaAjena,              "Rsmn_Tck_Nota_Debito_CtaAj",         Resumen.FacturaYTicket),
+        (TipoCfe.ETicketCuentaAjenaContingencia,            "Rsmn_Tck_CtaAj_Cont",                Resumen.FacturaYTicket),
+        (TipoCfe.NotaCreditoETicketCuentaAjenaContingencia, "Rsmn_Tck_CtaAj_Cont_Nota_Credito",   Resumen.FacturaYTicket),
+        (TipoCfe.NotaDebitoETicketCuentaAjenaContingencia,  "Rsmn_Tck_CtaAj_Cont_Nota_Debito",    Resumen.FacturaYTicket),
+        (TipoCfe.EFactura,                                  "Rsmn_Fac",                           Resumen.FacturaYTicket),
+        (TipoCfe.NotaCreditoEFactura,                       "Rsmn_Fac_Nota_Credito",              Resumen.FacturaYTicket),
+        (TipoCfe.NotaDebitoEFactura,                        "Rsmn_Fac_Nota_Debito",               Resumen.FacturaYTicket),
+        (TipoCfe.EFacturaContingencia,                      "Rsmn_Fac_Cont",                      Resumen.FacturaYTicket),
+        (TipoCfe.NotaCreditoEFacturaContingencia,           "Rsmn_Fac_Cont_Nota_Credito",         Resumen.FacturaYTicket),
+        (TipoCfe.NotaDebitoEFacturaContingencia,            "Rsmn_Fac_Cont_Nota_Debito",          Resumen.FacturaYTicket),
+        (TipoCfe.EFacturaCuentaAjena,                       "Rsmn_Fac_CtaAj",                     Resumen.FacturaYTicket),
+        (TipoCfe.NotaCreditoEFacturaCuentaAjena,            "Rsmn_Fac_Nota_Credito_CtaAj",        Resumen.FacturaYTicket),
+        (TipoCfe.NotaDebitoEFacturaCuentaAjena,             "Rsmn_Fac_Nota_Debito_CtaAj",         Resumen.FacturaYTicket),
+        (TipoCfe.EFacturaCuentaAjenaContingencia,           "Rsmn_Fac_CtaAj_Cont",                Resumen.FacturaYTicket),
+        (TipoCfe.NotaCreditoEFacturaCuentaAjenaContingencia,"Rsmn_Fac_CtaAj_Cont_Nota_Credito",   Resumen.FacturaYTicket),
+        (TipoCfe.NotaDebitoEFacturaCuentaAjenaContingencia, "Rsmn_Fac_CtaAj_Cont_Nota_Debito",    Resumen.FacturaYTicket),
+        (TipoCfe.EFacturaExportacion,                       "Rsmn_Fac_Exp",                       Resumen.Exportacion),
+        (TipoCfe.NotaCreditoEFacturaExportacion,            "Rsmn_Fac_Exp_Nota_Credito",          Resumen.Exportacion),
+        (TipoCfe.NotaDebitoEFacturaExportacion,             "Rsmn_Fac_Exp_Nota_Debito",           Resumen.Exportacion),
+        (TipoCfe.EFacturaExportacionContingencia,           "Rsmn_Fac_Exp_Cont",                  Resumen.Exportacion),
+        (TipoCfe.NotaCreditoEFacturaExportacionContingencia,"Rsmn_Fac_Exp_Cont_Nota_Credito",     Resumen.Exportacion),
+        (TipoCfe.NotaDebitoEFacturaExportacionContingencia, "Rsmn_Fac_Exp_Cont_Nota_Debito",      Resumen.Exportacion),
+        (TipoCfe.ERemito,                                   "Rsmn_Rem",                           Resumen.Remito),
+        (TipoCfe.ERemitoContingencia,                       "Rsmn_Rem_Cont",                      Resumen.Remito),
+        (TipoCfe.ERemitoExportacion,                        "Rsmn_Rem_Exp",                       Resumen.RemitoExportacion),
+        (TipoCfe.ERemitoExportacionContingencia,            "Rsmn_Rem_Exp_Cont",                  Resumen.RemitoExportacion),
+        (TipoCfe.EResguardo,                                "Rsmn_Resg",                          Resumen.Resguardo),
+        (TipoCfe.EResguardoContingencia,                    "Rsmn_Resg_Cont",                     Resumen.Resguardo),
     ];
 
-    private enum Resumen { FacturaYTicket, Exportacion, Remito, RemitoExportacion }
+    private enum Resumen { FacturaYTicket, Exportacion, Remito, RemitoExportacion, Resguardo }
 
     /// <summary>
     /// Genera el reporte (sin firmar) con los CFE emitidos en <paramref name="fecha"/>.
@@ -60,8 +85,7 @@ public static class ReporteDiarioBuilder
             throw new UruFacturaException(
                 $"El reporte diario no soporta los tipos: {string.Join(", ", noSoportados)}.");
 
-        using var ms = new MemoryStream();
-        using (var w = XmlWriter.Create(ms, new XmlWriterSettings { Encoding = new UTF8Encoding(false), Indent = false }))
+        return Escribir(w =>
         {
             w.WriteStartDocument();
             w.WriteStartElement("Reporte", CfeXmlBuilder.NsUri);
@@ -87,17 +111,23 @@ public static class ReporteDiarioBuilder
                 El(w, "TipoComp", ((int)tipo).ToString(CultureInfo.InvariantCulture));
                 w.WriteStartElement("RsmnData", CfeXmlBuilder.NsUri);
                 EscribirMontos(w, grupo, clase);
-                El(w, "CantDocsUtil", grupo.Count.ToString(CultureInfo.InvariantCulture));
-                EscribirRangos(w, grupo);
+                if (tipo.EsContingencia())
+                {
+                    // Los CFC (RsmnData_*_Cont) no informan rangos: solo la cantidad emitida.
+                    El(w, "CantCFCEmi", grupo.Count.ToString(CultureInfo.InvariantCulture));
+                }
+                else
+                {
+                    El(w, "CantDocsUtil", grupo.Count.ToString(CultureInfo.InvariantCulture));
+                    EscribirRangos(w, grupo);
+                }
                 w.WriteEndElement(); // RsmnData
                 w.WriteEndElement(); // Rsmn_*
             }
 
             w.WriteEndElement(); // Reporte
             w.WriteEndDocument();
-        }
-
-        return Encoding.UTF8.GetString(ms.ToArray());
+        });
     }
 
     private static void EscribirMontos(XmlWriter w, List<Cfe> grupo, Resumen clase)
@@ -106,18 +136,19 @@ public static class ReporteDiarioBuilder
             .GroupBy(c => (c.FechaEmision, c.CodigoSucursal))
             .OrderBy(g => g.Key.FechaEmision).ThenBy(g => g.Key.CodigoSucursal);
 
+        var item = clase switch
+        {
+            Resumen.FacturaYTicket => "Mnts_FyT_Item",
+            Resumen.Exportacion => "Mnts_FExp_Item",
+            Resumen.Remito => "Mnts_Rem_Item",
+            Resumen.Resguardo => "Mnts_Res_Item",
+            _ => "Mnts_Rem_Exp_Item",
+        };
+
         w.WriteStartElement("Montos", CfeXmlBuilder.NsUri);
         foreach (var g in porDiaYSucursal)
         {
-            var nombre = clase switch
-            {
-                Resumen.FacturaYTicket => "Mnts_FyT_Item",
-                Resumen.Exportacion => "Mnts_FExp_Item",
-                Resumen.Remito => "Mnts_Rem_Item",
-                _ => "Mnts_Rem_Exp_Item",
-            };
-
-            w.WriteStartElement(nombre, CfeXmlBuilder.NsUri);
+            w.WriteStartElement(item, CfeXmlBuilder.NsUri);
             El(w, "Fecha", CfeFormat.DateIso(g.Key.FechaEmision));
             El(w, "CodSuc", g.Key.CodigoSucursal.ToString(CultureInfo.InvariantCulture));
 
@@ -139,6 +170,10 @@ public static class ReporteDiarioBuilder
                     El(w, "TotMntTotal", M2(g.Sum(c => c.MontoTotal)));
                     break;
 
+                case Resumen.Resguardo:
+                    El(w, "TotMntRetenido", M2(g.Sum(c => c.MontoRetenido)));
+                    break;
+
                 case Resumen.Exportacion:
                 case Resumen.RemitoExportacion:
                     El(w, "TotMntExpyAsim", M2(g.Sum(c => c.MontoExportacion)));
@@ -157,36 +192,20 @@ public static class ReporteDiarioBuilder
         w.WriteStartElement("RngDocsUtil", CfeXmlBuilder.NsUri);
         foreach (var serie in grupo.GroupBy(c => c.Serie).OrderBy(g => g.Key, StringComparer.Ordinal))
         {
-            var numeros = serie.Select(c => c.Numero).Distinct().OrderBy(n => n).ToList();
-            var desde = numeros[0];
-            var hasta = desde;
-            for (int i = 1; i <= numeros.Count; i++)
-            {
-                if (i < numeros.Count && numeros[i] == hasta + 1)
-                {
-                    hasta = numeros[i];
-                    continue;
-                }
+            // En una lista ordenada y sin repetidos, los números consecutivos comparten (número − posición).
+            var rangos = serie.Select(c => c.Numero).Distinct().Order()
+                .Select((numero, i) => (numero, tramo: numero - i))
+                .GroupBy(x => x.tramo, x => x.numero);
 
+            foreach (var rango in rangos)
+            {
                 w.WriteStartElement("RDU_Item", CfeXmlBuilder.NsUri);
                 El(w, "Serie", serie.Key ?? string.Empty);
-                El(w, "NroDesde", desde.ToString(CultureInfo.InvariantCulture));
-                El(w, "NroHasta", hasta.ToString(CultureInfo.InvariantCulture));
+                El(w, "NroDesde", rango.First().ToString(CultureInfo.InvariantCulture));
+                El(w, "NroHasta", rango.Last().ToString(CultureInfo.InvariantCulture));
                 w.WriteEndElement();
-
-                if (i < numeros.Count)
-                    desde = hasta = numeros[i];
             }
         }
         w.WriteEndElement();
     }
-
-    private static void El(XmlWriter w, string name, string value)
-    {
-        w.WriteStartElement(name, CfeXmlBuilder.NsUri);
-        w.WriteString(value);
-        w.WriteEndElement();
-    }
-
-    private static string M2(decimal v) => CfeFormat.DecimalInvariant(v, "F2");
 }
