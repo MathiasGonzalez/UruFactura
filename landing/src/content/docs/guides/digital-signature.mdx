@@ -90,10 +90,18 @@ catch (FirmaDigitalException ex)   // archivo inexistente, contraseña incorrect
 Para verificar un CFE firmado (por ejemplo, uno recibido de un proveedor):
 
 ```csharp
-bool valida = FirmaDigital.Verificar(xmlFirmado);
+X509Certificate2? firmante = FirmaDigital.VerificarFirma(xmlFirmado);
+if (firmante is null)
+    throw new Exception("La firma no es válida.");
+
+// La firma solo prueba que el XML no cambió desde que lo firmó el titular del certificado, que viene
+// en el propio XML: comprobá que el certificado sea del emisor (por ejemplo, que su sujeto contenga
+// el RUT de RUCEmisor) y, si corresponde, su cadena de confianza.
+if (!firmante.Subject.Contains(rutEmisor))
+    throw new Exception("El CFE no está firmado por el emisor.");
 ```
 
-Comprueba que haya exactamente una firma, hija directa de la raíz, que referencie el documento completo y sea criptográficamente válida (no valida la cadena de confianza del certificado).
+Comprueba que haya exactamente una firma, hija directa de la raíz, que referencie el documento completo, que incluya el certificado y que sea criptográficamente válida con él. Devuelve ese certificado, o `null` si algo falla.
 
 ---
 

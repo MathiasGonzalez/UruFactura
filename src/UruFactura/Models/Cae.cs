@@ -27,9 +27,6 @@ public sealed record Cae
     /// <summary>Último número usado (0 si todavía no se usó). Lo actualiza el almacenamiento al numerar.</summary>
     public long UltimoNroUsado { get; init; }
 
-    /// <summary>Indica si el CAE no venció (según la fecha de Uruguay).</summary>
-    public bool EsVigente => EsVigenteEn(HoraUruguay.Hoy());
-
     /// <summary>Cantidad de números que quedan por usar.</summary>
     public long Disponibles => Math.Max(0, RangoHasta - Math.Max(UltimoNroUsado, RangoDesde - 1));
 
@@ -45,7 +42,13 @@ public sealed record Cae
         }
     }
 
-    internal bool EsVigenteEn(DateOnly hoy) => hoy <= FechaVencimiento;
+    /// <summary>Indica si el CAE sigue vigente en <paramref name="fecha"/> (vence al final de <see cref="FechaVencimiento"/>).</summary>
+    /// <param name="fecha">Fecha a evaluar, en general <c>HoraUruguay.Hoy()</c>.</param>
+    public bool EsVigenteEn(DateOnly fecha) => fecha <= FechaVencimiento;
+
+    /// <summary>Indica si comparte números con <paramref name="otro"/>: mismo tipo y serie, y rangos superpuestos.</summary>
+    internal bool SeSuperponeCon(Cae otro) =>
+        TipoCfe == otro.TipoCfe && Serie == otro.Serie && RangoDesde <= otro.RangoHasta && otro.RangoDesde <= RangoHasta;
 
     /// <summary>El número que se asigna al reservar (un contador por debajo del rango arranca en <see cref="RangoDesde"/>).</summary>
     internal long ProximoNumero => Math.Max(UltimoNroUsado + 1, RangoDesde);
@@ -68,7 +71,7 @@ public sealed record Cae
             yield return "NumeroAutorizacion debe tener entre 1 y 11 dígitos.";
         if (!Enum.IsDefined(TipoCfe))
             yield return $"El tipo de CFE {(int)TipoCfe} no está soportado.";
-        if (!SerieValida(Serie))
+        if (!Validacion.EsSerie(Serie))
             yield return "La serie debe ser una letra, dos letras o un dígito 1-9 seguido de una letra (ej: \"A\", \"AB\", \"1A\").";
         if (RangoDesde is < 1 or > 9_999_999 || RangoHasta is < 1 or > 9_999_999 || RangoDesde > RangoHasta)
             yield return "El rango autorizado debe estar entre 1 y 9999999, con RangoDesde ≤ RangoHasta.";
@@ -93,10 +96,4 @@ public sealed record Cae
             return $"⚠️ {nombre} usó el {PorcentajeUso}% de su rango.";
         return null;
     }
-
-    private static bool SerieValida(string? serie) =>
-        serie is { Length: 1 } && char.IsAsciiLetterUpper(serie[0])
-        || serie is { Length: 2 }
-           && (char.IsAsciiLetterUpper(serie[0]) && char.IsAsciiLetterUpper(serie[1])
-               || serie[0] is >= '1' and <= '9' && char.IsAsciiLetterUpper(serie[1]));
 }

@@ -10,11 +10,14 @@ public class UruFacturaClientTests
         TipoCfe tipo = TipoCfe.ETicket, TimeProvider? reloj = null, UruFacturaConfig? config = null)
     {
         var dgi = new DgiStub();
-        var store = new InMemoryStore();
+        var store = new InMemoryStore(reloj ?? TestData.Reloj);
         var client = dgi.Cliente(store, reloj, config);
         await client.RegistrarCaeAsync(TestData.Cae(tipo));
         return (client, dgi, store);
     }
+
+    private static async Task<List<CfeEmitido>> Listar(IUruFacturaStore store, DateOnly? fecha = null) =>
+        await store.ListarCfesAsync(fecha ?? TestData.Dia).ToListAsync();
 
     // -----------------------------------------------------------------------
     // Construcción
@@ -64,6 +67,24 @@ public class UruFacturaClientTests
         Assert.NotNull(client);
     }
 
+    private static UruFacturaConfig Produccion() =>
+        TestData.Config() with { Ambiente = Ambiente.Produccion, UrlEnvio = "https://e", UrlConsultas = "https://c" };
+
+    [Fact]
+    public void Constructor_ProduccionSinAlmacenamiento_LanzaUruFacturaException()
+    {
+        // Con el almacenamiento en memoria por defecto, un reinicio repetiría números.
+        var ex = Assert.Throws<UruFacturaException>(() => new UruFacturaClient(Produccion(), dgiClient: new DgiStub()));
+        Assert.Contains("almacenamiento", ex.Message);
+    }
+
+    [Fact]
+    public void Constructor_ProduccionConAlmacenamientoExplicito_SeCrea()
+    {
+        using var client = new UruFacturaClient(Produccion(), new InMemoryStore(), dgiClient: new DgiStub());
+        Assert.NotNull(client);
+    }
+
     // -----------------------------------------------------------------------
     // CAE
     // -----------------------------------------------------------------------
@@ -84,6 +105,62 @@ public class UruFacturaClientTests
         await client.RegistrarCaeAsync(TestData.Cae(TipoCfe.EFactura));
 
         Assert.Equal(2, (await client.ObtenerCaesAsync()).Count);
+    }
+
+    [Fact]
+    public async Task RegistrarCae_RangoSuperpuestoConOtroDeLaMismaSerie_LanzaCaeException()
+    {
+        using var client = new DgiStub().Cliente();
+        await client.RegistrarCaeAsync(TestData.Cae(desde: 1, hasta: 10));
+
+        // Un error de tipeo en RangoDesde emitiría dos veces los números 5 a 10.
+        var ex = await Assert.ThrowsAsync<CaeException>(() => client.RegistrarCaeAsync(TestData.Cae(desde: 5, hasta: 20)));
+
+        Assert.Contains("se superpone", ex.Message);
+        Assert.Single(await client.ObtenerCaesAsync());
+    }
+
+    [Fact]
+    public async Task RegistrarCae_MismoRangoEnOtraSerieOTipo_NoSeSuperpone()
+    {
+        using var client = new DgiStub().Cliente();
+        await client.RegistrarCaeAsync(TestData.Cae(desde: 1, hasta: 10));
+
+        await client.RegistrarCaeAsync(TestData.Cae(serie: "B", desde: 1, hasta: 10));
+        await client.RegistrarCaeAsync(TestData.Cae(TipoCfe.EFactura, desde: 1, hasta: 10));
+        // El mismo CAE (tipo, serie y comienzo de rango) se actualiza.
+        await client.RegistrarCaeAsync(TestData.Cae(desde: 1, hasta: 20));
+
+        Assert.Equal(3, (await client.ObtenerCaesAsync()).Count);
+    }
+
+    [Fact]
+    public async Task EliminarCae_SinUsar_LoElimina()
+    {
+        using var client = new DgiStub().Cliente();
+        await client.RegistrarCaeAsync(TestData.Cae(desde: 101, hasta: 200));
+
+        await client.EliminarCaeAsync(TestData.Cae(desde: 101, hasta: 200));
+
+        Assert.Empty(await client.ObtenerCaesAsync());
+    }
+
+    [Fact]
+    public async Task EliminarCae_ConNumerosUsados_LanzaCaeException()
+    {
+        var (client, _, _) = await ClienteConCae();
+        using var _ = client;
+        await client.EmitirAsync(TestData.CfeValido());
+
+        await Assert.ThrowsAsync<CaeException>(() => client.EliminarCaeAsync(TestData.Cae()));
+        Assert.Single(await client.ObtenerCaesAsync());
+    }
+
+    [Fact]
+    public async Task EliminarCae_NoRegistrado_LanzaCaeException()
+    {
+        using var client = new DgiStub().Cliente();
+        await Assert.ThrowsAsync<CaeException>(() => client.EliminarCaeAsync(TestData.Cae()));
     }
 
     [Fact]
@@ -113,10 +190,10 @@ public class UruFacturaClientTests
         Assert.Equal("90110001945", emitido.Cae.NumeroAutorizacion);
         Assert.Equal(244m, emitido.Totales.MontoTotal);
         Assert.Equal(TestData.Emisor(), emitido.Emisor);
-        Assert.True(FirmaDigital.Verificar(emitido.Xml));
+        Assert.NotNull(FirmaDigital.VerificarFirma(emitido.Xml));
         Assert.Contains($"<DigestValue>{emitido.CodigoSeguridad}</DigestValue>", emitido.Xml);
         Assert.False(emitido.Enviado);
-        Assert.Same(emitido, Assert.Single(await store.ListarCfesAsync(TestData.Dia)));
+        Assert.Same(emitido, Assert.Single(await Listar(store)));
         Assert.Equal(1, (await store.ListarCaesAsync()).Single().UltimoNroUsado);
     }
 
@@ -130,6 +207,18 @@ public class UruFacturaClientTests
         var b = await client.EmitirAsync(TestData.CfeValido());
 
         Assert.Equal((1L, 2L), (a.Numero, b.Numero));
+    }
+
+    [Fact]
+    public async Task Emitir_EnParalelo_NoRepiteNiSaltaNumeros()
+    {
+        var (client, _, store) = await ClienteConCae();
+        using var _ = client;
+
+        var emitidos = await Task.WhenAll(Enumerable.Range(0, 50).Select(_ => Task.Run(() => client.EmitirAsync(TestData.CfeValido()))));
+
+        Assert.Equal(Enumerable.Range(1, 50).Select(n => (long)n), emitidos.Select(e => e.Numero).Order());
+        Assert.Equal(50, (await Listar(store)).Count);
     }
 
     [Fact]
@@ -147,8 +236,104 @@ public class UruFacturaClientTests
 
         var ex = await Assert.ThrowsAsync<CfeValidationException>(() => client.EmitirAsync(new Cfe(TipoCfe.ETicket)));
 
-        Assert.Contains(ex.Errors, e => e.Contains("línea de detalle"));
+        Assert.Contains(ex.Errores, e => e.Campo == "Detalle");
         Assert.Equal(0, (await store.ListarCaesAsync()).Single().UltimoNroUsado);
+    }
+
+    [Fact]
+    public async Task Emitir_TextoConCaracterDeControl_FallaLaValidacionSinConsumirNumero()
+    {
+        var (client, _, store) = await ClienteConCae();
+        using var _ = client;
+        var cfe = TestData.CfeValido() with { Detalle = [TestData.Linea() with { NombreItem = "Café\u0002" }] };
+
+        var ex = await Assert.ThrowsAsync<CfeValidationException>(() => client.EmitirAsync(cfe));
+
+        Assert.Contains(ex.Errores, e => e.Campo == "Detalle[0].NombreItem");
+        Assert.Equal(0, (await store.ListarCaesAsync()).Single().UltimoNroUsado);
+    }
+
+    [Fact]
+    public async Task Emitir_SiFallaElRegistro_NoConsumeNumero()
+    {
+        var store = new StoreQueFallaAlRegistrar(new InMemoryStore(TestData.Reloj));
+        using var client = new DgiStub().Cliente(store);
+        await client.RegistrarCaeAsync(TestData.Cae());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.EmitirAsync(TestData.CfeValido()));
+
+        Assert.Equal(0, (await store.ListarCaesAsync()).Single().UltimoNroUsado);
+        Assert.Empty(await Listar(store));
+    }
+
+    [Fact]
+    public async Task Emitir_Cancelado_NoConsumeNumero()
+    {
+        var (client, _, store) = await ClienteConCae();
+        using var _ = client;
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            client.EmitirAsync(TestData.CfeValido(), new CancellationToken(canceled: true)));
+
+        Assert.Equal(0, (await store.ListarCaesAsync()).Single().UltimoNroUsado);
+    }
+
+    [Fact]
+    public async Task Emitir_ListasModificadasDespues_NoCambianLoEmitido()
+    {
+        var (client, _, _) = await ClienteConCae();
+        using var _ = client;
+        var detalle = new List<LineaDetalle> { TestData.Linea() };
+
+        var emitido = await client.EmitirAsync(TestData.CfeValido() with { Detalle = detalle });
+        detalle[0] = TestData.Linea(precio: 999m);
+        detalle.Add(TestData.Linea());
+
+        Assert.Equal(100m, Assert.Single(emitido.Documento.Detalle).PrecioUnitario);
+        Assert.Equal(emitido.Totales, emitido.Documento.CalcularTotales());
+    }
+
+    [Fact]
+    public async Task Emitir_ConElMismoNroInterno_LanzaCfeDuplicadoConElYaEmitido()
+    {
+        var (client, _, store) = await ClienteConCae();
+        using var _ = client;
+        var cfe = TestData.CfeValido() with { NroInterno = "PEDIDO-7" };
+        var primero = await client.EmitirAsync(cfe);
+
+        // Un reintento (p. ej. tras un timeout del request) no factura dos veces.
+        var ex = await Assert.ThrowsAsync<CfeDuplicadoException>(() => client.EmitirAsync(cfe));
+
+        Assert.Same(primero, ex.Existente);
+        Assert.Equal(1, (await store.ListarCaesAsync()).Single().UltimoNroUsado);
+    }
+
+    [Fact]
+    public async Task Emitir_MismoNroInternoEnOtroTipo_SeEmite()
+    {
+        var (client, _, _) = await ClienteConCae();
+        using var _ = client;
+        await client.RegistrarCaeAsync(TestData.Cae(TipoCfe.NotaCreditoETicket));
+        await client.EmitirAsync(TestData.CfeValido() with { NroInterno = "PEDIDO-7" });
+
+        var nota = await client.EmitirAsync(TestData.CfeValido(TipoCfe.NotaCreditoETicket) with { NroInterno = "PEDIDO-7" });
+
+        Assert.Equal(TipoCfe.NotaCreditoETicket, nota.Tipo);
+    }
+
+    [Fact]
+    public async Task Emitir_MismoNroInternoDeUnCfeRechazado_EmiteUnoNuevo()
+    {
+        var (client, dgi, _) = await ClienteConCae();
+        using var _ = client;
+        var cfe = TestData.CfeValido() with { NroInterno = "PEDIDO-7" };
+        var rechazado = await client.EmitirAsync(cfe);
+        dgi.EstadoPorNumero[rechazado.Numero] = EstadoCfe.Rechazado;
+        await client.ConsultarCfeAsync(rechazado);
+
+        var nuevo = await client.EmitirAsync(cfe);
+
+        Assert.Equal(2, nuevo.Numero);
     }
 
     [Fact]
@@ -179,11 +364,19 @@ public class UruFacturaClientTests
     }
 
     [Fact]
-    public async Task Validar_EmisorPropioConOtroRut_TieneError()
+    public void Validar_EmisorPropioConOtroRut_TieneError()
     {
         using var client = new DgiStub().Cliente();
         var errores = client.Validar(TestData.CfeValido() with { Emisor = TestData.Emisor() with { Rut = "214844360018" } });
-        Assert.Contains(errores, e => e.Contains("RUT de la configuración"));
+        Assert.Contains(errores, e => e.Campo == "Emisor.Rut" && e.Mensaje.Contains("RUT de la configuración"));
+    }
+
+    [Fact]
+    public void Validar_FechaDeEmisionFutura_TieneError()
+    {
+        using var client = new DgiStub().Cliente();
+        Assert.Contains(client.Validar(TestData.CfeValido() with { FechaEmision = TestData.Dia.AddDays(1) }),
+            e => e.Campo == "FechaEmision");
     }
 
     [Fact]
@@ -191,7 +384,7 @@ public class UruFacturaClientTests
     {
         using var client = new DgiStub().Cliente(config: TestData.Config() with { ValorUnidadIndexada = 0.01m }); // tope: 50 pesos
 
-        Assert.Contains(client.Validar(TestData.CfeValido()), e => e.Contains("tope"));
+        Assert.Contains(client.Validar(TestData.CfeValido()), e => e.Mensaje.Contains("tope"));
     }
 
     [Fact]
@@ -236,15 +429,15 @@ public class UruFacturaClientTests
         Assert.True(emitido.Enviado);
         Assert.Equal("tok", emitido.TokenDgi);
         Assert.False(emitido.AceptadoPorDgi);
-        Assert.Equal("tok", (await store.ListarCfesAsync(TestData.Dia)).Single().TokenDgi);
+        Assert.Equal("tok", (await Listar(store)).Single().TokenDgi);
     }
 
     [Fact]
-    public async Task Enviar_SobreRechazado_NoLoMarcaEnviado()
+    public async Task Enviar_SobreRechazado_NoLoMarcaEnviado_YSePuedeReenviar()
     {
         var (client, dgi, _) = await ClienteConCae();
         using var _ = client;
-        dgi.EstadoSobre = "BS";
+        dgi.EstadoSobre = EstadoSobre.Rechazado;
         var emitido = await client.EmitirAsync(TestData.CfeValido());
 
         var acuse = await client.EnviarAsync(emitido);
@@ -252,6 +445,34 @@ public class UruFacturaClientTests
         Assert.False(acuse.Recibido);
         Assert.False(emitido.Enviado);
         Assert.Equal("Rechazado", emitido.MensajeDgi);
+
+        dgi.EstadoSobre = EstadoSobre.Recibido;
+        Assert.True((await client.EnviarAsync(emitido)).Recibido);
+        Assert.True(emitido.Enviado);
+    }
+
+    [Fact]
+    public async Task Enviar_CfeYaRecibido_LanzaInvalidOperationException()
+    {
+        var (client, dgi, _) = await ClienteConCae();
+        using var _ = client;
+        var emitido = await client.EmitirAsync(TestData.CfeValido());
+        await client.EnviarAsync(emitido);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.EnviarAsync(emitido));
+        Assert.Single(dgi.Sobres);
+    }
+
+    [Fact]
+    public async Task Enviar_CfeAceptado_NoSeReenviaNiPierdeElEstado()
+    {
+        var (client, _, _) = await ClienteConCae();
+        using var _ = client;
+        var emitido = await client.EmitirAsync(TestData.CfeValido());
+        await client.ConsultarCfeAsync(emitido); // aceptado (p. ej. tras un envío cuyo acuse no llegó)
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.EnviarAsync(emitido));
+        Assert.True(emitido.AceptadoPorDgi);
     }
 
     [Fact]
@@ -281,13 +502,24 @@ public class UruFacturaClientTests
     }
 
     [Fact]
+    public async Task Enviar_ElMismoCfeDosVecesEnElSobre_LanzaUruFacturaException()
+    {
+        var (client, dgi, _) = await ClienteConCae();
+        using var _ = client;
+        var emitido = await client.EmitirAsync(TestData.CfeValido());
+
+        await Assert.ThrowsAsync<UruFacturaException>(() => client.EnviarAsync([emitido, emitido]));
+        Assert.Empty(dgi.Sobres);
+    }
+
+    [Fact]
     public async Task ConsultarEnvio_ActualizaElEstadoDeCadaCfe_YLoGuarda()
     {
         var (client, dgi, store) = await ClienteConCae();
         using var _ = client;
         var ok = await client.EmitirAsync(TestData.CfeValido());
         var mal = await client.EmitirAsync(TestData.CfeValido());
-        dgi.EstadoPorNumero[mal.Numero] = "BE";
+        dgi.EstadoPorNumero[mal.Numero] = EstadoCfe.Rechazado;
         var acuse = await client.EnviarAsync([ok, mal]);
 
         var estado = await client.ConsultarEnvioAsync(acuse);
@@ -295,9 +527,26 @@ public class UruFacturaClientTests
         Assert.True(estado.Procesado);
         Assert.False(estado.TodosAceptados);
         Assert.True(ok.AceptadoPorDgi);
-        Assert.Equal("BE", mal.EstadoDgi);
+        Assert.Equal(EstadoCfe.Rechazado, mal.EstadoDgi);
         Assert.Contains("Fuera de rango", mal.MensajeDgi);
-        Assert.Equal(["AE", "BE"], (await store.ListarCfesAsync(TestData.Dia)).Select(c => c.EstadoDgi));
+        Assert.Equal<EstadoCfe?>([EstadoCfe.Aceptado, EstadoCfe.Rechazado], (await Listar(store)).Select(c => c.EstadoDgi));
+    }
+
+    [Fact]
+    public async Task ConsultarEnvio_ResultadoSoloConNroOrdinal_LoAsociaPorLaPosicionEnElSobre()
+    {
+        var (client, dgi, _) = await ClienteConCae();
+        using var _ = client;
+        var primero = await client.EmitirAsync(TestData.CfeValido());
+        var segundo = await client.EmitirAsync(TestData.CfeValido());
+        dgi.EstadoPorNumero[segundo.Numero] = EstadoCfe.Rechazado;
+        dgi.SoloOrdinal = true; // sin TipoCFE, Serie ni NroCFE, y en otro orden
+        var acuse = await client.EnviarAsync([primero, segundo]);
+
+        await client.ConsultarEnvioAsync(acuse);
+
+        Assert.Equal(EstadoCfe.Aceptado, primero.EstadoDgi);
+        Assert.Equal(EstadoCfe.Rechazado, segundo.EstadoDgi);
     }
 
     [Fact]
@@ -319,7 +568,8 @@ public class UruFacturaClientTests
     public async Task ConsultarEnvio_SobreNoRecibido_LanzaInvalidOperationException()
     {
         using var client = new DgiStub().Cliente();
-        await Assert.ThrowsAsync<InvalidOperationException>(() => client.ConsultarEnvioAsync(new AcuseSobre { Estado = "BS" }));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.ConsultarEnvioAsync(new AcuseSobre { Estado = EstadoSobre.Rechazado }));
     }
 
     [Fact]
@@ -328,12 +578,12 @@ public class UruFacturaClientTests
         var (client, dgi, _) = await ClienteConCae();
         using var _ = client;
         var emitido = await client.EmitirAsync(TestData.CfeValido());
-        dgi.EstadoPorNumero[emitido.Numero] = "CE";
+        dgi.EstadoPorNumero[emitido.Numero] = EstadoCfe.Observado;
 
         var estado = await client.ConsultarCfeAsync(emitido);
 
-        Assert.Equal("CE", estado.Estado);
-        Assert.Equal("CE", emitido.EstadoDgi);
+        Assert.Equal(EstadoCfe.Observado, estado.Estado);
+        Assert.Equal(EstadoCfe.Observado, emitido.EstadoDgi);
     }
 
     // -----------------------------------------------------------------------
@@ -355,7 +605,7 @@ public class UruFacturaClientTests
         Assert.Equal(2, acuse.CantidadCfe);
         Assert.Equal(TestData.Dia, acuse.Fecha);
         TestData.AssertValidoContraXsd(dgi.UltimoReporte!);
-        Assert.True(FirmaDigital.Verificar(dgi.UltimoReporte!));
+        Assert.NotNull(FirmaDigital.VerificarFirma(dgi.UltimoReporte!));
         Assert.Contains("<NroDesde>1</NroDesde><NroHasta>2</NroHasta>", dgi.UltimoReporte);
     }
 
@@ -372,6 +622,18 @@ public class UruFacturaClientTests
     }
 
     [Fact]
+    public async Task ReporteDiario_PorDefecto_EsElPrimerEnvioDelDia()
+    {
+        // ReporteDiarioCFE.xsd: "El primer envío del día trae el número 1".
+        var dgi = new DgiStub();
+        using var client = dgi.Cliente();
+
+        await client.EnviarReporteDiarioAsync(TestData.Dia);
+
+        Assert.Contains("<SecEnvio>1</SecEnvio>", dgi.UltimoReporte);
+    }
+
+    [Fact]
     public async Task ReporteDiario_InformaLaSecuenciaDelEnvio()
     {
         var dgi = new DgiStub();
@@ -382,15 +644,48 @@ public class UruFacturaClientTests
         Assert.Contains("<SecEnvio>2</SecEnvio>", dgi.UltimoReporte);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(100)]
+    public async Task ReporteDiario_SecuenciaFueraDeRango_LanzaUruFacturaException(int secEnvio)
+    {
+        var dgi = new DgiStub();
+        using var client = dgi.Cliente();
+
+        await Assert.ThrowsAsync<UruFacturaException>(() => client.EnviarReporteDiarioAsync(TestData.Dia, secEnvio));
+        Assert.Empty(dgi.Reportes);
+    }
+
+    [Fact]
+    public async Task ReporteDiario_FechaFutura_LanzaUruFacturaException()
+    {
+        var dgi = new DgiStub();
+        using var client = dgi.Cliente();
+
+        await Assert.ThrowsAsync<UruFacturaException>(() => client.EnviarReporteDiarioAsync(TestData.Dia.AddDays(1)));
+        Assert.Empty(dgi.Reportes);
+    }
+
+    [Fact]
+    public async Task ReporteDiario_DeUnDiaQueElAlmacenamientoEnMemoriaNoTiene_NoDeclaraCeroCfe()
+    {
+        // Tras un reinicio, el almacenamiento en memoria no tiene los CFE de ayer: enviar un reporte
+        // vacío sería una declaración falsa.
+        var dgi = new DgiStub();
+        using var client = dgi.Cliente();
+
+        await Assert.ThrowsAsync<UruFacturaException>(() => client.EnviarReporteDiarioAsync(TestData.Dia.AddDays(-1)));
+        Assert.Empty(dgi.Reportes);
+    }
+
     [Fact]
     public async Task NumerosDeEnvio_SonUnicosEntreSobresYReportes()
     {
         var (client, dgi, _) = await ClienteConCae();
         using var _ = client;
-        var emitido = await client.EmitirAsync(TestData.CfeValido());
 
-        await client.EnviarAsync(emitido);
-        await client.EnviarAsync(emitido);
+        await client.EnviarAsync(await client.EmitirAsync(TestData.CfeValido()));
+        await client.EnviarAsync(await client.EmitirAsync(TestData.CfeValido()));
         await client.EnviarReporteDiarioAsync(TestData.Dia);
 
         Assert.Equal(3, dgi.IdsEnvio.Distinct().Count());
@@ -420,5 +715,20 @@ public class UruFacturaClientTests
 
         Assert.True(TestData.Certificado.HasPrivateKey);
         Assert.NotNull(TestData.Certificado.GetRSAPrivateKey());
+    }
+
+    /// <summary>Almacenamiento cuyo registro de emisiones falla (por ejemplo, la base no responde).</summary>
+    private sealed class StoreQueFallaAlRegistrar(InMemoryStore interno) : IUruFacturaStore
+    {
+        public ValueTask GuardarCaeAsync(Cae cae, CancellationToken ct = default) => interno.GuardarCaeAsync(cae, ct);
+        public ValueTask<IReadOnlyList<Cae>> ListarCaesAsync(CancellationToken ct = default) => interno.ListarCaesAsync(ct);
+        public ValueTask<bool> EliminarCaeAsync(Cae cae, CancellationToken ct = default) => interno.EliminarCaeAsync(cae, ct);
+        public ValueTask<bool> RegistrarEmisionAsync(CfeEmitido emitido, long ultimo, CancellationToken ct = default) =>
+            throw new InvalidOperationException("La base no responde.");
+        public ValueTask<long> ReservarIdEnvioAsync(CancellationToken ct = default) => interno.ReservarIdEnvioAsync(ct);
+        public ValueTask GuardarCfesAsync(IReadOnlyCollection<CfeEmitido> cfes, CancellationToken ct = default) => interno.GuardarCfesAsync(cfes, ct);
+        public ValueTask<IReadOnlyList<CfeEmitido>> BuscarCfesAsync(string nroInterno, CancellationToken ct = default) =>
+            interno.BuscarCfesAsync(nroInterno, ct);
+        public IAsyncEnumerable<CfeEmitido> ListarCfesAsync(DateOnly fecha, CancellationToken ct = default) => interno.ListarCfesAsync(fecha, ct);
     }
 }

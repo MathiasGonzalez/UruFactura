@@ -57,7 +57,7 @@ Se requiere uno de los dos. Un archivo inexistente, una contraseña incorrecta o
 | `UrlConsultas` | `string?` | servicio de prueba | URL de `ws_consultas` (estado de un CFE). **Obligatoria en Producción** |
 | `AlgoritmoFirma` | `AlgoritmoFirma` | `Sha256` | Firma del CFE y de WS-Security (`Sha1` si la DGI rechaza SHA-256) |
 | `Timeout` | `TimeSpan` | 30 s | Timeout de las llamadas a la DGI |
-| `OmitirValidacionSsl` | `bool` | `false` | Deshabilita la validación TLS del servidor. Solo en Homologación con una CA no reconocida. **Nunca en Producción** |
+| `OmitirValidacionSsl` | `bool` | `false` | Deshabilita la validación TLS del servidor. Solo en Homologación con una CA no reconocida: en Producción la configuración no es válida |
 | `ValorUnidadIndexada` | `decimal?` | — | Si se informa, los e-Tickets con neto mayor a 5.000 UI deben identificar al receptor |
 
 | Ambiente | Servicios |

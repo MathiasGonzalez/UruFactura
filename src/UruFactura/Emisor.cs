@@ -55,31 +55,26 @@ public sealed record Emisor
     /// </summary>
     public string? UrlVerificacion { get; init; }
 
-    internal IEnumerable<string> Validar()
+    internal List<ErrorValidacion> Validar()
     {
+        var v = new Validacion();
         if (!UruFactura.Rut.EsValido(Rut))
-            yield return "Emisor.Rut debe tener 12 dígitos y un dígito verificador válido.";
-        if (string.IsNullOrWhiteSpace(RazonSocial) || RazonSocial.Length > 150)
-            yield return "Emisor.RazonSocial es obligatoria (máx. 150 caracteres).";
-        if (NombreComercial is { Length: > 30 })
-            yield return "Emisor.NombreComercial admite hasta 30 caracteres.";
-        if (Giro is { Length: > 100 })
-            yield return "Emisor.Giro admite hasta 100 caracteres.";
-        if (string.IsNullOrWhiteSpace(DomicilioFiscal) || DomicilioFiscal.Length > 70)
-            yield return "Emisor.DomicilioFiscal es obligatorio (máx. 70 caracteres).";
-        if (string.IsNullOrWhiteSpace(Ciudad) || Ciudad.Length > 30)
-            yield return "Emisor.Ciudad es obligatoria (máx. 30 caracteres).";
-        if (string.IsNullOrWhiteSpace(Departamento) || Departamento.Length > 30)
-            yield return "Emisor.Departamento es obligatorio (máx. 30 caracteres).";
+            v.Error("Emisor.Rut", "Debe tener 12 dígitos y un dígito verificador válido.");
+        v.Texto("Emisor.RazonSocial", RazonSocial, 150, obligatorio: true);
+        v.Texto("Emisor.NombreComercial", NombreComercial, 30);
+        v.Texto("Emisor.Giro", Giro, 100);
+        v.Texto("Emisor.DomicilioFiscal", DomicilioFiscal, 70, obligatorio: true);
+        v.Texto("Emisor.Ciudad", Ciudad, 30, obligatorio: true);
+        v.Texto("Emisor.Departamento", Departamento, 30, obligatorio: true);
         if (CodigoSucursal is < 1 or > 9999)
-            yield return "Emisor.CodigoSucursal debe estar entre 1 y 9999.";
-        if (Sucursal is { Length: > 20 })
-            yield return "Emisor.Sucursal admite hasta 20 caracteres.";
-        if (Telefonos.Count > 2 || Telefonos.Any(t => string.IsNullOrWhiteSpace(t) || t.Length > 20))
-            yield return "Emisor.Telefonos admite hasta 2 teléfonos de hasta 20 caracteres.";
-        if (Correo is { Length: > 80 })
-            yield return "Emisor.Correo admite hasta 80 caracteres.";
-        if (InfoAdicional is { Length: > 150 })
-            yield return "Emisor.InfoAdicional admite hasta 150 caracteres.";
+            v.Error("Emisor.CodigoSucursal", "Debe estar entre 1 y 9999.");
+        v.Texto("Emisor.Sucursal", Sucursal, 20);
+        if (Telefonos.Count > 2)
+            v.Error("Emisor.Telefonos", "Admite hasta 2 teléfonos.");
+        for (var i = 0; i < Telefonos.Count; i++)
+            v.Texto($"Emisor.Telefonos[{i}]", Telefonos[i], 20, obligatorio: true);
+        v.Texto("Emisor.Correo", Correo, 80);
+        v.Texto("Emisor.InfoAdicional", InfoAdicional, 150);
+        return v.Errores;
     }
 }

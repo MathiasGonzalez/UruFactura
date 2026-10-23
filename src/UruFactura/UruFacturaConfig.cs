@@ -42,7 +42,7 @@ public sealed record UruFacturaConfig
 
     /// <summary>
     /// Deshabilita la validación del certificado TLS del servidor. Solo para Homologación cuando la
-    /// CA no es de confianza. <b>Nunca en Producción.</b>
+    /// CA no es de confianza; en Producción la configuración no es válida.
     /// </summary>
     public bool OmitirValidacionSsl { get; init; }
 
@@ -73,12 +73,14 @@ public sealed record UruFacturaConfig
     /// <summary>Devuelve los errores de la configuración (vacía si es válida).</summary>
     public IReadOnlyList<string> Validar()
     {
-        var errores = Emisor.Validar().ToList();
+        var errores = Emisor.Validar().Select(e => e.ToString()).ToList();
 
         if (Certificado is null && string.IsNullOrWhiteSpace(RutaCertificado))
             errores.Add("Se requiere el certificado: Certificado o RutaCertificado.");
         if (Ambiente == Ambiente.Produccion && (string.IsNullOrWhiteSpace(UrlEnvio) || string.IsNullOrWhiteSpace(UrlConsultas)))
             errores.Add("En Producción UrlEnvio y UrlConsultas son obligatorias (las entrega la DGI al habilitar el ambiente).");
+        if (Ambiente == Ambiente.Produccion && OmitirValidacionSsl)
+            errores.Add("OmitirValidacionSsl no se admite en Producción: la conexión con la DGI debe validar su certificado.");
         if (Timeout <= TimeSpan.Zero)
             errores.Add("Timeout debe ser mayor a cero.");
         if (ValorUnidadIndexada is <= 0)

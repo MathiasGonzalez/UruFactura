@@ -74,7 +74,110 @@ public static class CfePdf
         return data.ToArray();
     }
 
-    private static string Monto(decimal valor, string formato = "N2") => valor.ToString(formato, Cultura);
+    // -----------------------------------------------------------------------
+    // Contenido (común a los dos formatos)
+    // -----------------------------------------------------------------------
+
+    private static string Monto(decimal valor) => valor.ToString("N2", Cultura);
+
+    /// <summary>Cantidad con los decimales que tiene (hasta 3, como en el XML).</summary>
+    private static string Cantidad(decimal valor) => valor.ToString("#,0.###", Cultura);
+
+    /// <summary>Precio unitario con al menos 2 decimales y hasta 6, como en el XML.</summary>
+    private static string Precio(decimal valor) => valor.ToString("#,0.00####", Cultura);
+
+    private static string Porcentaje(decimal tasa) => $"{tasa.ToString("0.###", Cultura)}%";
+
+    /// <summary>Columna del detalle: título, ancho (relativo o fijo, en puntos) y alineación.</summary>
+    internal sealed record Columna(string Titulo, float Ancho, bool AnchoFijo = false, bool Derecha = true);
+
+    /// <summary>
+    /// Columnas del detalle según el tipo: el e-Remito no lleva precios, la exportación no lleva IVA y
+    /// el e-Resguardo informa retenciones/percepciones en lugar de ítems.
+    /// </summary>
+    internal static Columna[] Columnas(TipoCfe tipo) => tipo.Familia() switch
+    {
+        FamiliaCfe.Remito => [new("Cant.", 50, AnchoFijo: true), new("Descripción", 1, Derecha: false)],
+        FamiliaCfe.FacturaExportacion or FamiliaCfe.RemitoExportacion =>
+            [new("Cant.", 40, AnchoFijo: true), new("Descripción", 5, Derecha: false), new("P.Unit.", 2), new("Total", 2)],
+        FamiliaCfe.Resguardo => [new("Código", 2, Derecha: false), new("Tasa", 1), new("Monto sujeto", 2), new("Valor", 2)],
+        _ => [new("Cant.", 40, AnchoFijo: true), new("Descripción", 5, Derecha: false), new("P.Unit.", 2), new("IVA", 1), new("Total", 2)],
+    };
+
+    /// <summary>Filas del detalle, con las columnas de <see cref="Columnas"/>.</summary>
+    internal static IEnumerable<string[]> Filas(Cfe cfe) => cfe.Tipo.Familia() switch
+    {
+        FamiliaCfe.Remito => cfe.Detalle.Select(l => new[] { Cantidad(l.Cantidad), l.NombreItem }),
+        FamiliaCfe.FacturaExportacion or FamiliaCfe.RemitoExportacion => cfe.Detalle.Select(l =>
+            new[] { Cantidad(l.Cantidad), l.NombreItem, Precio(l.PrecioUnitario), Monto(l.MontoTotal) }),
+        FamiliaCfe.Resguardo => cfe.Detalle.SelectMany(l => l.Retenciones).Select(r =>
+            new[] { r.Codigo, r.Tasa is { } tasa ? Porcentaje(tasa) : "", Monto(r.MontoSujeto), Monto(r.Valor) }),
+        _ => cfe.Detalle.Select(l =>
+            new[] { Cantidad(l.Cantidad), l.NombreItem, Precio(l.PrecioUnitario), EtiquetaIva(l.IndFactIva), Monto(l.MontoTotal) }),
+    };
+
+    /// <summary>Indicador de IVA de una línea de e-Ticket o e-Factura.</summary>
+    internal static string EtiquetaIva(TipoIva iva) => iva switch
+    {
+        TipoIva.Exento => "Exento",
+        TipoIva.Minimo => Porcentaje(Totales.TasaIvaMinima),
+        TipoIva.Basico => Porcentaje(Totales.TasaIvaBasica),
+        TipoIva.Suspendido => "Susp.",
+        _ => "",
+    };
+
+    /// <summary>Ajustes globales, montos netos e IVA que se imprimen antes del total (ninguno en remitos y resguardos).</summary>
+    internal static IEnumerable<(string Etiqueta, decimal Monto)> LineasTotales(CfeEmitido e)
+    {
+        var (cfe, t) = (e.Documento, e.Totales);
+        if (cfe.Tipo.EsRemito() || cfe.Tipo.Familia() == FamiliaCfe.Resguardo)
+            yield break;
+
+        foreach (var d in cfe.DescuentosRecargos)
+            yield return ($"{(d.Tipo == TipoMovimientoGlobal.Descuento ? "Descuento" : "Recargo")} {d.Glosa}", d.Monto);
+
+        if (cfe.Tipo.EsExportacion())
+            yield break;
+
+        if (t.MontoNetoExento > 0)
+            yield return ("Exento", t.MontoNetoExento);
+        if (t.MontoNetoSuspendido > 0)
+            yield return ("IVA en suspenso", t.MontoNetoSuspendido);
+        if (t.MontoNetoMinimo > 0)
+        {
+            yield return ($"Neto IVA {Porcentaje(Totales.TasaIvaMinima)}", t.MontoNetoMinimo);
+            yield return ($"IVA {Porcentaje(Totales.TasaIvaMinima)}", t.IvaMinimo);
+        }
+        if (t.MontoNetoBasico > 0)
+        {
+            yield return ($"Neto IVA {Porcentaje(Totales.TasaIvaBasica)}", t.MontoNetoBasico);
+            yield return ($"IVA {Porcentaje(Totales.TasaIvaBasica)}", t.IvaBasico);
+        }
+    }
+
+    /// <summary>Total del comprobante con su moneda (el e-Remito no tiene).</summary>
+    internal static (string Etiqueta, decimal Monto)? Total(CfeEmitido e)
+    {
+        var moneda = e.Documento.Moneda == Moneda.PesoUruguayo ? "" : $" ({e.Documento.Moneda.CodigoIso()})";
+        return e.Tipo.Familia() switch
+        {
+            FamiliaCfe.Remito => null,
+            FamiliaCfe.Resguardo => ($"TOTAL RETENIDO{moneda}", e.Totales.MontoRetenido),
+            _ => ($"TOTAL{moneda}", e.Totales.MontoTotal),
+        };
+    }
+
+    /// <summary>Moneda y tipo de cambio, si no es el peso uruguayo.</summary>
+    internal static string? LineaMoneda(Cfe cfe) =>
+        cfe.Moneda == Moneda.PesoUruguayo || cfe.Tipo.Familia() == FamiliaCfe.Remito
+            ? null
+            : $"Moneda: {cfe.Moneda.CodigoIso()}" + (cfe.TipoCambio is { } tc ? $" - Tipo de cambio: {tc.ToString("N3", Cultura)}" : "");
+
+    /// <summary>Los CFE a los que refiere (en las notas, el comprobante que corrigen).</summary>
+    internal static IEnumerable<string> LineasReferencias(Cfe cfe) => cfe.Referencias.Select(r =>
+        $"{NombreCompleto(r.TipoCfe)} {r.Serie}-{r.NroCfe} del {r.FechaCfe.ToString("dd/MM/yyyy", Cultura)}"
+        + (r.MontoCfeRef is { } monto ? $" por {(r.MonedaCfeRef is { } m ? m.CodigoIso() + " " : "")}{Monto(monto)}" : "")
+        + (string.IsNullOrWhiteSpace(r.Razon) ? "" : $" - {r.Razon}"));
 
     /// <summary>Primeros 6 caracteres del código de seguridad, para imprimir bajo el QR.</summary>
     private static string CodigoSeguridadCorto(CfeEmitido e) => e.CodigoSeguridad[..Math.Min(6, e.CodigoSeguridad.Length)];
@@ -92,13 +195,18 @@ public static class CfePdf
 
         lineas.Add($"CAE Nº {e.Cae.NumeroAutorizacion}");
         lineas.Add($"Serie {e.Serie}, del {e.Cae.RangoDesde} al {e.Cae.RangoHasta}");
-        lineas.Add($"Fecha de vencimiento: {e.Cae.FechaVencimiento:dd/MM/yyyy}");
+        lineas.Add($"Fecha de vencimiento: {e.Cae.FechaVencimiento.ToString("dd/MM/yyyy", Cultura)}");
         return lineas;
     }
 
+    // -----------------------------------------------------------------------
+    // Formatos
+    // -----------------------------------------------------------------------
+
     private static byte[] GenerarDocumentoA4(CfeEmitido e, byte[] qrBytes)
     {
-        var (cfe, emisor, t) = (e.Documento, e.Emisor, e.Totales);
+        var (cfe, emisor) = (e.Documento, e.Emisor);
+        var columnas = Columnas(cfe.Tipo);
         return Document.Create(doc =>
         {
             doc.Page(page =>
@@ -126,7 +234,7 @@ public static class CfePdf
                             {
                                 c.Item().Text(NombreCompleto(cfe.Tipo)).Bold().FontSize(12);
                                 c.Item().Text($"Serie {e.Serie} N° {e.Numero}").Bold().FontSize(11);
-                                c.Item().Text($"Fecha: {e.FechaEmision:dd/MM/yyyy}").FontSize(9);
+                                c.Item().Text($"Fecha: {e.FechaEmision.ToString("dd/MM/yyyy", Cultura)}").FontSize(9);
                             });
                         });
                     });
@@ -136,69 +244,64 @@ public static class CfePdf
 
                 page.Content().Column(col =>
                 {
-                    if (cfe.Receptor != null)
+                    if (cfe.Receptor is { } receptor)
                     {
                         col.Item().PaddingVertical(5).Column(rec =>
                         {
                             rec.Item().Text("Receptor:").Bold().FontSize(9);
-                            if (!string.IsNullOrWhiteSpace(cfe.Receptor.RazonSocial))
-                                rec.Item().Text(cfe.Receptor.RazonSocial).FontSize(9);
-                            if (!string.IsNullOrWhiteSpace(cfe.Receptor.Documento))
-                                rec.Item().Text($"RUT/Doc: {cfe.Receptor.Documento}").FontSize(9);
-                            if (!string.IsNullOrWhiteSpace(cfe.Receptor.Direccion))
-                                rec.Item().Text(cfe.Receptor.Direccion).FontSize(9);
+                            if (!string.IsNullOrWhiteSpace(receptor.RazonSocial))
+                                rec.Item().Text(receptor.RazonSocial).FontSize(9);
+                            if (!string.IsNullOrWhiteSpace(receptor.Documento))
+                                rec.Item().Text($"RUT/Doc: {receptor.Documento}").FontSize(9);
+                            if (!string.IsNullOrWhiteSpace(receptor.Direccion))
+                                rec.Item().Text(receptor.Direccion).FontSize(9);
+                            var lugar = string.Join(", ", new[] { receptor.Ciudad, receptor.Departamento, receptor.Pais }
+                                .Where(x => !string.IsNullOrWhiteSpace(x)));
+                            if (lugar.Length > 0)
+                                rec.Item().Text(lugar).FontSize(9);
                         });
 
                         col.Item().Line(0.5f, "#F5F5F5");
                     }
 
+                    if (LineaMoneda(cfe) is { } moneda)
+                        col.Item().PaddingTop(5).Text(moneda).FontSize(9);
+
                     col.Item().PaddingTop(10).Table(table =>
                     {
                         table.ColumnsDefinition(cols =>
                         {
-                            cols.ConstantColumn(40);  // Cant
-                            cols.RelativeColumn(5);   // Descripción
-                            cols.RelativeColumn(2);   // P.Unit
-                            cols.RelativeColumn(1);   // IVA
-                            cols.RelativeColumn(2);   // Total
+                            foreach (var c in columnas)
+                            {
+                                if (c.AnchoFijo)
+                                    cols.ConstantColumn(c.Ancho);
+                                else
+                                    cols.RelativeColumn(c.Ancho);
+                            }
                         });
 
                         table.Header(h =>
                         {
-                            foreach (var titulo in (string[])["Cant.", "Descripción", "P.Unit.", "IVA", "Total"])
-                                h.Cell().Background("#EEEEEE").Padding(4).AlignCenter().Text(titulo).Bold().FontSize(9);
+                            foreach (var c in columnas)
+                                h.Cell().Background("#EEEEEE").Padding(4).AlignCenter().Text(c.Titulo).Bold().FontSize(9);
                         });
 
-                        foreach (var linea in cfe.Detalle)
+                        foreach (var fila in Filas(cfe))
                         {
-                            table.Cell().Padding(4).AlignRight().Text(Monto(linea.Cantidad, "F2")).FontSize(9);
-                            table.Cell().Padding(4).Text(linea.NombreItem).FontSize(9);
-                            table.Cell().Padding(4).AlignRight().Text(Monto(linea.PrecioUnitario)).FontSize(9);
-                            table.Cell().Padding(4).AlignRight().Text(ObtenerEtiquetaIva(linea.IndFactIva)).FontSize(9);
-                            table.Cell().Padding(4).AlignRight().Text(Monto(linea.MontoTotal)).FontSize(9);
+                            for (var i = 0; i < columnas.Length; i++)
+                            {
+                                var celda = table.Cell().Padding(4);
+                                (columnas[i].Derecha ? celda.AlignRight() : celda).Text(fila[i]).FontSize(9);
+                            }
                         }
                     });
 
                     col.Item().PaddingTop(10).AlignRight().Column(tot =>
                     {
-                        if (t.MontoNetoExento > 0)
-                            tot.Item().Text($"Exento: {Monto(t.MontoNetoExento)}").FontSize(9);
-                        if (t.MontoNetoMinimo > 0)
-                        {
-                            tot.Item().Text($"Neto IVA 10%: {Monto(t.MontoNetoMinimo)}").FontSize(9);
-                            tot.Item().Text($"IVA 10%: {Monto(t.IvaMinimo)}").FontSize(9);
-                        }
-                        if (t.MontoNetoBasico > 0)
-                        {
-                            tot.Item().Text($"Neto IVA 22%: {Monto(t.MontoNetoBasico)}").FontSize(9);
-                            tot.Item().Text($"IVA 22%: {Monto(t.IvaBasico)}").FontSize(9);
-                        }
-                        foreach (var d in cfe.DescuentosRecargos)
-                            tot.Item().Text($"{(d.Tipo == TipoMovimientoGlobal.Descuento ? "Descuento" : "Recargo")} {d.Glosa}: {Monto(d.Monto)}").FontSize(9);
-                        if (cfe.Tipo.Familia() == FamiliaCfe.Resguardo)
-                            tot.Item().Text($"TOTAL RETENIDO: {Monto(t.MontoRetenido)}").Bold().FontSize(12);
-                        else
-                            tot.Item().Text($"TOTAL{(cfe.Moneda == Moneda.PesoUruguayo ? "" : $" ({cfe.Moneda})")}: {Monto(t.MontoTotal)}").Bold().FontSize(12);
+                        foreach (var (etiqueta, monto) in LineasTotales(e))
+                            tot.Item().Text($"{etiqueta}: {Monto(monto)}").FontSize(9);
+                        if (Total(e) is { } total)
+                            tot.Item().Text($"{total.Etiqueta}: {Monto(total.Monto)}").Bold().FontSize(12);
                     });
 
                     if (cfe.MediosPago.Count > 0)
@@ -208,6 +311,16 @@ public static class CfePdf
                             mp.Item().Text("Medios de pago:").Bold().FontSize(9);
                             foreach (var m in cfe.MediosPago.OrderBy(m => m.Orden ?? 0))
                                 mp.Item().Text($"{m.Glosa}: {Monto(m.Valor)}").FontSize(9);
+                        });
+                    }
+
+                    if (cfe.Referencias.Count > 0)
+                    {
+                        col.Item().PaddingTop(8).Column(rf =>
+                        {
+                            rf.Item().Text("Referencias:").Bold().FontSize(9);
+                            foreach (var referencia in LineasReferencias(cfe))
+                                rf.Item().Text(referencia).FontSize(9);
                         });
                     }
 
@@ -244,9 +357,8 @@ public static class CfePdf
                 page.Footer().Row(row =>
                 {
                     void EstiloFooter(TextStyle s) { s.FontSize = 7; s.Color = ReportColor.FromHex("#9E9E9E"); }
-                    row.RelativeItem().Text(text =>
+                    row.RelativeItem().AlignRight().Text(text =>
                     {
-                        text.Span("Generado con UruFactura - ", EstiloFooter);
                         text.Span("Página ", EstiloFooter);
                         text.CurrentPageNumber(EstiloFooter);
                         text.Span(" de ", EstiloFooter);
@@ -259,7 +371,8 @@ public static class CfePdf
 
     private static byte[] GenerarDocumentoTermico(CfeEmitido e, byte[] qrBytes)
     {
-        var (cfe, emisor, t) = (e.Documento, e.Emisor, e.Totales);
+        var (cfe, emisor) = (e.Documento, e.Emisor);
+        var familia = cfe.Tipo.Familia();
         // Ancho térmico estándar: 80mm ≈ 227 puntos; alto generoso para contenido variable
         return Document.Create(doc =>
         {
@@ -277,32 +390,23 @@ public static class CfePdf
 
                     col.Item().AlignCenter().Text(NombreCompleto(cfe.Tipo)).Bold().FontSize(8);
                     col.Item().AlignCenter().Text($"Serie {e.Serie} N° {e.Numero}").Bold().FontSize(7);
-                    col.Item().AlignCenter().Text($"Fecha: {e.FechaEmision:dd/MM/yyyy}").FontSize(7);
+                    col.Item().AlignCenter().Text($"Fecha: {e.FechaEmision.ToString("dd/MM/yyyy", Cultura)}").FontSize(7);
                     col.Item().Line(0.5f);
 
-                    if (cfe.Receptor?.RazonSocial != null)
+                    if (cfe.Receptor is { } receptor && (receptor.RazonSocial ?? receptor.Documento) is { } cliente)
                     {
-                        col.Item().Text($"Cliente: {cfe.Receptor.RazonSocial}").FontSize(7);
+                        col.Item().Text($"Cliente: {cliente}").FontSize(7);
                         col.Item().Line(0.5f);
                     }
 
-                    foreach (var linea in cfe.Detalle)
-                    {
-                        col.Item().Text(linea.NombreItem).FontSize(7);
-                        col.Item().Row(row =>
-                        {
-                            row.RelativeItem().Text($"  {Monto(linea.Cantidad, "F2")} x {Monto(linea.PrecioUnitario)}").FontSize(7);
-                            row.Item().AlignRight().Text(Monto(linea.MontoTotal)).FontSize(7);
-                        });
-                    }
+                    if (LineaMoneda(cfe) is { } moneda)
+                        col.Item().Text(moneda).FontSize(7);
 
-                    col.Item().Line(0.5f);
-
-                    // Fila "etiqueta ........ monto" del ticket.
-                    void Fila(string etiqueta, decimal monto, bool negrita = false) => col.Item().Row(r =>
+                    // Fila "etiqueta ........ valor" del ticket.
+                    void Fila(string etiqueta, string valor, bool negrita = false) => col.Item().Row(r =>
                     {
                         var izquierda = r.RelativeItem().Text(etiqueta).FontSize(7);
-                        var derecha = r.Item().AlignRight().Text(Monto(monto)).FontSize(7);
+                        var derecha = r.Item().AlignRight().Text(valor).FontSize(7);
                         if (negrita)
                         {
                             izquierda.Bold();
@@ -310,17 +414,46 @@ public static class CfePdf
                         }
                     });
 
-                    if (t.MontoNetoExento > 0)
-                        Fila("Exento:", t.MontoNetoExento);
-                    if (t.IvaMinimo > 0)
-                        Fila("IVA 10%:", t.IvaMinimo);
-                    if (t.IvaBasico > 0)
-                        Fila("IVA 22%:", t.IvaBasico);
-                    foreach (var d in cfe.DescuentosRecargos)
-                        Fila(d.Tipo == TipoMovimientoGlobal.Descuento ? $"Desc. {d.Glosa}:" : $"Rec. {d.Glosa}:", d.Monto);
-                    Fila("TOTAL:", t.MontoTotal, negrita: true);
+                    switch (familia)
+                    {
+                        case FamiliaCfe.Remito:
+                            foreach (var linea in cfe.Detalle)
+                                Fila(linea.NombreItem, Cantidad(linea.Cantidad));
+                            break;
+
+                        case FamiliaCfe.Resguardo:
+                            foreach (var r in cfe.Detalle.SelectMany(l => l.Retenciones))
+                                Fila($"{r.Codigo}{(r.Tasa is { } tasa ? $" {Porcentaje(tasa)}" : "")} sobre {Monto(r.MontoSujeto)}", Monto(r.Valor));
+                            break;
+
+                        default:
+                            foreach (var linea in cfe.Detalle)
+                            {
+                                col.Item().Text(linea.NombreItem).FontSize(7);
+                                var iva = cfe.Tipo.EsExportacion() ? "" : $" ({EtiquetaIva(linea.IndFactIva)})";
+                                Fila($"  {Cantidad(linea.Cantidad)} x {Precio(linea.PrecioUnitario)}{iva}", Monto(linea.MontoTotal));
+                            }
+                            break;
+                    }
+
+                    col.Item().Line(0.5f);
+
+                    foreach (var (etiqueta, monto) in LineasTotales(e))
+                        Fila($"{etiqueta}:", Monto(monto));
+                    if (Total(e) is { } total)
+                        Fila($"{total.Etiqueta}:", Monto(total.Monto), negrita: true);
                     foreach (var m in cfe.MediosPago.OrderBy(m => m.Orden ?? 0))
-                        Fila($"{m.Glosa}:", m.Valor);
+                        Fila($"{m.Glosa}:", Monto(m.Valor));
+
+                    if (cfe.Referencias.Count > 0)
+                    {
+                        col.Item().Line(0.5f);
+                        foreach (var referencia in LineasReferencias(cfe))
+                            col.Item().Text($"Ref.: {referencia}").FontSize(6);
+                    }
+
+                    if (cfe.Mandante is { } mandante)
+                        col.Item().Text($"Por cuenta de: {mandante.Nombre} ({mandante.Documento})").FontSize(6);
 
                     col.Item().Line(0.5f);
 
@@ -356,13 +489,4 @@ public static class CfePdf
         if (tipo.EsContingencia()) nombre += " (Contingencia)";
         return nombre;
     }
-
-    private static string ObtenerEtiquetaIva(TipoIva iva) => iva switch
-    {
-        TipoIva.Exento => "EXE",
-        TipoIva.Minimo => "10%",
-        TipoIva.Basico => "22%",
-        TipoIva.Suspendido => "SUS",
-        _ => "N/A",
-    };
 }

@@ -274,9 +274,9 @@ internal static class CfeXml
                 if (t.MontoNetoBasico > 0)
                     El(w, "MntNetoIVATasaBasica", M2(t.MontoNetoBasico));
                 if (t.MontoNetoMinimo > 0)
-                    El(w, "IVATasaMin", "10.000");
+                    El(w, "IVATasaMin", Tasa(Totales.TasaIvaMinima));
                 if (t.MontoNetoBasico > 0)
-                    El(w, "IVATasaBasica", "22.000");
+                    El(w, "IVATasaBasica", Tasa(Totales.TasaIvaBasica));
                 if (t.MontoNetoMinimo > 0)
                     El(w, "MntIVATasaMin", M2(t.IvaMinimo));
                 if (t.MontoNetoBasico > 0)
@@ -292,7 +292,7 @@ internal static class CfeXml
 
     private static void EscribirMoneda(XmlWriter w, Cfe cfe)
     {
-        El(w, "TpoMoneda", CodigoIso4217(cfe.Moneda));
+        El(w, "TpoMoneda", cfe.Moneda.CodigoIso());
         if (cfe.Moneda != Moneda.PesoUruguayo && cfe.TipoCambio.HasValue)
             El(w, "TpoCambio", CfeFormat.DecimalInvariant(cfe.TipoCambio.Value, "F3"));
     }
@@ -365,7 +365,7 @@ internal static class CfeXml
         TipoIva.Minimo => "2",
         TipoIva.Basico => "3",
         TipoIva.Suspendido => "12", // IVA en suspenso
-        _ => throw new CfeValidationException([$"Indicador de IVA no soportado: {iva}."]),
+        _ => throw new ArgumentOutOfRangeException(nameof(iva), iva, "Indicador de IVA no soportado."),
     };
 
     private static void EscribirDescuentosRecargos(XmlWriter w, Cfe cfe, FamiliaCfe familia)
@@ -433,7 +433,7 @@ internal static class CfeXml
         if (r.MontoCfeRef.HasValue)
             El(w, "MntCFEref", M2(r.MontoCfeRef.Value));
         if (r.MonedaCfeRef.HasValue)
-            El(w, "TpoMonedaRef", CodigoIso4217(r.MonedaCfeRef.Value));
+            El(w, "TpoMonedaRef", r.MonedaCfeRef.Value.CodigoIso());
         if (r.TipoCambioCfeRef.HasValue)
             El(w, "TpoCambioRef", CfeFormat.DecimalInvariant(r.TipoCambioCfeRef.Value, "F3"));
         w.WriteEndElement(); // Referencia
@@ -455,13 +455,4 @@ internal static class CfeXml
         Convert.ToInt32(value, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture);
 
     private static string Cant(Cfe cfe) => cfe.Detalle.Count.ToString(CultureInfo.InvariantCulture);
-
-    /// <summary>Código ISO 4217 de 3 letras que usa la DGI (<c>TpoMoneda</c>).</summary>
-    private static string CodigoIso4217(Moneda moneda) => moneda switch
-    {
-        Moneda.PesoUruguayo => "UYU",
-        Moneda.DolarAmericano => "USD",
-        Moneda.Euro => "EUR",
-        _ => throw new ArgumentOutOfRangeException(nameof(moneda), $"Moneda '{moneda}' sin código ISO 4217 definido."),
-    };
 }

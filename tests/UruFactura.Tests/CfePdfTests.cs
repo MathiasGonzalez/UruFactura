@@ -57,11 +57,79 @@ public class CfePdfTests
     public void A4_AceptadoPorDgi_AgregaLaMarca()
     {
         var sinAceptar = CfePdf.GenerarA4(TestData.Emitido());
-        var aceptado = TestData.Emitido();
-        aceptado.EstadoDgi = "AE";
+        var aceptado = TestData.Emitido(estado: EstadoCfe.Aceptado);
 
         Assert.True(CfePdf.GenerarA4(aceptado).Length > sinAceptar.Length);
     }
+
+    // --- Contenido según el tipo de comprobante ---
+
+    [Theory]
+    [InlineData(TipoCfe.ETicket, new[] { "Cant.", "Descripción", "P.Unit.", "IVA", "Total" })]
+    [InlineData(TipoCfe.EFacturaExportacion, new[] { "Cant.", "Descripción", "P.Unit.", "Total" })]
+    [InlineData(TipoCfe.ERemitoExportacion, new[] { "Cant.", "Descripción", "P.Unit.", "Total" })]
+    [InlineData(TipoCfe.ERemito, new[] { "Cant.", "Descripción" })]
+    [InlineData(TipoCfe.EResguardo, new[] { "Código", "Tasa", "Monto sujeto", "Valor" })]
+    public void Columnas_SegunElTipo_SinIvaEnExportacionNiPreciosEnRemitos(TipoCfe tipo, string[] titulos) =>
+        Assert.Equal(titulos, CfePdf.Columnas(tipo).Select(c => c.Titulo));
+
+    [Fact]
+    public void Filas_ETicket_IndicanElIvaDeCadaLinea()
+    {
+        var cfe = TestData.CfeValido() with { Detalle = [TestData.Linea(), TestData.Linea(1, 0.125m, TipoIva.Minimo)] };
+
+        Assert.Equal(
+            [["2", "Servicio de consultoría", "100,00", "22%", "200,00"], ["1", "Servicio de consultoría", "0,125", "10%", "0,13"]],
+            CfePdf.Filas(cfe));
+    }
+
+    [Fact]
+    public void Filas_EResguardo_SonLasRetenciones() =>
+        Assert.Equal(
+            [["R1", "12%", "1.000,00", "120,00"], ["R2", "", "500,00", "25,00"]],
+            CfePdf.Filas(TestData.CfeValido(TipoCfe.EResguardo)));
+
+    [Fact]
+    public void Totales_ETicket_IncluyenAjustesNetosEIva()
+    {
+        var emitido = TestData.Emitido(TestData.CfeValido() with
+        {
+            DescuentosRecargos = [new DescuentoRecargoGlobal { Glosa = "Promo", Monto = 50m }],
+        });
+
+        Assert.Equal([("Descuento Promo", 50m), ("Neto IVA 22%", 150m), ("IVA 22%", 33m)], CfePdf.LineasTotales(emitido));
+        Assert.Equal(("TOTAL", 183m), CfePdf.Total(emitido));
+    }
+
+    [Theory]
+    [InlineData(TipoCfe.ERemito)]
+    [InlineData(TipoCfe.EResguardo)]
+    [InlineData(TipoCfe.EFacturaExportacion)]
+    public void Totales_SinIvaEnRemitosResguardosYExportacion(TipoCfe tipo) =>
+        Assert.DoesNotContain(CfePdf.LineasTotales(TestData.Emitido(TestData.CfeValido(tipo))), l => l.Etiqueta.Contains("IVA"));
+
+    [Fact]
+    public void Total_ERemito_NoTiene_YEResguardoEsElRetenido()
+    {
+        Assert.Null(CfePdf.Total(TestData.Emitido(TestData.CfeValido(TipoCfe.ERemito))));
+        Assert.Equal(("TOTAL RETENIDO", 145m), CfePdf.Total(TestData.Emitido(TestData.CfeValido(TipoCfe.EResguardo))));
+    }
+
+    [Fact]
+    public void Moneda_ExtranjeraConCodigoIsoYTipoDeCambio()
+    {
+        var emitido = TestData.Emitido(TestData.CfeValido(TipoCfe.EFacturaExportacion)); // USD a 40,5
+
+        Assert.Equal("Moneda: USD - Tipo de cambio: 40,500", CfePdf.LineaMoneda(emitido.Documento));
+        Assert.Equal("TOTAL (USD)", CfePdf.Total(emitido)!.Value.Etiqueta);
+        Assert.Null(CfePdf.LineaMoneda(TestData.CfeValido()));
+    }
+
+    [Fact]
+    public void Referencias_DeLasNotasIndicanElComprobanteQueCorrigen() =>
+        Assert.Equal(
+            ["e-Ticket A-10 del 01/06/2026 por UYU 500,00 - Corrección"],
+            CfePdf.LineasReferencias(TestData.CfeValido(TipoCfe.NotaCreditoETicket)));
 
     [Fact]
     public void Qr_EsPng()

@@ -59,6 +59,22 @@ public class UruFacturaConfigTests
         Assert.Contains((TestData.Config() with { Ambiente = Ambiente.Produccion }).Validar(), e => e.Contains("UrlEnvio"));
 
     [Fact]
+    public void Produccion_SinValidarElCertificadoTls_TieneError() =>
+        Assert.Contains((TestData.Config() with
+        {
+            Ambiente = Ambiente.Produccion, UrlEnvio = "https://e", UrlConsultas = "https://c", OmitirValidacionSsl = true,
+        }).Validar(), e => e.Contains("OmitirValidacionSsl"));
+
+    [Fact]
+    public void Homologacion_SinValidarElCertificadoTls_EsValida() =>
+        Assert.Empty((TestData.Config() with { OmitirValidacionSsl = true }).Validar());
+
+    [Fact]
+    public void EmisorConCaracterDeControl_TieneError() =>
+        Assert.Contains((TestData.Config() with { Emisor = TestData.Emisor() with { RazonSocial = "Empresa\u0001" } }).Validar(),
+            e => e.Contains("Emisor.RazonSocial"));
+
+    [Fact]
     public void Produccion_ConUrls_EsValida() =>
         Assert.Empty((TestData.Config() with { Ambiente = Ambiente.Produccion, UrlEnvio = "https://e", UrlConsultas = "https://c" }).Validar());
 

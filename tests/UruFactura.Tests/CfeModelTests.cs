@@ -127,38 +127,51 @@ public class CfeModelTests
         Assert.Empty(TestData.Validar(TestData.CfeValido(tipo)));
 
     [Fact]
-    public void Validar_SinDetalle() =>
-        Assert.Contains(TestData.Validar(Cfe()), e => e.Contains("línea de detalle"));
+    public void Validar_SinDetalle() => Assert.Contains("Detalle", TestData.Campos(Cfe()));
 
     [Fact]
     public void Validar_LineaSinNombre() =>
-        Assert.Contains(TestData.Validar(Cfe(TestData.Linea() with { NombreItem = "" })), e => e.Contains("NombreItem"));
+        Assert.Contains("Detalle[0].NombreItem", TestData.Campos(Cfe(TestData.Linea() with { NombreItem = "" })));
 
     [Fact]
     public void Validar_LineaCantidadCero() =>
-        Assert.Contains(TestData.Validar(Cfe(TestData.Linea(cantidad: 0))), e => e.Contains("Cantidad"));
+        Assert.Contains("Detalle[0].Cantidad", TestData.Campos(Cfe(TestData.Linea(cantidad: 0))));
+
+    [Fact]
+    public void Validar_CantidadQueRedondeaACero() =>
+        Assert.Contains("Detalle[0].Cantidad", TestData.Campos(Cfe(TestData.Linea(cantidad: 0.0004m))));
 
     [Fact]
     public void Validar_TipoNoSoportado() =>
-        Assert.Contains(TestData.Validar(TestData.CfeValido() with { Tipo = (TipoCfe)999 }), e => e.Contains("no está soportado"));
+        Assert.Equal(["Tipo"], TestData.Campos(TestData.CfeValido() with { Tipo = (TipoCfe)999 }));
 
     [Fact]
     public void Validar_MonedaFueraDelEnum() =>
-        Assert.Contains(TestData.Validar(TestData.CfeValido() with { Moneda = (Moneda)1 }), e => e.Contains("Moneda"));
+        Assert.Contains("Moneda", TestData.Campos(TestData.CfeValido() with { Moneda = (Moneda)1 }));
 
     [Fact]
     public void Validar_MonedaExtranjeraSinTipoDeCambio() =>
-        Assert.Contains(TestData.Validar(TestData.CfeValido() with { Moneda = Moneda.DolarAmericano }), e => e.Contains("TipoCambio"));
+        Assert.Contains("TipoCambio", TestData.Campos(TestData.CfeValido() with { Moneda = Moneda.DolarAmericano }));
+
+    [Fact]
+    public void Validar_TipoDeCambioQueRedondeaACero() =>
+        Assert.Contains("TipoCambio", TestData.Campos(TestData.CfeValido() with { Moneda = Moneda.DolarAmericano, TipoCambio = 0.0004m }));
 
     [Fact]
     public void Validar_FechaDeVencimientoAnteriorALaEmision() =>
-        Assert.Contains(TestData.Validar(TestData.CfeValido() with { FechaVencimiento = TestData.Dia.AddDays(-1) }),
-            e => e.Contains("FechaVencimiento"));
+        Assert.Contains("FechaVencimiento", TestData.Campos(TestData.CfeValido() with { FechaVencimiento = TestData.Dia.AddDays(-1) }));
+
+    [Fact]
+    public void Validar_FechaDeEmisionFutura() =>
+        Assert.Contains("FechaEmision", TestData.Campos(TestData.CfeValido() with { FechaEmision = TestData.Dia.AddDays(1) }));
+
+    [Fact]
+    public void Validar_FechaDeEmisionAnteriorAlFormatoCfe() =>
+        Assert.Contains("FechaEmision", TestData.Campos(TestData.CfeValido() with { FechaEmision = new DateOnly(2010, 1, 1) }));
 
     [Fact]
     public void Validar_NotaSinReferencias() =>
-        Assert.Contains(TestData.Validar(TestData.CfeValido(TipoCfe.NotaCreditoETicket) with { Referencias = [] }),
-            e => e.Contains("referenci"));
+        Assert.Contains("Referencias", TestData.Campos(TestData.CfeValido(TipoCfe.NotaCreditoETicket) with { Referencias = [] }));
 
     [Fact]
     public void Validar_NotaConReferenciaSinMontoNiMoneda()
@@ -168,69 +181,115 @@ public class CfeModelTests
             Referencias = [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 1, FechaCfe = TestData.Dia }],
         };
 
-        var errores = TestData.Validar(cfe);
+        var campos = TestData.Campos(cfe);
 
-        Assert.Contains(errores, e => e.Contains("MontoCfeRef"));
-        Assert.Contains(errores, e => e.Contains("MonedaCfeRef"));
+        Assert.Contains("Referencias[0].MontoCfeRef", campos);
+        Assert.Contains("Referencias[0].MonedaCfeRef", campos);
     }
+
+    public static IEnumerable<object[]> ReferenciasInvalidas() =>
+    [
+        [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "", NroCfe = 1, FechaCfe = TestData.Dia }, "Referencias[0].Serie"],
+        [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "a", NroCfe = 1, FechaCfe = TestData.Dia }, "Referencias[0].Serie"],
+        [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 0, FechaCfe = TestData.Dia }, "Referencias[0].NroCfe"],
+        [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 10_000_000, FechaCfe = TestData.Dia }, "Referencias[0].NroCfe"],
+        [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 1 }, "Referencias[0].FechaCfe"],
+        [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 1, FechaCfe = TestData.Dia.AddDays(1) }, "Referencias[0].FechaCfe"],
+        [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 1, FechaCfe = TestData.Dia, Razon = new string('x', 91) }, "Referencias[0].Razon"],
+        [new RefCfe { Serie = "A", NroCfe = 1, FechaCfe = TestData.Dia }, "Referencias[0].TipoCfe"],
+        [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 1, FechaCfe = TestData.Dia, MontoCfeRef = -1m }, "Referencias[0].MontoCfeRef"],
+    ];
+
+    [Theory]
+    [MemberData(nameof(ReferenciasInvalidas))]
+    public void Validar_ReferenciaQueNoCumpleElEsquema(RefCfe referencia, string campo) =>
+        Assert.Contains(campo, TestData.Campos(TestData.CfeValido() with { Referencias = [referencia] }));
 
     [Theory]
     [InlineData(TipoCfe.EFactura)]
     [InlineData(TipoCfe.EFacturaExportacion)]
     [InlineData(TipoCfe.EResguardo)]
     public void Validar_TiposQueRequierenReceptor_SinReceptor(TipoCfe tipo) =>
-        Assert.Contains(TestData.Validar(TestData.CfeValido(tipo) with { Receptor = null }), e => e.Contains("receptor"));
+        Assert.Contains("Receptor", TestData.Campos(TestData.CfeValido(tipo) with { Receptor = null }));
+
+    [Fact]
+    public void Validar_EFacturaSinDocumentoDelReceptor() =>
+        Assert.Contains("Receptor.Documento", TestData.Campos(TestData.CfeValido(TipoCfe.EFactura) with
+        {
+            Receptor = new Receptor { RazonSocial = "Cliente S.A." },
+        }));
 
     [Fact]
     public void Validar_RutReceptorDeEFacturaInvalido() =>
-        Assert.Contains(TestData.Validar(TestData.CfeValido(TipoCfe.EFactura) with { Receptor = new Receptor { Documento = "210000000012" } }),
-            e => e.Contains("RUT del receptor"));
+        Assert.Contains("Receptor.Documento", TestData.Campos(TestData.CfeValido(TipoCfe.EFactura) with
+        {
+            Receptor = new Receptor { Documento = "210000000012" },
+        }));
 
     [Fact]
     public void Validar_EFacturaConReceptorNoRut() =>
-        Assert.Contains(TestData.Validar(TestData.CfeValido(TipoCfe.EFactura) with
-            {
-                Receptor = new Receptor { Documento = "12345678", TipoDocumento = TipoDocumentoReceptor.CedulaIdentidad },
-            }), e => e.Contains("RUT uruguayo"));
+        Assert.Contains("Receptor.TipoDocumento", TestData.Campos(TestData.CfeValido(TipoCfe.EFactura) with
+        {
+            Receptor = new Receptor { Documento = "12345678", TipoDocumento = TipoDocumentoReceptor.CedulaIdentidad },
+        }));
+
+    [Fact]
+    public void Validar_CodigoDePaisQueNoAdmiteLaDgi() =>
+        Assert.Contains("Receptor.CodigoPais", TestData.Campos(TestData.CfeValido() with
+        {
+            Receptor = new Receptor { Documento = "X1", TipoDocumento = TipoDocumentoReceptor.Pasaporte, CodigoPais = "XX" },
+        }));
 
     [Theory]
     [InlineData(TipoCfe.ERemito)]
     [InlineData(TipoCfe.ERemitoExportacion)]
     public void Validar_RemitoSinIndTraslado(TipoCfe tipo) =>
-        Assert.Contains(TestData.Validar(TestData.CfeValido(tipo) with { IndTraslado = null }), e => e.Contains("IndTraslado"));
+        Assert.Contains("IndTraslado", TestData.Campos(TestData.CfeValido(tipo) with { IndTraslado = null }));
 
     [Fact]
     public void Validar_RemitoConIndTrasladoFueraDelEnum() =>
-        Assert.Contains(TestData.Validar(TestData.CfeValido(TipoCfe.ERemito) with { IndTraslado = (IndTraslado)99 }),
-            e => e.Contains("IndTraslado"));
+        Assert.Contains("IndTraslado", TestData.Campos(TestData.CfeValido(TipoCfe.ERemito) with { IndTraslado = (IndTraslado)99 }));
 
     [Fact]
     public void Validar_RemitoConReceptorSinDireccionNiCiudad()
     {
-        var errores = TestData.Validar(TestData.CfeValido(TipoCfe.ERemito) with
+        var campos = TestData.Campos(TestData.CfeValido(TipoCfe.ERemito) with
         {
             Receptor = new Receptor { Documento = "214844360018", RazonSocial = "Cliente S.A." },
         });
 
-        Assert.Contains(errores, e => e.Contains("e-Remito requiere dirección"));
-        Assert.Contains(errores, e => e.Contains("e-Remito requiere ciudad"));
+        Assert.Contains("Receptor.Direccion", campos);
+        Assert.Contains("Receptor.Ciudad", campos);
     }
+
+    [Theory]
+    [InlineData(TipoCfe.ERemito)]
+    [InlineData(TipoCfe.ERemitoExportacion)]
+    public void Validar_RemitoConDescuentoEnLaLinea(TipoCfe tipo) =>
+        Assert.Contains("Detalle[0]", TestData.Campos(TestData.CfeValido(tipo) with
+        {
+            Detalle = [TestData.Linea() with { DescuentoMonto = 10m }],
+        }));
 
     [Fact]
     public void Validar_ExportacionSinClausulaNiViaDeTransporte()
     {
-        var errores = TestData.Validar(TestData.CfeValido(TipoCfe.EFacturaExportacion) with { ClausulaVenta = null, ViaTransporte = null });
+        var campos = TestData.Campos(TestData.CfeValido(TipoCfe.EFacturaExportacion) with { ClausulaVenta = null, ViaTransporte = null });
 
-        Assert.Contains(errores, e => e.Contains("ClausulaVenta"));
-        Assert.Contains(errores, e => e.Contains("ViaTransporte"));
+        Assert.Contains("ClausulaVenta", campos);
+        Assert.Contains("ViaTransporte", campos);
     }
+
+    [Fact]
+    public void Validar_RemitoDeExportacionConClausulaInvalida() =>
+        Assert.Contains("ClausulaVenta", TestData.Campos(TestData.CfeValido(TipoCfe.ERemitoExportacion) with { ClausulaVenta = "FOB1" }));
 
     [Fact]
     public void Validar_ETicketSobreElTope_RequiereDocumentoDelReceptor()
     {
         var cfe = TestData.CfeValido(); // neto 200
 
-        Assert.Contains(TestData.Validar(cfe, tope: 150m), e => e.Contains("tope"));
+        Assert.Contains("Receptor.Documento", TestData.Campos(cfe, tope: 150m));
         Assert.Empty(TestData.Validar(cfe, tope: 1000m));
         Assert.Empty(TestData.Validar(cfe with
         {
@@ -243,6 +302,68 @@ public class CfeModelTests
     {
         var cfe = TestData.CfeValido() with { Moneda = Moneda.DolarAmericano, TipoCambio = 40m }; // 200 USD = 8000 pesos
 
-        Assert.Contains(TestData.Validar(cfe, tope: 5000m), e => e.Contains("tope"));
+        Assert.Contains(TestData.Validar(cfe, tope: 5000m), e => e.Mensaje.Contains("tope"));
+    }
+
+    // --- Montos y textos fuera del esquema (pasaban la validación y la DGI los rechazaba) ---
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(100_000_000_000)]
+    public void Validar_PrecioUnitarioFueraDeRango(double precio) =>
+        Assert.Contains("Detalle[0].PrecioUnitario", TestData.Campos(Cfe(TestData.Linea(1, (decimal)precio))));
+
+    [Fact]
+    public void Validar_MontoDeLaLineaSobreElMaximo() =>
+        Assert.Contains("Detalle[0]", TestData.Campos(Cfe(TestData.Linea(10_000_000m, 99_999_999_999m))));
+
+    [Theory]
+    [InlineData(-50, 0)]
+    [InlineData(0, -50)]
+    public void Validar_DescuentoORecargoNegativo(double descuento, double recargo)
+    {
+        // Antes daba un MontoItem de 150 para 1 × 100 sin informar el ajuste.
+        var linea = TestData.Linea(1, 100m) with { DescuentoMonto = (decimal)descuento, RecargoMonto = (decimal)recargo };
+
+        Assert.Contains(TestData.Validar(Cfe(linea)), e => e.Campo is "Detalle[0].DescuentoMonto" or "Detalle[0].RecargoMonto");
+    }
+
+    [Fact]
+    public void Validar_DescuentoDeLaLineaMayorQueSuMonto() =>
+        Assert.Contains("Detalle[0].DescuentoMonto", TestData.Campos(Cfe(TestData.Linea(1, 100m) with { DescuentoMonto = 150m })));
+
+    [Fact]
+    public void Validar_DescuentoGlobalMayorQueLaBase()
+    {
+        // Antes dejaba MntTotal negativo, que el esquema no admite.
+        var cfe = TestData.CfeValido() with { DescuentosRecargos = [new DescuentoRecargoGlobal { Glosa = "Promo", Monto = 500m }] };
+
+        Assert.Contains("DescuentosRecargos", TestData.Campos(cfe));
+    }
+
+    [Theory]
+    [InlineData(@"Café\u0002")]
+    [InlineData(@"Línea\u001Fx")]
+    [InlineData(@"\uFFFE")]
+    public void Validar_CaracteresDeControl(string nombre) =>
+        Assert.Contains("Detalle[0].NombreItem", TestData.Campos(Cfe(TestData.Linea() with { NombreItem = System.Text.RegularExpressions.Regex.Unescape(nombre) })));
+
+    [Fact]
+    public void Validar_TextoConEmoji_EsValido() =>
+        Assert.Empty(TestData.Validar(Cfe(TestData.Linea() with { NombreItem = "Torta 🎂" })));
+
+    [Fact]
+    public void Validar_CaracterDeControlEnElReceptor() =>
+        Assert.Contains("Receptor.RazonSocial", TestData.Campos(TestData.CfeValido(TipoCfe.EFactura) with
+        {
+            Receptor = new Receptor { Documento = "214844360018", RazonSocial = "Cliente\u0007 S.A." },
+        }));
+
+    [Fact]
+    public void Validar_InformaTodosLosErroresConSuCampo()
+    {
+        var cfe = Cfe(TestData.Linea() with { NombreItem = "" }, TestData.Linea(cantidad: 0)) with { NroInterno = new string('x', 51) };
+
+        Assert.Equal(["NroInterno", "Detalle[0].NombreItem", "Detalle[1].Cantidad"], TestData.Campos(cfe));
     }
 }

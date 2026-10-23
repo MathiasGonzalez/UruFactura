@@ -2,12 +2,23 @@ namespace UruFactura.Tests;
 
 public class InMemoryStoreTests
 {
-    private static readonly DateOnly Hoy = new(2026, 6, 15);
+    private static readonly DateOnly Hoy = TestData.Dia;
+
+    private static InMemoryStore Store(TimeProvider? reloj = null) => new(reloj ?? TestData.Reloj);
+
+    /// <summary>Un CFE numerado con el CAE de prueba, listo para registrar.</summary>
+    private static CfeEmitido Emitido(long numero, Cae? cae = null, DateOnly? fecha = null, string? nroInterno = null) =>
+        TestData.Emitido(TestData.CfeValido() with { FechaEmision = fecha ?? Hoy, NroInterno = nroInterno }, numero, cae);
+
+    private static async Task<List<CfeEmitido>> Listar(InMemoryStore store, DateOnly fecha) =>
+        await store.ListarCfesAsync(fecha).ToListAsync();
+
+    // --- CAE ---
 
     [Fact]
     public async Task GuardarCae_YListar()
     {
-        var store = new InMemoryStore();
+        var store = Store();
         await store.GuardarCaeAsync(TestData.Cae());
         await store.GuardarCaeAsync(TestData.Cae(TipoCfe.EFactura));
 
@@ -17,7 +28,7 @@ public class InMemoryStoreTests
     [Fact]
     public async Task GuardarCae_ElMismo_ActualizaDatosSinRetrocederElContador()
     {
-        var store = new InMemoryStore();
+        var store = Store();
         await store.GuardarCaeAsync(TestData.Cae(ultimo: 20));
 
         await store.GuardarCaeAsync(TestData.Cae(ultimo: 5, vence: new DateOnly(2050, 1, 1)));
@@ -28,59 +39,66 @@ public class InMemoryStoreTests
     }
 
     [Fact]
-    public async Task ReservarNumero_EsConsecutivo_YActualizaElContador()
+    public async Task EliminarCae_SinUsar_LoElimina_YUsadoNo()
     {
-        var store = new InMemoryStore();
-        await store.GuardarCaeAsync(TestData.Cae(desde: 10, hasta: 20));
+        var store = Store();
+        await store.GuardarCaeAsync(TestData.Cae(serie: "A"));
+        await store.GuardarCaeAsync(TestData.Cae(serie: "B", ultimo: 3));
 
-        var a = await store.ReservarNumeroAsync(TipoCfe.ETicket, Hoy);
-        var b = await store.ReservarNumeroAsync(TipoCfe.ETicket, Hoy);
+        Assert.True(await store.EliminarCaeAsync(TestData.Cae(serie: "A")));
+        Assert.False(await store.EliminarCaeAsync(TestData.Cae(serie: "B")));
+        Assert.False(await store.EliminarCaeAsync(TestData.Cae(serie: "C")));
+        Assert.Equal("B", Assert.Single(await store.ListarCaesAsync()).Serie);
+    }
 
-        Assert.Equal(10, a!.UltimoNroUsado);
-        Assert.Equal(11, b!.UltimoNroUsado);
-        Assert.Equal(11, (await store.ListarCaesAsync()).Single().UltimoNroUsado);
+    // --- Emisión ---
+
+    [Fact]
+    public async Task RegistrarEmision_AvanzaElCaeYGuardaElCfe()
+    {
+        var store = Store();
+        await store.GuardarCaeAsync(TestData.Cae());
+
+        Assert.True(await store.RegistrarEmisionAsync(Emitido(1), ultimoNroUsadoLeido: 0));
+
+        Assert.Equal(1, (await store.ListarCaesAsync()).Single().UltimoNroUsado);
+        Assert.Equal(1, Assert.Single(await Listar(store, Hoy)).Numero);
     }
 
     [Fact]
-    public async Task ReservarNumero_EnParalelo_NoRepite()
+    public async Task RegistrarEmision_ConElCaeDesactualizado_NoGuardaNada()
     {
-        var store = new InMemoryStore();
-        await store.GuardarCaeAsync(TestData.Cae(hasta: 1000));
+        var store = Store();
+        await store.GuardarCaeAsync(TestData.Cae());
+        await store.RegistrarEmisionAsync(Emitido(1), 0);
 
-        var numeros = await Task.WhenAll(Enumerable.Range(0, 500).Select(_ =>
-            Task.Run(async () => (await store.ReservarNumeroAsync(TipoCfe.ETicket, Hoy))!.UltimoNroUsado)));
+        // Otra emisión leyó el CAE antes de que se usara el 1 y numeró con el mismo número.
+        Assert.False(await store.RegistrarEmisionAsync(Emitido(1), 0));
 
-        Assert.Equal(Enumerable.Range(1, 500).Select(n => (long)n), numeros.Order());
+        Assert.Equal(1, (await store.ListarCaesAsync()).Single().UltimoNroUsado);
+        Assert.Single(await Listar(store, Hoy));
     }
 
     [Fact]
-    public async Task ReservarNumero_RangoAgotado_PasaAlSiguienteCae()
-    {
-        var store = new InMemoryStore();
-        await store.GuardarCaeAsync(TestData.Cae(serie: "A", hasta: 1, vence: Hoy.AddYears(2)));
-        await store.GuardarCaeAsync(TestData.Cae(serie: "B", vence: Hoy.AddYears(1)));
-
-        var primero = await store.ReservarNumeroAsync(TipoCfe.ETicket, Hoy);
-        var segundo = await store.ReservarNumeroAsync(TipoCfe.ETicket, Hoy);
-
-        Assert.Equal("A", primero!.Serie);
-        Assert.Equal("B", segundo!.Serie);
-    }
+    public async Task RegistrarEmision_SinElCae_DevuelveFalse() =>
+        Assert.False(await Store().RegistrarEmisionAsync(Emitido(1), 0));
 
     [Fact]
-    public async Task ReservarNumero_SinCaeDisponible_DevuelveNull()
+    public async Task RegistrarEmision_EnParalelo_SoloUnoPorNumero()
     {
-        var store = new InMemoryStore();
-        await store.GuardarCaeAsync(TestData.Cae(vence: Hoy.AddDays(-1)));
+        var store = Store();
+        await store.GuardarCaeAsync(TestData.Cae());
 
-        Assert.Null(await store.ReservarNumeroAsync(TipoCfe.ETicket, Hoy));
-        Assert.Null(await store.ReservarNumeroAsync(TipoCfe.EFactura, Hoy));
+        var resultados = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ =>
+            Task.Run(async () => await store.RegistrarEmisionAsync(Emitido(1), 0))));
+
+        Assert.Single(resultados, r => r);
     }
 
     [Fact]
     public async Task ReservarIdEnvio_EsCrecienteYDeHasta10Digitos()
     {
-        var store = new InMemoryStore();
+        var store = Store();
         var ids = new List<long>();
         for (var i = 0; i < 5; i++)
             ids.Add(await store.ReservarIdEnvioAsync());
@@ -90,41 +108,80 @@ public class InMemoryStoreTests
         Assert.All(ids, id => Assert.InRange(id, 1, 9_999_999_999));
     }
 
+    // --- CFE ---
+
     [Fact]
     public async Task GuardarCfes_YListarPorFecha()
     {
-        var store = new InMemoryStore();
-        await store.GuardarCfesAsync([TestData.Emitido(numero: 2), TestData.Emitido(numero: 1)]);
-        await store.GuardarCfesAsync([TestData.Emitido(TestData.CfeValido() with { FechaEmision = Hoy.AddDays(-1) }, 3)]);
+        var reloj = new RelojManual(new DateTimeOffset(2026, 6, 14, 12, 0, 0, HoraUruguay.Offset));
+        var store = Store(reloj);
+        await store.GuardarCfesAsync([Emitido(3, fecha: Hoy.AddDays(-1))]);
+        reloj.Utc = reloj.Utc.AddDays(1);
+        await store.GuardarCfesAsync([Emitido(2), Emitido(1)]);
 
-        var delDia = await store.ListarCfesAsync(Hoy);
-
-        Assert.Equal([1L, 2L], delDia.Select(c => c.Numero));
+        Assert.Equal([1L, 2L], (await Listar(store, Hoy)).Select(c => c.Numero));
+        Assert.Equal([3L], (await Listar(store, Hoy.AddDays(-1))).Select(c => c.Numero));
     }
 
     [Fact]
     public async Task GuardarCfes_ElMismo_LoReemplaza()
     {
-        var store = new InMemoryStore();
-        var cfe = TestData.Emitido();
-        await store.GuardarCfesAsync([cfe]);
+        var store = Store();
+        await store.GuardarCfesAsync([Emitido(1)]);
 
-        cfe.EstadoDgi = "AE";
-        await store.GuardarCfesAsync([cfe]);
+        await store.GuardarCfesAsync([TestData.Emitido(numero: 1, estado: EstadoCfe.Aceptado)]);
 
-        Assert.True(Assert.Single(await store.ListarCfesAsync(Hoy)).AceptadoPorDgi);
+        Assert.True(Assert.Single(await Listar(store, Hoy)).AceptadoPorDgi);
     }
 
     [Fact]
-    public async Task GuardarCfes_DescartaLosDeMasDeLosDiasDeRetencion()
+    public async Task BuscarCfes_PorNroInterno()
     {
-        var store = new InMemoryStore { DiasRetencionCfe = 2 };
-        await store.GuardarCfesAsync([TestData.Emitido(TestData.CfeValido() with { FechaEmision = Hoy.AddDays(-2) }, 1)]);
-        await store.GuardarCfesAsync([TestData.Emitido(TestData.CfeValido() with { FechaEmision = Hoy.AddDays(-1) }, 2)]);
-        await store.GuardarCfesAsync([TestData.Emitido(numero: 3)]);
+        var store = Store();
+        await store.GuardarCfesAsync([Emitido(1, nroInterno: "P-1"), Emitido(2, nroInterno: "P-2"), Emitido(3, nroInterno: "P-1")]);
 
-        Assert.Empty(await store.ListarCfesAsync(Hoy.AddDays(-2)));
-        Assert.Single(await store.ListarCfesAsync(Hoy.AddDays(-1)));
+        Assert.Equal([1L, 3L], (await store.BuscarCfesAsync("P-1")).Select(c => c.Numero).Order());
+        Assert.Empty(await store.BuscarCfesAsync("P-9"));
+    }
+
+    [Fact]
+    public async Task Retencion_SeCuentaDesdeHoy_NoDesdeElCfeMasNuevo()
+    {
+        var store = Store();
+        await store.GuardarCfesAsync([Emitido(1)]);
+
+        // Un CFE con fecha futura (que la validación ya no deja emitir, pero otro proceso podría
+        // guardar) no descarta los de hoy: antes vaciaba el reporte del día.
+        var futuro = new CfeEmitido(
+            TestData.CfeValido() with { FechaEmision = new DateOnly(2040, 1, 1), Emisor = TestData.Emisor() },
+            TestData.Cae(), 2, new Totales(), DateTimeOffset.UtcNow, "x", "<CFE/>");
+        await store.GuardarCfesAsync([futuro]);
+
+        Assert.Equal([1L], (await Listar(store, Hoy)).Select(c => c.Numero));
+    }
+
+    [Fact]
+    public async Task Retencion_DescartaLosDiasViejos_YNoListaFechasIncompletas()
+    {
+        var reloj = new RelojManual(new DateTimeOffset(2026, 6, 13, 12, 0, 0, HoraUruguay.Offset));
+        var store = new InMemoryStore(reloj) { DiasRetencionCfe = 2 };
+        await store.GuardarCfesAsync([Emitido(1, fecha: Hoy.AddDays(-2))]);
+        reloj.Utc = reloj.Utc.AddDays(1);
+        await store.GuardarCfesAsync([Emitido(2, fecha: Hoy.AddDays(-1))]);
+        reloj.Utc = reloj.Utc.AddDays(1);
+        await store.GuardarCfesAsync([Emitido(3)]);
+
+        // Conserva hoy y ayer; del 13 ya no tiene todos los CFE: no puede devolver una lista incompleta.
+        Assert.Single(await Listar(store, Hoy.AddDays(-1)));
+        await Assert.ThrowsAsync<UruFacturaException>(() => Listar(store, Hoy.AddDays(-2)));
+    }
+
+    [Fact]
+    public async Task ListarCfes_AntesDeCrearse_LanzaUruFacturaException()
+    {
+        // Tras un reinicio no tiene los CFE de ayer: un reporte con cero comprobantes sería falso.
+        var store = Store();
+        await Assert.ThrowsAsync<UruFacturaException>(() => Listar(store, Hoy.AddDays(-1)));
     }
 
     [Fact]

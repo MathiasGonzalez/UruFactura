@@ -7,11 +7,11 @@ namespace UruFactura;
 /// </summary>
 public sealed record AcuseSobre
 {
-    /// <summary><c>AS</c> recibido, <c>BS</c> rechazado, <c>BA</c> archivo rechazado.</summary>
-    public string Estado { get; init; } = string.Empty;
+    /// <summary>Estado del acuse: recibido (<c>AS</c>), rechazado (<c>BS</c>) o archivo rechazado (<c>BA</c>).</summary>
+    public required EstadoSobre Estado { get; init; }
 
     /// <summary>Indica si la DGI recibió el sobre (<c>AS</c>).</summary>
-    public bool Recibido => Estado == "AS";
+    public bool Recibido => Estado == EstadoSobre.Recibido;
 
     /// <summary>Descripción del resultado (incluye los motivos de rechazo).</summary>
     public string Mensaje { get; init; } = string.Empty;
@@ -28,7 +28,7 @@ public sealed record AcuseSobre
     /// <summary>Fecha y hora a partir de la cual se puede consultar el resultado.</summary>
     public DateTimeOffset? ConsultarDesde { get; init; }
 
-    /// <summary>CFE incluidos en el sobre.</summary>
+    /// <summary>CFE incluidos en el sobre, en el orden en que se enviaron.</summary>
     public IReadOnlyList<CfeEmitido> Comprobantes { get; init; } = [];
 
     /// <summary>XML de la respuesta de la DGI.</summary>
@@ -57,6 +57,12 @@ public sealed record EstadoEnvio
 /// <summary>Estado de un comprobante informado por la DGI.</summary>
 public sealed record EstadoComprobante
 {
+    /// <summary>
+    /// Posición del comprobante en el sobre (<c>Nro_ordinal</c>, desde 1). Es el único dato que el
+    /// resultado de un envío trae siempre: tipo, serie y número son opcionales.
+    /// </summary>
+    public int? NroOrdinal { get; init; }
+
     /// <summary>Tipo de CFE (101, 111, ...), si la DGI lo informa.</summary>
     public int? TipoCfe { get; init; }
 
@@ -66,11 +72,11 @@ public sealed record EstadoComprobante
     /// <summary>Número, si la DGI lo informa.</summary>
     public long? Numero { get; init; }
 
-    /// <summary><c>AE</c> aceptado, <c>BE</c> rechazado, <c>CE</c> observado, <c>FE</c> reliquidado.</summary>
-    public string Estado { get; init; } = string.Empty;
+    /// <summary>Estado del comprobante.</summary>
+    public required EstadoCfe Estado { get; init; }
 
     /// <summary>Indica si la DGI aceptó el comprobante (<c>AE</c>).</summary>
-    public bool Aceptado => Estado == "AE";
+    public bool Aceptado => Estado == EstadoCfe.Aceptado;
 
     /// <summary>Motivos de rechazo u observaciones (código y glosa).</summary>
     public IReadOnlyList<string> Motivos { get; init; } = [];
@@ -78,18 +84,26 @@ public sealed record EstadoComprobante
     /// <summary>XML de la respuesta de la DGI (solo en la consulta individual).</summary>
     public string? XmlRespuesta { get; init; }
 
-    internal bool Corresponde(CfeEmitido cfe) =>
-        TipoCfe == (int)cfe.Tipo && Serie == cfe.Serie && Numero == cfe.Numero;
+    /// <summary>
+    /// Si es el resultado de <paramref name="cfe"/>, enviado en la posición <paramref name="ordinal"/>
+    /// del sobre: por tipo, serie y número cuando la DGI los informa y, si no, por la posición.
+    /// </summary>
+    internal bool Corresponde(CfeEmitido cfe, int ordinal) =>
+        TipoCfe is null && Serie is null && Numero is null
+            ? NroOrdinal == ordinal
+            : (TipoCfe is null || TipoCfe == (int)cfe.Tipo)
+              && (Serie is null || Serie == cfe.Serie)
+              && (Numero is null || Numero == cfe.Numero);
 }
 
 /// <summary>Acuse de recibo del reporte diario (<c>ACKRepDiario</c>).</summary>
 public sealed record AcuseReporte
 {
-    /// <summary><c>AR</c> recibido, <c>BR</c> rechazado, <c>BA</c> archivo rechazado.</summary>
-    public string Estado { get; init; } = string.Empty;
+    /// <summary>Estado del acuse: recibido (<c>AR</c>), rechazado (<c>BR</c>) o archivo rechazado (<c>BA</c>).</summary>
+    public required EstadoReporte Estado { get; init; }
 
     /// <summary>Indica si la DGI recibió el reporte (<c>AR</c>).</summary>
-    public bool Recibido => Estado == "AR";
+    public bool Recibido => Estado == EstadoReporte.Recibido;
 
     /// <summary>Descripción del resultado (incluye los motivos de rechazo).</summary>
     public string Mensaje { get; init; } = string.Empty;

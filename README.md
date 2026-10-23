@@ -22,7 +22,7 @@ UruFactura es una librería open-source **.NET 10** para emitir Comprobantes Fis
 |---|---|
 | **Todos los CFE** | e-Ticket, e-Factura, exportación, e-Remito, e-Resguardo, sus notas, venta por cuenta ajena y contingencia. XML validado contra los XSD oficiales (`xsds_fe` 1.44.2, formato CFE v25.2). |
 | **Firma digital** | XML Signature *enveloped* del CFE y del reporte, y **WS-Security** en cada mensaje SOAP, con un certificado `.p12`/`.pfx` o un `X509Certificate2` (Key Vault, HSM). |
-| **Numeración con CAE** | Reserva atómica del próximo número; con varias instancias, en la base de datos. Alertas de vencimiento y de rango. |
+| **Numeración con CAE** | El número se asigna en la misma operación atómica que registra el CFE: no se repite (tampoco con varias instancias) ni queda consumido sin comprobante. Alertas de vencimiento y de rango. |
 | **DGI** | Envío de sobres `EnvioCFE`, consulta del resultado, consulta por comprobante y reporte diario, con respuestas tipadas. |
 | **Representación impresa** | PDF A4 y térmico (80 mm) con QR y pie normativo, en el paquete `UruFactura.Pdf`. |
 
@@ -71,10 +71,13 @@ var config = new UruFacturaConfig
     // En Producción son obligatorias (la DGI las entrega al habilitar el ambiente).
     // UrlEnvio     = "https://…/ws_efactura",
     // UrlConsultas = "https://…/ws_consultas",
-    // Otras opciones: AlgoritmoFirma (Sha256 por defecto), Timeout (30 s), ValorUnidadIndexada, OmitirValidacionSsl.
+    // Otras opciones: AlgoritmoFirma (Sha256 por defecto), Timeout (30 s), ValorUnidadIndexada,
+    // OmitirValidacionSsl (solo en Homologación).
 };
 
-using var client = new UruFacturaClient(config);   // valida la configuración y carga el certificado
+// Valida la configuración y carga el certificado. En Producción se indica además el almacenamiento
+// (ver "Producción y varias instancias"); en Homologación, por defecto, es uno en memoria.
+using var client = new UruFacturaClient(config);
 ```
 
 > ⚠️ Nunca guardes `PasswordCertificado` en texto plano. Usá variables de entorno o un gestor de secretos.
@@ -94,8 +97,10 @@ await client.RegistrarCaeAsync(new Cae
 });
 ```
 
-Un CAE por tipo de CFE (y por serie). La numeración la lleva el almacenamiento: con el predeterminado
-(en memoria) se pierde al reiniciar, así que en producción usá [uno durable](#-producción-y-varias-instancias).
+Un CAE por tipo de CFE (y por serie). No se admiten dos CAE de la misma serie con números en común (se
+emitirían números repetidos), y uno registrado por error que todavía no numeró nada se quita con
+`EliminarCaeAsync`. La numeración la lleva el almacenamiento: el en memoria se pierde al reiniciar, por
+eso en Producción el cliente exige [uno durable](#-producción-y-varias-instancias).
 
 ### 3. Emitir, enviar y consultar
 
@@ -108,25 +113,34 @@ var cfe = new Cfe(TipoCfe.ETicket)
     ],
 };
 
-// Valida, toma el próximo número del CAE, arma el XML, lo firma y lo registra. Un CFE inválido
-// lanza CfeValidationException sin consumir números (client.Validar(cfe) devuelve los errores sin emitir).
+// Valida, toma el próximo número del CAE, arma el XML, lo firma y lo registra. El número se consume
+// solo junto con el registro: si algo falla (validación, firma, base de datos, cancelación) no se pierde
+// ninguno. client.Validar(cfe) devuelve los errores, con el campo de cada uno, sin emitir.
 CfeEmitido emitido = await client.EmitirAsync(cfe);
 
 // La DGI acusa recibo del sobre (AS); que lo reciba no significa que acepte el CFE.
 AcuseSobre acuse = await client.EnviarAsync(emitido);
 if (!acuse.Recibido)
-    throw new Exception($"Sobre rechazado ({acuse.Estado}): {acuse.Mensaje}");
+    throw new Exception(acuse.Mensaje);   // "Sobre rechazado (BS): motivos"
 
 // El resultado de cada comprobante se consulta después (la DGI indica desde cuándo: acuse.ConsultarDesde).
 EstadoEnvio estado = await client.ConsultarEnvioAsync(acuse);
 Console.WriteLine(emitido.AceptadoPorDgi ? "✅ Aceptado (AE)" : $"❌ {emitido.EstadoDgi}: {emitido.MensajeDgi}");
 ```
 
-- `Cfe` es inmutable: se arma con inicializadores y `with`. Lo emitido es exactamente lo que queda firmado.
+- `Cfe` es inmutable: se arma con inicializadores y `with`, y `EmitirAsync` copia sus listas, así que lo
+  emitido es exactamente lo que queda firmado aunque después cambies las listas originales.
 - `CfeEmitido` tiene el número, la serie, el CAE, los `Totales`, el `Xml` firmado (que hay que conservar), el
-  `CodigoSeguridad`, la `UrlQr` y el estado ante la DGI (`EstadoDgi`, `AceptadoPorDgi`).
+  `CodigoSeguridad`, la `UrlQr` y el estado ante la DGI (`EstadoDgi`: `EstadoCfe.Aceptado`, `Rechazado`,
+  `Observado` o `Reliquidado`; `AceptadoPorDgi`). El estado lo actualiza el cliente: no se puede cambiar desde afuera.
 - `EnviarAsync([cfe1, cfe2, …])` manda hasta 250 CFE en un sobre. `ConsultarCfeAsync(emitido)` consulta un
   comprobante suelto (útil tras un reinicio).
+- Un CFE que la DGI ya recibió no se reenvía (`InvalidOperationException`): lo trataría como duplicado. Si
+  el envío terminó en un error de comunicación (por ejemplo, un timeout), no se sabe si llegó: consultalo con
+  `ConsultarCfeAsync` antes de reenviarlo. Si el sobre fue rechazado (`BS`), se reenvía el mismo `CfeEmitido`.
+- Con `NroInterno` (por ejemplo, el id del pedido) un reintento no factura dos veces: si ya se emitió un CFE
+  del mismo tipo con ese número interno, `EmitirAsync` lanza `CfeDuplicadoException` con el ya emitido en
+  `Existente` (salvo que la DGI lo haya rechazado: entonces emite uno nuevo).
 - Los rechazos de la DGI vienen en el acuse; los errores de comunicación (red, timeout, SOAP Fault, HTTP 5xx)
   se lanzan como `DgiCommunicationException`.
 
@@ -138,8 +152,10 @@ byte[] ticket  = CfePdf.GenerarTermico(emitido);   // 80 mm
 byte[] qrPng   = CfePdf.GenerarQr(emitido);
 ```
 
-Incluye el QR y el pie que exige la DGI (código de seguridad, CAE, rango y vencimiento). Para un diseño
-propio, `emitido.UrlQr` tiene el contenido del QR sin necesidad del paquete de PDF.
+Incluye el QR y el pie que exige la DGI (código de seguridad, CAE, rango y vencimiento). El detalle se adapta
+al tipo: el e-Remito sin precios, la exportación sin IVA, el e-Resguardo con sus retenciones y las notas con
+el comprobante que corrigen; la moneda extranjera se indica con su código y el tipo de cambio. Para un
+diseño propio, `emitido.UrlQr` tiene el contenido del QR sin necesidad del paquete de PDF.
 
 ### 5. Reporte diario
 
@@ -149,6 +165,11 @@ propio, `emitido.UrlQr` tiene el contenido del QR sin necesidad del paquete de P
 AcuseReporte reporte = await client.EnviarReporteDiarioAsync(HoraUruguay.Hoy().AddDays(-1));
 Console.WriteLine($"{reporte.CantidadCfe} CFE → {reporte.Estado} {reporte.Mensaje}");
 ```
+
+El primer envío de una fecha usa la secuencia 1 (`secEnvio`); para corregir un reporte ya recibido se
+reenvía completo con la siguiente (`secEnvio: 2`, …). Los CFE se leen de a uno, sin cargarlos todos en
+memoria. Si el almacenamiento no tiene completos los de esa fecha (el en memoria, tras un reinicio), falla
+en lugar de declarar cero comprobantes.
 
 ### 6. Otros comprobantes
 
@@ -206,11 +227,15 @@ sucursal: `Emisor = config.Emisor with { CodigoSucursal = 3 }`.
 
 ### 7. Validaciones locales
 
-`client.Validar(cfe)` (y `EmitirAsync`, antes de reservar un número) detecta: RUT del receptor con dígito
-verificador inválido, longitudes máximas del esquema, receptor faltante en e-Factura/e-Resguardo, datos de
-exportación y de remito, mandante en cuenta ajena, referencias de las notas, descuentos y medios de pago mal
-formados y, si configurás `ValorUnidadIndexada`, e-Tickets sobre 5.000 UI sin identificar al receptor. La
-configuración (emisor, certificado, URLs) y cada CAE se validan al construir el cliente y al registrarlos.
+`client.Validar(cfe)` (y `EmitirAsync`, antes de numerar) aplica las restricciones de los XSD de la DGI
+(largos, rangos de montos, cantidades y fechas, series, códigos de país, caracteres de control) y las reglas
+del formato: RUT del receptor con dígito verificador, receptor en e-Factura/e-Resguardo, datos de exportación
+y de remito, mandante en cuenta ajena, referencias de las notas, descuentos que no dejen montos negativos y,
+si configurás `ValorUnidadIndexada`, e-Tickets sobre 5.000 UI sin identificar al receptor. Todo lo que pasa la
+validación produce un XML válido contra el XSD (los tests lo comprueban con miles de CFE aleatorios). Cada
+error es un `ErrorValidacion` con el campo (`Detalle[0].PrecioUnitario`, `Receptor.Documento`, …) y el motivo,
+para mostrarlo junto al dato. La configuración (emisor, certificado, URLs) y cada CAE se validan al construir
+el cliente y al registrarlos.
 Los montos se calculan con la misma precisión con que se escriben en el XML (cantidad 3 decimales, precio 6,
 montos 2) y redondeo comercial, para que coincidan con lo que recalcula la DGI. Las reglas que dependen de
 datos de la DGI (por ejemplo, si el emisor está habilitado) solo las valida la DGI.
@@ -220,15 +245,15 @@ datos de la DGI (por ejemplo, si el emisor está habilitado) solo las valida la 
 ## 🏭 Producción y varias instancias
 
 El almacenamiento (`IUruFacturaStore`) guarda los CAE con su numeración, el número de envío y los CFE
-emitidos (de ahí sale el reporte diario). El predeterminado, `InMemoryStore`, sirve para un solo proceso y
-pruebas: si la aplicación se reinicia, volvería a usar números ya emitidos. En producción usá
-`UruFactura.EntityFrameworkCore`, que además es seguro con varias instancias (réplicas, blue/green, una API y
-un worker):
+emitidos (de ahí sale el reporte diario). En Homologación, si no indicás otro, el cliente usa un
+`InMemoryStore`, que sirve para un solo proceso: si la aplicación se reinicia, volvería a usar números ya
+emitidos. En Producción el almacenamiento es obligatorio: usá `UruFactura.EntityFrameworkCore`, que además
+es seguro con varias instancias (réplicas, blue/green, una API y un worker):
 
 | Tabla | Para qué |
 |---|---|
-| `UruFacturaCaes` | CAE con su `UltimoNroUsado`. Cada número se reserva con un `UPDATE` condicional (compare-and-swap) que se reintenta si otra instancia ganó. |
-| `UruFacturaCfes` | CFE emitidos: XML firmado, contenido (JSON), totales y estado ante la DGI. Tipo/serie/número únicos. |
+| `UruFacturaCaes` | CAE con su `UltimoNroUsado`, que avanza con un `UPDATE` condicional en la misma transacción que el `INSERT` del CFE: si otra instancia numeró antes, no se guarda nada y se vuelve a numerar. |
+| `UruFacturaCfes` | CFE emitidos: XML firmado, contenido (JSON), totales y estado ante la DGI (como texto: `Aceptado`, `Rechazado`, …). Tipo/serie/número únicos. |
 | `UruFacturaSecuencias` | Número de envío del emisor (`Idemisor`), único entre instancias. |
 
 ```csharp
@@ -248,9 +273,11 @@ await client.EnviarReporteDiarioAsync(HoraUruguay.Hoy().AddDays(-1));
 - Las claves `Id` son `Guid` ordenados por tiempo (UUID v7; en SQL Server, el GUID secuencial de EF Core, porque
   SQL Server ordena `uniqueidentifier` por los últimos bytes) para que el índice primario no se fragmente.
 - `FechaFirma` se guarda en UTC (PostgreSQL/Npgsql no admite otro offset en `timestamp with time zone`).
-- Las entidades son públicas: para listar pendientes o buscar por `NroInterno`, consultá `db.Cfes` y usá
+- `store.BuscarCfesAsync(nroInterno)` devuelve los CFE de un número interno. Para otras consultas (por
+  ejemplo, los pendientes de resultado), las entidades son públicas: consultá `db.Cfes` y usá
   `entidad.ToCfeEmitido()` (por ejemplo, para `client.ConsultarCfeAsync`).
-- Otro almacenamiento: implementá `IUruFacturaStore`; la reserva de números debe ser atómica.
+- Otro almacenamiento: implementá `IUruFacturaStore`; `RegistrarEmisionAsync` debe avanzar el CAE y guardar
+  el CFE de forma atómica (las dos cosas o ninguna).
 
 ### Inyección de dependencias y `HttpClient`
 
@@ -293,9 +320,10 @@ TLS y la validación del servidor configurados. Para tests o un transporte propi
 
 | Excepción | Cuándo |
 |-----------|--------|
-| `UruFacturaException` | Base de todas; configuración inválida, sobre con más de 250 CFE |
-| `CfeValidationException` | El CFE no es válido (`Errors` tiene el detalle) |
-| `CaeException` | CAE inválido al registrarlo, o no hay CAE vigente con números para el tipo |
+| `UruFacturaException` | Base de todas; configuración inválida, Producción sin almacenamiento, sobre con más de 250 CFE |
+| `CfeValidationException` | El CFE no es válido (`Errores`: campo y motivo de cada uno); no se consumió ningún número |
+| `CfeDuplicadoException` | Ya se emitió un CFE del mismo tipo con el mismo `NroInterno` (`Existente`) |
+| `CaeException` | CAE inválido o superpuesto con otro al registrarlo, o no hay CAE vigente con números para el tipo |
 | `FirmaDigitalException` | El certificado no se puede cargar (archivo, contraseña) o no tiene clave privada; falla de firma |
 | `DgiCommunicationException` | Red, timeout, SOAP Fault o HTTP sin acuse (`CodigoRespuesta`: `SOAP_FAULT` o el código HTTP) |
 | `PdfGenerationException` | Falla al generar el PDF (`UruFactura.Pdf`) |
@@ -321,7 +349,9 @@ TLS y la validación del servidor configurados. Para tests o un transporte propi
 | `UruFacturaClientBuilder` | `new UruFacturaClient(config, store:, httpClient:, dgiClient:, reloj:)` |
 | `ICfeXmlBuilder`, `ICfeFirmante`, `ICfeQrGenerator`, `IDgiSoapClient` | internos; `IDgiClient` para un transporte propio; `Certificado` para Key Vault/HSM |
 | `TipoDocumentoReceptor.DocumentoExterior` | `TipoDocumentoReceptor.Otro` |
-| `CfeFirmante.VerificarFirma(xml)` | `FirmaDigital.Verificar(xml)` |
+| `CfeFirmante.VerificarFirma(xml)` (`bool`) | `FirmaDigital.VerificarFirma(xml)`: devuelve el certificado firmante, para comprobar que es del emisor |
+| `CfeValidationException.Errors` (texto) | `CfeValidationException.Errores` (`ErrorValidacion`: campo y motivo) |
+| Estados de la DGI como texto (`"AE"`, `"AS"`, …) | `EstadoCfe`, `EstadoSobre`, `EstadoReporte` |
 
 ---
 

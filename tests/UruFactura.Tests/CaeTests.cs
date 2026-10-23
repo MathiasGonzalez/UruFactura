@@ -56,10 +56,25 @@ public class CaeTests
     public void PorcentajeUso() => Assert.Equal(50m, TestData.Cae(ultimo: 50).PorcentajeUso);
 
     [Fact]
-    public void EsVigente() => Assert.True(TestData.Cae().EsVigente);
+    public void EsVigenteEn_HastaElDiaDeVencimiento()
+    {
+        var cae = TestData.Cae(vence: Hoy);
+
+        Assert.True(cae.EsVigenteEn(Hoy));
+        Assert.False(cae.EsVigenteEn(Hoy.AddDays(1)));
+    }
+
+    [Theory]
+    [InlineData("A", 1, 10, true)]
+    [InlineData("A", 10, 20, true)]
+    [InlineData("A", 11, 20, false)]
+    [InlineData("B", 1, 10, false)]
+    public void SeSuperponeCon_MismoTipoYSerieConNumerosEnComun(string serie, long desde, long hasta, bool esperado) =>
+        Assert.Equal(esperado, TestData.Cae(desde: 1, hasta: 10).SeSuperponeCon(TestData.Cae(serie: serie, desde: desde, hasta: hasta)));
 
     [Fact]
-    public void Vencido_NoEsVigente() => Assert.False(TestData.Cae(vence: HoraUruguay.Hoy().AddDays(-1)).EsVigente);
+    public void SeSuperponeCon_OtroTipo_NoSeSuperpone() =>
+        Assert.False(TestData.Cae().SeSuperponeCon(TestData.Cae(TipoCfe.EFactura)));
 
     [Fact]
     public void Elegir_PrefiereElQueVenceMasTarde_EIgnoraVencidosAgotadosYOtrosTipos()

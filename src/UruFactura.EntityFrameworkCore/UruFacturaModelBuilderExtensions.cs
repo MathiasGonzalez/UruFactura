@@ -22,6 +22,8 @@ public static class UruFacturaModelBuilderExtensions
             e.HasIndex(c => new { c.TipoCfe, c.Serie, c.RangoDesde }).IsUnique();
             e.Property(c => c.NumeroAutorizacion).HasMaxLength(11).IsRequired();
             e.Property(c => c.Serie).HasMaxLength(2).IsRequired();
+            // La numeración avanza con UPDATE condicionales: solo si nadie la cambió desde que se leyó.
+            e.Property(c => c.UltimoNroUsado).IsConcurrencyToken();
         });
 
         modelBuilder.Entity<CfeEntity>(e =>
@@ -41,7 +43,7 @@ public static class UruFacturaModelBuilderExtensions
             e.Property(c => c.Xml).IsRequired();
             e.Property(c => c.Datos).IsRequired();
             e.Property(c => c.IdReceptorDgi).HasMaxLength(20);
-            e.Property(c => c.EstadoDgi).HasMaxLength(10);
+            e.Property(c => c.EstadoDgi).HasConversion<string>().HasMaxLength(20);
         });
 
         modelBuilder.Entity<SecuenciaEntity>(e =>

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Xml;
@@ -123,7 +124,8 @@ internal sealed class DgiSoapClient : IDgiClient, IDisposable
         CancellationToken cancellationToken)
     {
         string responseBody;
-        HttpResponseMessage response;
+        HttpStatusCode status;
+        string? reason;
         try
         {
             var envelope = WsSecurity.CrearYFirmar(body, _certificado, _config.AlgoritmoFirma);
@@ -134,7 +136,8 @@ internal sealed class DgiSoapClient : IDgiClient, IDisposable
             };
             request.Headers.TryAddWithoutValidation("SOAPAction", $"\"{soapAction}\"");
 
-            response = await _httpClient.SendAsync(request, cancellationToken);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            (status, reason) = (response.StatusCode, response.ReasonPhrase);
             responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -145,28 +148,26 @@ internal sealed class DgiSoapClient : IDgiClient, IDisposable
         {
             throw new DgiCommunicationException($"Timeout al invocar '{operacion}' (Timeout: {_config.Timeout}).", ex);
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ex is HttpRequestException or IOException)
         {
+            // IOException: la conexión se cortó mientras se leía la respuesta.
             throw new DgiCommunicationException($"Error de red al invocar '{operacion}': {ex.Message}", ex);
         }
 
-        using (response)
-        {
-            if (response.IsSuccessStatusCode)
-                return procesar(responseBody);
+        if ((int)status is >= 200 and < 300)
+            return procesar(responseBody);
 
-            // Un error HTTP puede traer un SOAP Fault (que se informa como tal) o un cuerpo ajeno,
-            // como el HTML de un proxy 502/503: en ese caso se informa el error HTTP.
-            try
-            {
-                return procesar(responseBody);
-            }
-            catch (DgiCommunicationException ex) when (ex.CodigoRespuesta is null)
-            {
-                var codigo = ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture);
-                throw new DgiCommunicationException(
-                    $"HTTP {codigo} {response.ReasonPhrase} al invocar '{operacion}'.", codigo, responseBody);
-            }
+        // Un error HTTP puede traer un SOAP Fault (que se informa como tal) o un cuerpo ajeno,
+        // como el HTML de un proxy 502/503: en ese caso se informa el error HTTP.
+        try
+        {
+            return procesar(responseBody);
+        }
+        catch (DgiCommunicationException ex) when (ex.CodigoRespuesta is null)
+        {
+            var codigo = ((int)status).ToString(CultureInfo.InvariantCulture);
+            throw new DgiCommunicationException(
+                $"HTTP {codigo} {reason} al invocar '{operacion}'.", codigo, responseBody);
         }
     }
 

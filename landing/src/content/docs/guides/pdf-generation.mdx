@@ -39,6 +39,17 @@ Son métodos estáticos y puros: no necesitan el cliente ni configuración, así
 
 Las leyendas opcionales del pie salen del emisor: `Emisor.FechaIncorporacion` ("Fecha emisor") y `Emisor.UrlVerificacion` (sitio de verificación de los e-Tickets; por defecto el de la DGI).
 
+El contenido se adapta al tipo de comprobante:
+
+| Tipo | Detalle | Totales |
+|------|---------|---------|
+| e-Ticket, e-Factura y sus notas | Cantidad, descripción, precio, IVA de cada línea y total | Ajustes globales, netos e IVA por tasa, total |
+| Exportación (e-Factura y e-Remito) | Sin columna de IVA | Total en la moneda del comprobante |
+| e-Remito | Cantidad y descripción, sin precios | Sin montos |
+| e-Resguardo | Las retenciones/percepciones (código, tasa, monto sujeto y valor) | Total retenido |
+
+En moneda extranjera se imprime el código ISO y el tipo de cambio; las notas de crédito y débito muestran a qué comprobante refieren (tipo, serie, número, fecha, monto y razón).
+
 ---
 
 ## Enviar el PDF por email (ASP.NET Core)
@@ -53,7 +64,7 @@ public class FacturaService(IUruFacturaClient client, IEmailService email)
         // Recibido = la DGI recibió el sobre; la aceptación del CFE se consulta después
         var acuse = await client.EnviarAsync(emitido);
         if (!acuse.Recibido)
-            throw new InvalidOperationException($"DGI rechazó el sobre [{acuse.Estado}]: {acuse.Mensaje}");
+            throw new InvalidOperationException(acuse.Mensaje);   // "Sobre rechazado (BS): motivos"
 
         await email.SendAsync(new EmailMessage
         {

@@ -16,8 +16,8 @@ public class CaeEntity
     public DateOnly FechaVencimiento { get; set; }
 
     /// <summary>
-    /// Último número reservado. Solo se modifica con <c>UPDATE</c> condicionales (compare-and-swap),
-    /// nunca hacia atrás.
+    /// Último número usado. Es token de concurrencia: solo se modifica con <c>UPDATE</c> condicionales
+    /// (junto con el registro del CFE que lo usa), nunca hacia atrás.
     /// </summary>
     public long UltimoNroUsado { get; set; }
 

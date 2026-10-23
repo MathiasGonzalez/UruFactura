@@ -78,7 +78,7 @@ public class FirmaDigitalTests
 
         Assert.Contains(firma, xml);
         Assert.Contains(digest, xml);
-        Assert.True(FirmaDigital.Verificar(xml));
+        Assert.NotNull(FirmaDigital.VerificarFirma(xml));
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public class FirmaDigitalTests
     {
         var xml = Firmar(XmlSinFirmar());
 
-        Assert.True(FirmaDigital.Verificar(xml));
+        Assert.NotNull(FirmaDigital.VerificarFirma(xml));
         Assert.StartsWith("<?xml", xml);
     }
 
@@ -95,27 +95,27 @@ public class FirmaDigitalTests
         Assert.Throws<FirmaDigitalException>(() => Firmar("<sin-cerrar>"));
 
     [Fact]
-    public void Verificar_XmlModificado_RetornaFalse()
+    public void Verificar_XmlModificado_DevuelveNull()
     {
         var xml = Firmar(XmlSinFirmar());
         var alterado = xml.Replace("<MntTotal>244.00</MntTotal>", "<MntTotal>1.00</MntTotal>");
 
         Assert.NotEqual(xml, alterado);
-        Assert.False(FirmaDigital.Verificar(alterado));
+        Assert.Null(FirmaDigital.VerificarFirma(alterado));
     }
 
     [Fact]
-    public void Verificar_SinFirma_RetornaFalse() => Assert.False(FirmaDigital.Verificar(XmlSinFirmar()));
+    public void Verificar_SinFirma_DevuelveNull() => Assert.Null(FirmaDigital.VerificarFirma(XmlSinFirmar()));
 
     [Fact]
-    public void Verificar_XmlConDtd_RetornaFalse() =>
-        Assert.False(FirmaDigital.Verificar(Firmar(XmlSinFirmar()).Replace("?>", "?><!DOCTYPE CFE [<!ENTITY x \"x\">]>")));
+    public void Verificar_XmlConDtd_DevuelveNull() =>
+        Assert.Null(FirmaDigital.VerificarFirma(Firmar(XmlSinFirmar()).Replace("?>", "?><!DOCTYPE CFE [<!ENTITY x \"x\">]>")));
 
     [Fact]
-    public void Verificar_XmlNoValido_RetornaFalse() => Assert.False(FirmaDigital.Verificar("no es xml"));
+    public void Verificar_XmlNoValido_DevuelveNull() => Assert.Null(FirmaDigital.VerificarFirma("no es xml"));
 
     [Fact]
-    public void Verificar_FirmaQueNoEsHijaDeLaRaiz_RetornaFalse()
+    public void Verificar_FirmaQueNoEsHijaDeLaRaiz_DevuelveNull()
     {
         var doc = Cargar(Firmar(XmlSinFirmar()));
 
@@ -124,12 +124,44 @@ public class FirmaDigitalTests
         firma.ParentNode!.RemoveChild(firma);
         doc.DocumentElement!.FirstChild!.AppendChild(firma);
 
-        Assert.False(FirmaDigital.Verificar(doc.OuterXml));
+        Assert.Null(FirmaDigital.VerificarFirma(doc.OuterXml));
     }
 
     [Fact]
-    public void Verificar_ReferenciaQueNoEsElDocumentoCompleto_RetornaFalse() =>
-        Assert.False(FirmaDigital.Verificar(Firmar(XmlSinFirmar()).Replace("<Reference URI=\"\"", "<Reference URI=\"#otro\"")));
+    public void Verificar_ReferenciaQueNoEsElDocumentoCompleto_DevuelveNull() =>
+        Assert.Null(FirmaDigital.VerificarFirma(Firmar(XmlSinFirmar()).Replace("<Reference URI=\"\"", "<Reference URI=\"#otro\"")));
+
+    [Fact]
+    public void Verificar_DevuelveElCertificadoFirmante()
+    {
+        using var firmante = FirmaDigital.VerificarFirma(Firmar(XmlSinFirmar()));
+
+        Assert.Equal(Cert.Thumbprint, firmante!.Thumbprint);
+    }
+
+    [Fact]
+    public void Verificar_FirmadoConOtroCertificado_DevuelveEseCertificado()
+    {
+        // La firma de un CFE falso, hecha con cualquier certificado, es válida: lo que lo delata es
+        // el firmante, que el llamador compara con el emisor.
+        using var otro = TestData.CertificadoAutofirmado();
+
+        using var firmante = FirmaDigital.VerificarFirma(FirmaDigital.Firmar(XmlSinFirmar(), otro, AlgoritmoFirma.Sha256).Xml);
+
+        Assert.Equal(otro.Thumbprint, firmante!.Thumbprint);
+        Assert.NotEqual(Cert.Thumbprint, firmante.Thumbprint);
+    }
+
+    [Fact]
+    public void Verificar_CertificadoReemplazadoEnKeyInfo_DevuelveNull()
+    {
+        // Poner otro certificado en KeyInfo no hace pasar la firma como suya.
+        using var otro = TestData.CertificadoAutofirmado();
+        var xml = Firmar(XmlSinFirmar())
+            .Replace(Convert.ToBase64String(Cert.RawData), Convert.ToBase64String(otro.RawData));
+
+        Assert.Null(FirmaDigital.VerificarFirma(xml));
+    }
 
     // --- Carga del certificado ---
 
@@ -142,7 +174,7 @@ public class FirmaDigitalTests
             File.WriteAllBytes(ruta, Cert.Export(X509ContentType.Pfx, "pw"));
             using var cargado = CertificadoLoader.Cargar(ruta, "pw");
 
-            Assert.True(FirmaDigital.Verificar(FirmaDigital.Firmar(XmlSinFirmar(), cargado, AlgoritmoFirma.Sha256).Xml));
+            Assert.NotNull(FirmaDigital.VerificarFirma(FirmaDigital.Firmar(XmlSinFirmar(), cargado, AlgoritmoFirma.Sha256).Xml));
         }
         finally
         {

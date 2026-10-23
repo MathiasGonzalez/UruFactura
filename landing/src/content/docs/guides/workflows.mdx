@@ -46,11 +46,11 @@ sequenceDiagram
     participant DGI as DGI (SOAP)
 
     App->>Client: EmitirAsync(cfe)
-    Note over Client: Valida el contenido (sin consumir números)
-    Client->>Store: ReservarNumeroAsync(tipo, hoy)
-    Store-->>Client: CAE con el número reservado (atómico)
-    Note over Client: Arma el XML, calcula totales y firma (XML Signature)
-    Client->>Store: GuardarCfesAsync(emitido)
+    Note over Client: Valida el contenido y copia sus listas
+    Client->>Store: ListarCaesAsync()
+    Note over Client: Elige el CAE vigente y el próximo número,<br/>arma el XML, calcula totales y firma
+    Client->>Store: RegistrarEmisionAsync(emitido, último número leído)
+    Note over Store: Avanza el CAE y guarda el CFE en una transacción.<br/>Si otra emisión usó el número: no guarda nada y se renumera
     Client-->>App: CfeEmitido
 
     App->>Client: EnviarAsync(emitido)
@@ -83,7 +83,7 @@ flowchart LR
 ```mermaid
 stateDiagram-v2
     [*] --> Registrado : RegistrarCaeAsync
-    Registrado --> EnUso : EmitirAsync reserva el primer número
+    Registrado --> EnUso : EmitirAsync usa el primer número
     EnUso --> EnUso : EmitirAsync\n(UltimoNroUsado + 1)
 
     EnUso --> AdvertenciaRango : >= 80% del rango usado
@@ -169,7 +169,8 @@ classDiagram
     class IUruFacturaClient {
         <<interface>>
         +RegistrarCaeAsync(cae)
-        +Validar(cfe) errores
+        +EliminarCaeAsync(cae)
+        +Validar(cfe) ErrorValidacion
         +EmitirAsync(cfe) CfeEmitido
         +EnviarAsync(cfes) AcuseSobre
         +ConsultarEnvioAsync(acuse) EstadoEnvio
@@ -180,9 +181,12 @@ classDiagram
     class IUruFacturaStore {
         <<interface>>
         +GuardarCaeAsync(cae)
-        +ReservarNumeroAsync(tipo, hoy) Cae
+        +ListarCaesAsync() Cae
+        +EliminarCaeAsync(cae) bool
+        +RegistrarEmisionAsync(emitido, ultimoLeido) bool
         +ReservarIdEnvioAsync() long
         +GuardarCfesAsync(cfes)
+        +BuscarCfesAsync(nroInterno)
         +ListarCfesAsync(fecha)
     }
 

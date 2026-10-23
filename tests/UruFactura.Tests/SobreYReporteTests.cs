@@ -49,7 +49,7 @@ public class SobreYReporteTests
         {
             var solo = new XmlDocument { PreserveWhitespace = true };
             solo.AppendChild(solo.ImportNode(nodo, true));
-            Assert.True(FirmaDigital.Verificar(solo.OuterXml));
+            Assert.NotNull(FirmaDigital.VerificarFirma(solo.OuterXml));
         }
     }
 
@@ -79,7 +79,7 @@ public class SobreYReporteTests
 
     // --------------------------------------------------------------- reporte
 
-    private static string Reporte(IReadOnlyCollection<CfeEmitido> cfes, int sec = 0) =>
+    private static string Reporte(IReadOnlyCollection<CfeEmitido> cfes, int sec = 1) =>
         ReporteDiario.Generar("219999820013", TestData.Dia, sec, 77, new DateTimeOffset(2026, 6, 16, 1, 0, 0, TimeSpan.Zero), cfes);
 
     private static string ReporteFirmado(IReadOnlyCollection<CfeEmitido> cfes) =>
@@ -166,7 +166,7 @@ public class SobreYReporteTests
     }
 
     [Theory]
-    [InlineData(-1)]
+    [InlineData(0)]
     [InlineData(100)]
     public void Reporte_SecEnvioFueraDeRango_LanzaUruFacturaException(int sec) =>
         Assert.Throws<UruFacturaException>(() => Reporte([], sec));

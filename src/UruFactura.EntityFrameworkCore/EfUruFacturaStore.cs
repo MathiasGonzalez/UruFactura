@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 
 namespace UruFactura.EntityFrameworkCore;
@@ -7,9 +8,10 @@ namespace UruFactura.EntityFrameworkCore;
 /// pueden numerar y emitir contra la misma base sin repetir números, y el reporte diario incluye los
 /// CFE de todas.
 /// <para>
-/// Cada reserva es un compare-and-swap (<c>UPDATE ... WHERE UltimoNroUsado = @leido</c>) que se
-/// reintenta si otra instancia ganó; funciona igual en SQL Server, PostgreSQL, MySQL o SQLite, sin
-/// bloqueos explícitos ni niveles de aislamiento especiales.
+/// Cada emisión avanza el CAE con un <c>UPDATE ... WHERE UltimoNroUsado = @leido</c> (token de
+/// concurrencia) en la misma transacción que el <c>INSERT</c> del CFE: si otra instancia numeró antes,
+/// no se guarda nada y el cliente vuelve a numerar. Funciona igual en SQL Server, PostgreSQL, MySQL o
+/// SQLite, sin bloqueos explícitos ni niveles de aislamiento especiales.
 /// </para>
 /// Es thread-safe: cada operación usa su propio <see cref="DbContext"/>, creado con la fábrica.
 /// </summary>
@@ -22,7 +24,7 @@ public sealed class EfUruFacturaStore<TContext>(IDbContextFactory<TContext> cont
 {
     private const string SecuenciaIdEnvio = "IdEnvio";
 
-    /// <summary>Intentos de una reserva ante contención con otras instancias antes de fallar (por defecto 100).</summary>
+    /// <summary>Intentos de reservar el número de envío ante contención con otras instancias antes de fallar (por defecto 100).</summary>
     public int MaxIntentos
     {
         get;
@@ -77,34 +79,45 @@ public sealed class EfUruFacturaStore<TContext>(IDbContextFactory<TContext> cont
     }
 
     /// <inheritdoc />
-    public ValueTask<Cae?> ReservarNumeroAsync(TipoCfe tipo, DateOnly hoy, CancellationToken cancellationToken = default) =>
-        ReintentarAsync<Cae?>($"reservar un número para {tipo}", async db =>
+    public async ValueTask<bool> EliminarCaeAsync(Cae cae, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(cae);
+
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        // Condicional: si otra instancia numeró con él mientras tanto, no se elimina.
+        return await Del(db.Set<CaeEntity>(), cae)
+            .Where(c => c.UltimoNroUsado < c.RangoDesde)
+            .ExecuteDeleteAsync(cancellationToken) == 1;
+    }
+
+    // -----------------------------------------------------------------------
+    // Emisión
+    // -----------------------------------------------------------------------
+
+    /// <inheritdoc />
+    public async ValueTask<bool> RegistrarEmisionAsync(CfeEmitido emitido, long ultimoNroUsadoLeido, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(emitido);
+
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var cae = await Del(db.Set<CaeEntity>(), emitido.Cae).SingleOrDefaultAsync(cancellationToken);
+        if (cae is null || cae.UltimoNroUsado != ultimoNroUsadoLeido)
+            return false;
+
+        // UltimoNroUsado es token de concurrencia: el UPDATE solo afecta la fila si nadie la cambió desde
+        // que se leyó, y va en la misma transacción que el INSERT del CFE.
+        cae.UltimoNroUsado = emitido.Numero;
+        db.Set<CfeEntity>().Add(CfeEntity.Desde(emitido, DateTimeOffset.UtcNow));
+        try
         {
-            var caes = db.Set<CaeEntity>();
-
-            // Mismo criterio que Cae.Elegir: vencimiento más lejano y, a igual vencimiento, más números libres.
-            var candidato = await caes.AsNoTracking()
-                .Where(c => c.TipoCfe == tipo && c.FechaVencimiento >= hoy
-                            && c.UltimoNroUsado < c.RangoHasta && c.RangoDesde <= c.RangoHasta)
-                .OrderByDescending(c => c.FechaVencimiento)
-                .ThenByDescending(c => c.RangoHasta - (c.UltimoNroUsado >= c.RangoDesde ? c.UltimoNroUsado : c.RangoDesde - 1))
-                .FirstOrDefaultAsync(cancellationToken);
-            if (candidato is null)
-                return (true, null);
-
-            var leido = candidato.UltimoNroUsado;
-            var numero = Math.Max(leido + 1, candidato.RangoDesde);
-
-            // Compare-and-swap: solo una instancia logra pasar del valor leído al siguiente.
-            var filas = await caes
-                .Where(c => c.Id == candidato.Id && c.UltimoNroUsado == leido)
-                .ExecuteUpdateAsync(s => s.SetProperty(c => c.UltimoNroUsado, numero), cancellationToken);
-            if (filas == 0)
-                return (false, null);
-
-            candidato.UltimoNroUsado = numero;
-            return (true, candidato.ToCae());
-        }, cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+            return true;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return false;
+        }
+    }
 
     /// <inheritdoc />
     /// <remarks>
@@ -188,21 +201,38 @@ public sealed class EfUruFacturaStore<TContext>(IDbContextFactory<TContext> cont
     }
 
     /// <inheritdoc />
-    public async ValueTask<IReadOnlyList<CfeEmitido>> ListarCfesAsync(DateOnly fechaEmision, CancellationToken cancellationToken = default)
+    public async ValueTask<IReadOnlyList<CfeEmitido>> BuscarCfesAsync(string nroInterno, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(nroInterno);
+
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var entidades = await db.Set<CfeEntity>().AsNoTracking()
-            .Where(e => e.FechaEmision == fechaEmision)
+            .Where(e => e.NroInterno == nroInterno)
             .OrderBy(e => e.TipoCfe).ThenBy(e => e.Serie).ThenBy(e => e.Numero)
             .ToListAsync(cancellationToken);
         return [.. entidades.Select(e => e.ToCfeEmitido())];
+    }
+
+    /// <inheritdoc />
+    public async IAsyncEnumerable<CfeEmitido> ListarCfesAsync(
+        DateOnly fechaEmision, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var filas = db.Set<CfeEntity>().AsNoTracking()
+            .Where(e => e.FechaEmision == fechaEmision)
+            .OrderBy(e => e.TipoCfe).ThenBy(e => e.Serie).ThenBy(e => e.Numero)
+            .AsAsyncEnumerable()
+            .WithCancellation(cancellationToken);
+
+        await foreach (var entidad in filas)
+            yield return entidad.ToCfeEmitido();
     }
 
     // -----------------------------------------------------------------------
 
     /// <summary>
     /// Ejecuta <paramref name="intento"/> con un contexto nuevo hasta que termine (otra instancia pudo
-    /// ganar el compare-and-swap), con una espera breve y aleatoria entre intentos para no volver a chocar.
+    /// ganar el UPDATE condicional), con una espera breve y aleatoria entre intentos para no volver a chocar.
     /// </summary>
     private async ValueTask<T> ReintentarAsync<T>(
         string operacion, Func<TContext, Task<(bool Terminado, T Resultado)>> intento, CancellationToken cancellationToken)

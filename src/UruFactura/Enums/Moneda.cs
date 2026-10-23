@@ -11,3 +11,16 @@ public enum Moneda
     DolarAmericano = 840,
     Euro = 978,
 }
+
+/// <summary>Códigos de las monedas.</summary>
+public static class MonedaExtensions
+{
+    /// <summary>Código ISO 4217 de 3 letras que usa la DGI (<c>TpoMoneda</c>): UYU, USD o EUR.</summary>
+    public static string CodigoIso(this Moneda moneda) => moneda switch
+    {
+        Moneda.PesoUruguayo => "UYU",
+        Moneda.DolarAmericano => "USD",
+        Moneda.Euro => "EUR",
+        _ => throw new ArgumentOutOfRangeException(nameof(moneda), moneda, "Moneda sin código ISO 4217 definido."),
+    };
+}

@@ -95,8 +95,9 @@ await client.RegistrarCaeAsync(new Cae
 });
 ```
 
-> 💡 **En producción, usá un almacenamiento durable.** El predeterminado guarda la numeración en memoria: si
-> la app se reinicia, volvería a usar números ya emitidos y la DGI los rechazaría por duplicados. Con
+> 💡 **En producción, el almacenamiento es obligatorio.** En Homologación el predeterminado guarda la
+> numeración en memoria: si la app se reinicia, volvería a usar números ya emitidos y la DGI los rechazaría
+> por duplicados. Por eso en Producción el cliente exige un almacenamiento: con
 > `UruFactura.EntityFrameworkCore` la numeración queda en la base (y es segura con varias instancias).
 > Ver [Producción y varias instancias](../README.md#-producción-y-varias-instancias).
 
@@ -144,7 +145,7 @@ var eticket = await client.EmitirAsync(new Cfe(TipoCfe.ETicket)
 var acuse = await client.EnviarAsync(eticket);
 Console.WriteLine(acuse.Recibido
     ? $"✅ Sobre recibido: {acuse.Mensaje}"
-    : $"❌ Sobre rechazado ({acuse.Estado}): {acuse.Mensaje}");
+    : $"❌ {acuse.Mensaje}");   // "Sobre rechazado (BS): motivos"
 ```
 
 2. **Enviar el Reporte Diario de prueba** al finalizar cada jornada de pruebas.

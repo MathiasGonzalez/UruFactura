@@ -55,153 +55,202 @@ internal static class ReporteDiario
 
     private enum Resumen { FacturaYTicket, Exportacion, Remito, RemitoExportacion, Resguardo }
 
-    /// <summary>
-    /// Genera el reporte (sin firmar) con los CFE emitidos en <paramref name="fecha"/>.
-    /// </summary>
+    /// <summary>Genera el reporte (sin firmar) con los CFE de <paramref name="cfes"/> emitidos en <paramref name="fecha"/>.</summary>
     /// <param name="rutEmisor">RUT del emisor.</param>
     /// <param name="fecha">Fecha que resume el reporte.</param>
-    /// <param name="secEnvio">Secuencia del envío del día (0 a 99; 0 si es el primero).</param>
+    /// <param name="secEnvio">Secuencia del envío del día (1 el primero; para corregir, la anterior + 1).</param>
     /// <param name="idEmisor">Número de envío asignado por el emisor (opcional).</param>
     /// <param name="tmstFirmaEnv">Fecha y hora de generación del reporte.</param>
-    /// <param name="cfes">CFE emitidos en la fecha (si no hay, se informa un reporte vacío).</param>
+    /// <param name="cfes">CFE emitidos (si no hay de la fecha, se informa un reporte vacío).</param>
     internal static string Generar(
-        string rutEmisor,
-        DateOnly fecha,
-        int secEnvio,
-        long? idEmisor,
-        DateTimeOffset tmstFirmaEnv,
-        IReadOnlyCollection<CfeEmitido> cfes)
+        string rutEmisor, DateOnly fecha, int secEnvio, long? idEmisor, DateTimeOffset tmstFirmaEnv, IEnumerable<CfeEmitido> cfes)
     {
-        if (secEnvio is < 0 or > 99)
-            throw new UruFacturaException("SecEnvio debe estar entre 0 y 99.");
-
-        var delDia = cfes.Where(c => c.FechaEmision == fecha).ToList();
-        var noSoportados = delDia.Where(c => Resumenes.All(r => r.Tipo != c.Tipo)).Select(c => c.Tipo).Distinct().ToList();
-        if (noSoportados.Count > 0)
-            throw new UruFacturaException(
-                $"El reporte diario no soporta los tipos: {string.Join(", ", noSoportados)}.");
-
-        return Escribir(w =>
-        {
-            w.WriteStartDocument();
-            w.WriteStartElement("Reporte", CfeXml.NsUri);
-
-            w.WriteStartElement("Caratula", CfeXml.NsUri);
-            w.WriteAttributeString("version", "1.0");
-            El(w, "RUCEmisor", rutEmisor);
-            El(w, "FechaResumen", CfeFormat.DateIso(fecha));
-            if (idEmisor.HasValue)
-                El(w, "IDEmisor", idEmisor.Value.ToString(CultureInfo.InvariantCulture));
-            El(w, "SecEnvio", secEnvio.ToString(CultureInfo.InvariantCulture));
-            El(w, "TmstFirmaEnv", CfeXml.TimestampUruguay(tmstFirmaEnv));
-            El(w, "CantComprobantes", delDia.Count.ToString(CultureInfo.InvariantCulture));
-            w.WriteEndElement();
-
-            foreach (var (tipo, elemento, clase) in Resumenes)
-            {
-                var grupo = delDia.Where(c => c.Tipo == tipo).ToList();
-                if (grupo.Count == 0)
-                    continue;
-
-                w.WriteStartElement(elemento, CfeXml.NsUri);
-                El(w, "TipoComp", ((int)tipo).ToString(CultureInfo.InvariantCulture));
-                w.WriteStartElement("RsmnData", CfeXml.NsUri);
-                EscribirMontos(w, grupo, clase);
-                if (tipo.EsContingencia())
-                {
-                    // Los CFC (RsmnData_*_Cont) no informan rangos: solo la cantidad emitida.
-                    El(w, "CantCFCEmi", grupo.Count.ToString(CultureInfo.InvariantCulture));
-                }
-                else
-                {
-                    El(w, "CantDocsUtil", grupo.Count.ToString(CultureInfo.InvariantCulture));
-                    EscribirRangos(w, grupo);
-                }
-                w.WriteEndElement(); // RsmnData
-                w.WriteEndElement(); // Rsmn_*
-            }
-
-            w.WriteEndElement(); // Reporte
-            w.WriteEndDocument();
-        });
+        var acumulador = new Acumulador(fecha);
+        foreach (var cfe in cfes)
+            acumulador.Agregar(cfe);
+        return acumulador.Generar(rutEmisor, secEnvio, idEmisor, tmstFirmaEnv);
     }
 
-    private static void EscribirMontos(XmlWriter w, List<CfeEmitido> grupo, Resumen clase)
+    /// <summary>
+    /// Resume los CFE de una fecha a medida que se agregan: guarda sumas por tipo y sucursal y los
+    /// números usados por serie, no los CFE, así que el reporte no carga en memoria los XML del día.
+    /// </summary>
+    internal sealed class Acumulador(DateOnly fecha)
     {
-        var porDiaYSucursal = grupo
-            .GroupBy(c => (c.FechaEmision, CodigoSucursal: c.Emisor.CodigoSucursal))
-            .OrderBy(g => g.Key.FechaEmision).ThenBy(g => g.Key.CodigoSucursal);
+        private readonly Dictionary<TipoCfe, PorTipo> _porTipo = [];
 
-        var item = clase switch
+        /// <summary>Cantidad de CFE de la fecha agregados.</summary>
+        internal int Cantidad { get; private set; }
+
+        /// <summary>Agrega un CFE (los de otra fecha se ignoran).</summary>
+        /// <exception cref="UruFacturaException">Si el formato del reporte no contempla su tipo.</exception>
+        internal void Agregar(CfeEmitido cfe)
         {
-            Resumen.FacturaYTicket => "Mnts_FyT_Item",
-            Resumen.Exportacion => "Mnts_FExp_Item",
-            Resumen.Remito => "Mnts_Rem_Item",
-            Resumen.Resguardo => "Mnts_Res_Item",
-            _ => "Mnts_Rem_Exp_Item",
-        };
+            if (cfe.FechaEmision != fecha)
+                return;
+            if (Resumenes.All(r => r.Tipo != cfe.Tipo))
+                throw new UruFacturaException($"El reporte diario no soporta el tipo {cfe.Tipo}.");
 
-        w.WriteStartElement("Montos", CfeXml.NsUri);
-        foreach (var g in porDiaYSucursal)
-        {
-            w.WriteStartElement(item, CfeXml.NsUri);
-            El(w, "Fecha", CfeFormat.DateIso(g.Key.FechaEmision));
-            El(w, "CodSuc", g.Key.CodigoSucursal.ToString(CultureInfo.InvariantCulture));
+            if (!_porTipo.TryGetValue(cfe.Tipo, out var tipo))
+                _porTipo[cfe.Tipo] = tipo = new PorTipo();
 
-            switch (clase)
-            {
-                case Resumen.FacturaYTicket:
-                    var exento = g.Sum(c => c.Totales.MontoNetoExento);
-                    var susp = g.Sum(c => c.Totales.MontoNetoSuspendido);
-                    var netoMin = g.Sum(c => c.Totales.MontoNetoMinimo);
-                    var netoBas = g.Sum(c => c.Totales.MontoNetoBasico);
-                    if (exento > 0) El(w, "TotMntNoGrv", M2(exento));
-                    if (susp > 0) El(w, "TotMntIVAenSusp", M2(susp));
-                    if (netoMin > 0) El(w, "TotMntIVATasaMin", M2(netoMin));
-                    if (netoBas > 0) El(w, "TotMntIVATasaBas", M2(netoBas));
-                    if (netoMin > 0) El(w, "MntIVATasaMin", M2(g.Sum(c => c.Totales.IvaMinimo)));
-                    if (netoBas > 0) El(w, "MntIVATasaBas", M2(g.Sum(c => c.Totales.IvaBasico)));
-                    if (netoMin > 0) El(w, "IVATasaMin", "10.000");
-                    if (netoBas > 0) El(w, "IVATasaBas", "22.000");
-                    El(w, "TotMntTotal", M2(g.Sum(c => c.Totales.MontoTotal)));
-                    break;
-
-                case Resumen.Resguardo:
-                    El(w, "TotMntRetenido", M2(g.Sum(c => c.Totales.MontoRetenido)));
-                    break;
-
-                case Resumen.Exportacion:
-                case Resumen.RemitoExportacion:
-                    El(w, "TotMntExpyAsim", M2(g.Sum(c => c.Totales.MontoExportacion)));
-                    El(w, "TotMntTotal", M2(g.Sum(c => c.Totales.MontoTotal)));
-                    break;
-            }
-
-            w.WriteEndElement();
+            tipo.Cantidad++;
+            var sucursal = cfe.Emisor.CodigoSucursal;
+            if (!tipo.MontosPorSucursal.TryGetValue(sucursal, out var montos))
+                tipo.MontosPorSucursal[sucursal] = montos = new Montos();
+            montos.Sumar(cfe.Totales);
+            if (!tipo.NumerosPorSerie.TryGetValue(cfe.Serie, out var numeros))
+                tipo.NumerosPorSerie[cfe.Serie] = numeros = [];
+            numeros.Add(cfe.Numero);
+            Cantidad++;
         }
-        w.WriteEndElement(); // Montos
-    }
 
-    /// <summary>Rangos contiguos de números usados, por serie (<c>RDU_Item</c>).</summary>
-    private static void EscribirRangos(XmlWriter w, List<CfeEmitido> grupo)
-    {
-        w.WriteStartElement("RngDocsUtil", CfeXml.NsUri);
-        foreach (var serie in grupo.GroupBy(c => c.Serie).OrderBy(g => g.Key, StringComparer.Ordinal))
+        /// <summary>Genera el reporte (sin firmar).</summary>
+        internal string Generar(string rutEmisor, int secEnvio, long? idEmisor, DateTimeOffset tmstFirmaEnv)
         {
-            // En una lista ordenada y sin repetidos, los números consecutivos comparten (número − posición).
-            var rangos = serie.Select(c => c.Numero).Distinct().Order()
-                .Select((numero, i) => (numero, tramo: numero - i))
-                .GroupBy(x => x.tramo, x => x.numero);
+            if (secEnvio is < 1 or > 99)
+                throw new UruFacturaException("SecEnvio debe estar entre 1 (el primer envío del día) y 99.");
 
-            foreach (var rango in rangos)
+            return Escribir(w =>
             {
-                w.WriteStartElement("RDU_Item", CfeXml.NsUri);
-                El(w, "Serie", serie.Key);
-                El(w, "NroDesde", rango.First().ToString(CultureInfo.InvariantCulture));
-                El(w, "NroHasta", rango.Last().ToString(CultureInfo.InvariantCulture));
+                w.WriteStartDocument();
+                w.WriteStartElement("Reporte", CfeXml.NsUri);
+
+                w.WriteStartElement("Caratula", CfeXml.NsUri);
+                w.WriteAttributeString("version", "1.0");
+                El(w, "RUCEmisor", rutEmisor);
+                El(w, "FechaResumen", CfeFormat.DateIso(fecha));
+                if (idEmisor.HasValue)
+                    El(w, "IDEmisor", idEmisor.Value.ToString(CultureInfo.InvariantCulture));
+                El(w, "SecEnvio", secEnvio.ToString(CultureInfo.InvariantCulture));
+                El(w, "TmstFirmaEnv", CfeXml.TimestampUruguay(tmstFirmaEnv));
+                El(w, "CantComprobantes", Cantidad.ToString(CultureInfo.InvariantCulture));
+                w.WriteEndElement();
+
+                foreach (var (tipo, elemento, clase) in Resumenes)
+                {
+                    if (!_porTipo.TryGetValue(tipo, out var resumen))
+                        continue;
+
+                    w.WriteStartElement(elemento, CfeXml.NsUri);
+                    El(w, "TipoComp", ((int)tipo).ToString(CultureInfo.InvariantCulture));
+                    w.WriteStartElement("RsmnData", CfeXml.NsUri);
+                    EscribirMontos(w, resumen, clase);
+                    if (tipo.EsContingencia())
+                    {
+                        // Los CFC (RsmnData_*_Cont) no informan rangos: solo la cantidad emitida.
+                        El(w, "CantCFCEmi", resumen.Cantidad.ToString(CultureInfo.InvariantCulture));
+                    }
+                    else
+                    {
+                        El(w, "CantDocsUtil", resumen.Cantidad.ToString(CultureInfo.InvariantCulture));
+                        EscribirRangos(w, resumen);
+                    }
+                    w.WriteEndElement(); // RsmnData
+                    w.WriteEndElement(); // Rsmn_*
+                }
+
+                w.WriteEndElement(); // Reporte
+                w.WriteEndDocument();
+            });
+        }
+
+        private void EscribirMontos(XmlWriter w, PorTipo resumen, Resumen clase)
+        {
+            var item = clase switch
+            {
+                Resumen.FacturaYTicket => "Mnts_FyT_Item",
+                Resumen.Exportacion => "Mnts_FExp_Item",
+                Resumen.Remito => "Mnts_Rem_Item",
+                Resumen.Resguardo => "Mnts_Res_Item",
+                _ => "Mnts_Rem_Exp_Item",
+            };
+
+            w.WriteStartElement("Montos", CfeXml.NsUri);
+            foreach (var (sucursal, m) in resumen.MontosPorSucursal)
+            {
+                w.WriteStartElement(item, CfeXml.NsUri);
+                El(w, "Fecha", CfeFormat.DateIso(fecha));
+                El(w, "CodSuc", sucursal.ToString(CultureInfo.InvariantCulture));
+
+                switch (clase)
+                {
+                    case Resumen.FacturaYTicket:
+                        if (m.Exento > 0) El(w, "TotMntNoGrv", M2(m.Exento));
+                        if (m.Suspendido > 0) El(w, "TotMntIVAenSusp", M2(m.Suspendido));
+                        if (m.NetoMinimo > 0) El(w, "TotMntIVATasaMin", M2(m.NetoMinimo));
+                        if (m.NetoBasico > 0) El(w, "TotMntIVATasaBas", M2(m.NetoBasico));
+                        if (m.NetoMinimo > 0) El(w, "MntIVATasaMin", M2(m.IvaMinimo));
+                        if (m.NetoBasico > 0) El(w, "MntIVATasaBas", M2(m.IvaBasico));
+                        if (m.NetoMinimo > 0) El(w, "IVATasaMin", Tasa(Totales.TasaIvaMinima));
+                        if (m.NetoBasico > 0) El(w, "IVATasaBas", Tasa(Totales.TasaIvaBasica));
+                        El(w, "TotMntTotal", M2(m.Total));
+                        break;
+
+                    case Resumen.Resguardo:
+                        El(w, "TotMntRetenido", M2(m.Retenido));
+                        break;
+
+                    case Resumen.Exportacion:
+                    case Resumen.RemitoExportacion:
+                        El(w, "TotMntExpyAsim", M2(m.Exportacion));
+                        El(w, "TotMntTotal", M2(m.Total));
+                        break;
+                }
+
                 w.WriteEndElement();
             }
+            w.WriteEndElement(); // Montos
         }
-        w.WriteEndElement();
+
+        /// <summary>Rangos contiguos de números usados, por serie (<c>RDU_Item</c>).</summary>
+        private static void EscribirRangos(XmlWriter w, PorTipo resumen)
+        {
+            w.WriteStartElement("RngDocsUtil", CfeXml.NsUri);
+            foreach (var (serie, numeros) in resumen.NumerosPorSerie)
+            {
+                // En una lista ordenada y sin repetidos, los números consecutivos comparten (número − posición).
+                var rangos = numeros.Distinct().Order()
+                    .Select((numero, i) => (numero, tramo: numero - i))
+                    .GroupBy(x => x.tramo, x => x.numero);
+
+                foreach (var rango in rangos)
+                {
+                    w.WriteStartElement("RDU_Item", CfeXml.NsUri);
+                    El(w, "Serie", serie);
+                    El(w, "NroDesde", rango.First().ToString(CultureInfo.InvariantCulture));
+                    El(w, "NroHasta", rango.Last().ToString(CultureInfo.InvariantCulture));
+                    w.WriteEndElement();
+                }
+            }
+            w.WriteEndElement();
+        }
+    }
+
+    /// <summary>Lo que el reporte necesita de los CFE de un tipo.</summary>
+    private sealed class PorTipo
+    {
+        internal int Cantidad;
+        internal readonly SortedDictionary<int, Montos> MontosPorSucursal = [];
+        internal readonly SortedDictionary<string, List<long>> NumerosPorSerie = new(StringComparer.Ordinal);
+    }
+
+    /// <summary>Sumas de los totales de un grupo de CFE.</summary>
+    private sealed class Montos
+    {
+        internal decimal Exento, Suspendido, NetoMinimo, NetoBasico, IvaMinimo, IvaBasico, Exportacion, Total, Retenido;
+
+        internal void Sumar(Totales t)
+        {
+            Exento += t.MontoNetoExento;
+            Suspendido += t.MontoNetoSuspendido;
+            NetoMinimo += t.MontoNetoMinimo;
+            NetoBasico += t.MontoNetoBasico;
+            IvaMinimo += t.IvaMinimo;
+            IvaBasico += t.IvaBasico;
+            Exportacion += t.MontoExportacion;
+            Total += t.MontoTotal;
+            Retenido += t.MontoRetenido;
+        }
     }
 }

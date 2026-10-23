@@ -135,7 +135,7 @@ Si estás migrando desde un módulo de facturación electrónica de un ERP (Bisc
        {
            var cfe = new Cfe(MapearTipo(dto.Tipo))
            {
-               NroInterno = dto.Id,   // para buscarlo después y evitar emitirlo dos veces
+               NroInterno = dto.Id,   // un reintento no lo emite dos veces (CfeDuplicadoException)
                Receptor = dto.Receptor is null ? null : new Receptor
                {
                    Documento   = dto.Receptor.Rut,
@@ -156,7 +156,7 @@ Si estás migrando desde un módulo de facturación electrónica de un ERP (Bisc
            return new ResultadoEmision
            {
                Numero  = $"{emitido.Serie}-{emitido.Numero}",
-               Estado  = emitido.EstadoDgi ?? acuse.Estado,
+               Estado  = emitido.EstadoDgi?.ToString() ?? acuse.Estado.ToString(),
                Mensaje = emitido.MensajeDgi ?? acuse.Mensaje,
                PdfA4   = CfePdf.GenerarA4(emitido),
            };
@@ -210,12 +210,12 @@ Si estás usando otra librería .NET de facturación electrónica uruguaya:
   var acuse = await client.EnviarAsync(emitido);
 
   // acuse.Recibido: bool (AS)
-  // acuse.Estado: string ("AS", "BS", "BA" — ver Códigos DGI)
+  // acuse.Estado: EstadoSobre (Recibido = AS, Rechazado = BS, ArchivoRechazado = BA — ver Códigos DGI)
   // acuse.Mensaje / acuse.Motivos: descripción y motivos de la DGI
 
   if (acuse.Recibido)
   {
-      var estado = await client.ConsultarEnvioAsync(acuse);   // emitido.AceptadoPorDgi, emitido.EstadoDgi
+      var estado = await client.ConsultarEnvioAsync(acuse);   // emitido.AceptadoPorDgi, emitido.EstadoDgi (EstadoCfe)
   }
   // Los errores de comunicación (red, SOAP Fault, HTTP) se lanzan como DgiCommunicationException
   ```

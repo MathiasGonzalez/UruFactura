@@ -34,4 +34,7 @@ internal static class XmlCfe
 
     /// <summary>Monto con 2 decimales.</summary>
     internal static string M2(decimal valor) => CfeFormat.DecimalInvariant(valor, "F2");
+
+    /// <summary>Tasa de IVA en porcentaje con 3 decimales (<c>TasaIVAType</c>, p. ej. <c>22.000</c>).</summary>
+    internal static string Tasa(decimal porcentaje) => CfeFormat.DecimalInvariant(porcentaje, "F3");
 }

@@ -11,6 +11,9 @@ internal static class TestData
 {
     internal static readonly DateOnly Dia = new(2026, 6, 15);
 
+    /// <summary>Reloj en <see cref="Dia"/> al mediodía de Uruguay.</summary>
+    internal static readonly TimeProvider Reloj = new RelojFijo(new DateTimeOffset(2026, 6, 15, 12, 0, 0, HoraUruguay.Offset));
+
     /// <summary>Certificado de prueba compartido (no se libera: vive lo que el proceso de tests).</summary>
     internal static readonly X509Certificate2 Certificado = CertificadoAutofirmado();
 
@@ -121,14 +124,18 @@ internal static class TestData
         return cfe;
     }
 
-    /// <summary>Errores de validación del contenido (sin tope de UI).</summary>
-    internal static List<string> Validar(Cfe cfe, decimal? tope = null) => cfe.Validar(cfe.FechaEmision ?? Dia, tope);
+    /// <summary>Errores de validación del contenido (sin tope de UI) en <see cref="Dia"/>.</summary>
+    internal static List<ErrorValidacion> Validar(Cfe cfe, decimal? tope = null) => cfe.Validar(Dia, tope);
+
+    /// <summary>Campos con errores de validación.</summary>
+    internal static List<string> Campos(Cfe cfe, decimal? tope = null) => [.. Validar(cfe, tope).Select(e => e.Campo)];
 
     /// <summary>
     /// Emite el CFE con el mismo proceso que el cliente (XML y firma reales), con el número y el CAE
     /// indicados. Para tests que necesitan un <see cref="CfeEmitido"/> sin pasar por el almacenamiento.
     /// </summary>
-    internal static CfeEmitido Emitido(Cfe? cfe = null, long numero = 1, Cae? cae = null, DateTimeOffset? firma = null)
+    internal static CfeEmitido Emitido(
+        Cfe? cfe = null, long numero = 1, Cae? cae = null, DateTimeOffset? firma = null, EstadoCfe? estado = null)
     {
         cfe ??= CfeValido();
         var documento = cfe with { FechaEmision = cfe.FechaEmision ?? Dia, Emisor = cfe.Emisor ?? Emisor() };
@@ -140,7 +147,7 @@ internal static class TestData
         var totales = documento.CalcularTotales();
         var tmst = firma ?? new DateTimeOffset(2026, 6, 15, 12, 0, 0, HoraUruguay.Offset);
         var (xml, digest) = FirmaDigital.Firmar(CfeXml.Generar(documento, reservado, numero, totales, tmst), Certificado, AlgoritmoFirma.Sha256);
-        return new CfeEmitido(documento, reservado, numero, totales, tmst, digest, xml);
+        return new CfeEmitido(documento, reservado, numero, totales, tmst, digest, xml) { EstadoDgi = estado };
     }
 
     /// <summary>Envuelve CFE emitidos en un sobre (para validarlos contra EnvioCFE.xsd, que exige carátula y firma).</summary>
@@ -210,4 +217,12 @@ internal static class TestData
 internal sealed class RelojFijo(DateTimeOffset utc) : TimeProvider
 {
     public override DateTimeOffset GetUtcNow() => utc;
+}
+
+/// <summary>Reloj que el test adelanta.</summary>
+internal sealed class RelojManual(DateTimeOffset utc) : TimeProvider
+{
+    public DateTimeOffset Utc { get; set; } = utc;
+
+    public override DateTimeOffset GetUtcNow() => Utc;
 }

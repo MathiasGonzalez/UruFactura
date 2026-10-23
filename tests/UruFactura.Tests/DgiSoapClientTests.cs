@@ -168,7 +168,7 @@ public class DgiSoapClientTests
         var r = await soap.EnviarSobreAsync("<x/>");
 
         Assert.True(r.Recibido);
-        Assert.Equal("AS", r.Estado);
+        Assert.Equal(EstadoSobre.Recibido, r.Estado);
         Assert.Equal("987654", r.IdReceptor);
         Assert.Equal("dG9rZW4=", r.Token);
         Assert.Equal(new DateTimeOffset(2026, 6, 15, 10, 0, 0, TimeSpan.FromHours(-3)), r.ConsultarDesde);
@@ -187,7 +187,7 @@ public class DgiSoapClientTests
         var r = await soap.EnviarSobreAsync("<x/>");
 
         Assert.False(r.Recibido);
-        Assert.Equal("BS", r.Estado);
+        Assert.Equal(EstadoSobre.Rechazado, r.Estado);
         Assert.Contains("S03", r.Mensaje);
         Assert.Equal(["S03 Certificado inválido"], r.Motivos);
     }
@@ -264,6 +264,17 @@ public class DgiSoapClientTests
         Assert.Contains("sin red", ex.Message);
     }
 
+    [Fact]
+    public async Task EnviarSobre_SeCortaLaLecturaDeLaRespuesta_LaLiberaYLanzaDgiCommunicationException()
+    {
+        var cuerpo = new CuerpoQueSeCorta();
+        var handler = new CapturingHandler { Contenido = cuerpo };
+        using var soap = Cliente(handler);
+
+        await Assert.ThrowsAsync<DgiCommunicationException>(() => soap.EnviarSobreAsync("<x/>"));
+        Assert.True(cuerpo.Liberado);
+    }
+
     // ------------------------------------------------------------------ otras operaciones
 
     [Fact]
@@ -291,8 +302,9 @@ public class DgiSoapClientTests
         Assert.True(r.Procesado);
         Assert.False(r.TodosAceptados);
         Assert.Equal(2, r.Comprobantes.Count);
-        Assert.Equal("AE", r.Comprobantes[0].Estado);
-        Assert.Equal(2, r.Comprobantes[1].Numero);
+        Assert.Equal(EstadoCfe.Aceptado, r.Comprobantes[0].Estado);
+        Assert.Equal(EstadoCfe.Rechazado, r.Comprobantes[1].Estado);
+        Assert.Equal((2, 2L), (r.Comprobantes[1].NroOrdinal!.Value, r.Comprobantes[1].Numero!.Value));
         Assert.Contains("Número fuera de rango", r.Comprobantes[1].Motivos[0]);
     }
 
@@ -308,6 +320,33 @@ public class DgiSoapClientTests
         var r = await soap.ConsultarEnvioAsync("1", "t");
 
         Assert.True(r.TodosAceptados);
+        // Solo con Nro_ordinal (TipoCFE, Serie y NroCFE son opcionales): el cliente asocia por posición.
+        var detalle = Assert.Single(r.Comprobantes);
+        Assert.Equal(1, detalle.NroOrdinal);
+        Assert.Null(detalle.Numero);
+    }
+
+    [Theory]
+    [InlineData("<ACKSobre xmlns=\"http://cfe.dgi.gub.uy\"><Detalle><Estado>XX</Estado></Detalle></ACKSobre>", "WS_eFactura.EFACRECEPCIONSOBRE")]
+    [InlineData("<ACKSobre xmlns=\"http://cfe.dgi.gub.uy\"><Detalle/></ACKSobre>", "WS_eFactura.EFACRECEPCIONSOBRE")]
+    public async Task EnviarSobre_EstadoFueraDelEsquema_LanzaDgiCommunicationException(string ack, string operacion)
+    {
+        var handler = new CapturingHandler { Respuesta = Soap(ack, operacion) };
+        using var soap = Cliente(handler);
+
+        await Assert.ThrowsAsync<DgiCommunicationException>(() => soap.EnviarSobreAsync("<x/>"));
+    }
+
+    [Fact]
+    public async Task ConsultarEstadoEnvio_EstadoFueraDelEsquema_LanzaDgiCommunicationException()
+    {
+        var ack = """
+            <ACKCFE xmlns="http://cfe.dgi.gub.uy"><ACKCFE_Det><Nro_ordinal>1</Nro_ordinal><Estado>ZZ</Estado></ACKCFE_Det></ACKCFE>
+            """;
+        var handler = new CapturingHandler { Respuesta = Soap(ack, "WS_eFactura.EFACCONSULTARESTADOENVIO") };
+        using var soap = Cliente(handler);
+
+        await Assert.ThrowsAsync<DgiCommunicationException>(() => soap.ConsultarEnvioAsync("1", "t"));
     }
 
     [Fact]
@@ -337,7 +376,7 @@ public class DgiSoapClientTests
         Assert.Equal("7", doc.SelectSingleNode(cfeid + "/dgi:Nro", nsm)!.InnerText);
 
         Assert.True(r.Aceptado);
-        Assert.Equal("AE", r.Estado);
+        Assert.Equal(EstadoCfe.Aceptado, r.Estado);
         Assert.Equal((101, "A", 7L), (r.TipoCfe!.Value, r.Serie!, r.Numero!.Value));
     }
 
@@ -355,7 +394,7 @@ public class DgiSoapClientTests
         Assert.Equal("\"http://dgi.gub.uyaction/AWS_EFACTURA.EFACRECEPCIONREPORTE\"", handler.Headers["SOAPAction"]);
         Assert.Contains("WS_eFactura.EFACRECEPCIONREPORTE", handler.Cuerpo);
         Assert.True(r.Recibido);
-        Assert.Equal("AR", r.Estado);
+        Assert.Equal(EstadoReporte.Recibido, r.Estado);
     }
 
     [Fact]
@@ -370,6 +409,7 @@ public class DgiSoapClientTests
         var r = await soap.EnviarReporteAsync("<x/>");
 
         Assert.False(r.Recibido);
+        Assert.Equal(EstadoReporte.Rechazado, r.Estado);
         Assert.Contains("R05", r.Mensaje);
     }
 
@@ -403,6 +443,7 @@ public class DgiSoapClientTests
         public HttpStatusCode Status { get; set; } = HttpStatusCode.OK;
         public TimeSpan Retardo { get; set; }
         public Exception? Error { get; set; }
+        public HttpContent? Contenido { get; set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -417,12 +458,33 @@ public class DgiSoapClientTests
             if (Retardo > TimeSpan.Zero)
                 await Task.Delay(Retardo, cancellationToken);
 
-            return new HttpResponseMessage(Status) { Content = new StringContent(Respuesta, Encoding.UTF8, "text/xml") };
+            return new HttpResponseMessage(Status) { Content = Contenido ?? new StringContent(Respuesta, Encoding.UTF8, "text/xml") };
         }
 
         protected override void Dispose(bool disposing)
         {
             Disposed = true;
+            base.Dispose(disposing);
+        }
+    }
+
+    /// <summary>Cuerpo cuya lectura falla a mitad (la conexión se corta).</summary>
+    private sealed class CuerpoQueSeCorta : HttpContent
+    {
+        public bool Liberado { get; private set; }
+
+        protected override Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context) =>
+            throw new IOException("La conexión se cerró.");
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            Liberado = true;
             base.Dispose(disposing);
         }
     }

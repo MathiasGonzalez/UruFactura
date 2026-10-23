@@ -105,10 +105,10 @@ public class FuncionalidadesTests
 
     [Fact]
     public void DescuentosGlobales_EnRemito_NoSeAdmiten() =>
-        Assert.Contains(TestData.Validar(TestData.CfeValido(TipoCfe.ERemito) with
+        Assert.Contains("DescuentosRecargos", TestData.Campos(TestData.CfeValido(TipoCfe.ERemito) with
         {
             DescuentosRecargos = [new DescuentoRecargoGlobal { Glosa = "x", Monto = 1m }],
-        }), e => e.Contains("remitos"));
+        }));
 
     // ------------------------------------------------------------ medios de pago
 
@@ -134,8 +134,7 @@ public class FuncionalidadesTests
 
     [Fact]
     public void MediosDePago_SinGlosa_FallaLaValidacion() =>
-        Assert.Contains(TestData.Validar(TestData.CfeValido() with { MediosPago = [new MedioPago { Glosa = " ", Valor = 1m }] }),
-            e => e.Contains("glosa"));
+        Assert.Contains("MediosPago[0].Glosa", TestData.Campos(TestData.CfeValido() with { MediosPago = [new MedioPago { Glosa = " ", Valor = 1m }] }));
 
     // ------------------------------------------------------------ e-Resguardo
 
@@ -161,8 +160,7 @@ public class FuncionalidadesTests
 
     [Fact]
     public void EResguardo_SinRetenciones_FallaLaValidacion() =>
-        Assert.Contains(TestData.Validar(TestData.CfeValido(TipoCfe.EResguardo) with { Detalle = [new LineaDetalle()] }),
-            e => e.Contains("e-Resguardo"));
+        Assert.Contains("Detalle[0].Retenciones", TestData.Campos(TestData.CfeValido(TipoCfe.EResguardo) with { Detalle = [new LineaDetalle()] }));
 
     [Fact]
     public void EResguardo_ConMasDeCincoRetencionesPorLinea_Falla()
@@ -170,15 +168,15 @@ public class FuncionalidadesTests
         var retenciones = Enumerable.Range(0, 6).Select(i => new RetencionPercepcion { Codigo = $"X{i}", Valor = 1m }).ToList();
 
         Assert.Contains(TestData.Validar(TestData.CfeValido(TipoCfe.EResguardo) with { Detalle = [new LineaDetalle { Retenciones = retenciones }] }),
-            e => e.Contains("1 a 5"));
+            e => e.Mensaje.Contains("1 a 5"));
     }
 
     [Fact]
     public void Retenciones_EnOtrosTipos_NoSeAdmiten() =>
-        Assert.Contains(TestData.Validar(TestData.CfeValido() with
+        Assert.Contains("Detalle[0].Retenciones", TestData.Campos(TestData.CfeValido() with
         {
             Detalle = [TestData.Linea() with { Retenciones = [new RetencionPercepcion { Codigo = "R1", Valor = 1m }] }],
-        }), e => e.Contains("e-Resguardo"));
+        }));
 
     // ------------------------------------------------------------ cuenta ajena
 
@@ -198,12 +196,11 @@ public class FuncionalidadesTests
 
     [Fact]
     public void CuentaAjena_SinMandante_FallaLaValidacion() =>
-        Assert.Contains(TestData.Validar(TestData.CfeValido(TipoCfe.ETicketCuentaAjena) with { Mandante = null }), e => e.Contains("mandante"));
+        Assert.Contains("Mandante", TestData.Campos(TestData.CfeValido(TipoCfe.ETicketCuentaAjena) with { Mandante = null }));
 
     [Fact]
     public void Mandante_EnUnTipoComun_FallaLaValidacion() =>
-        Assert.Contains(TestData.Validar(TestData.CfeValido() with { Mandante = new Mandante { Documento = "1", Nombre = "x" } }),
-            e => e.Contains("cuenta ajena"));
+        Assert.Contains("Mandante", TestData.Campos(TestData.CfeValido() with { Mandante = new Mandante { Documento = "1", Nombre = "x" } }));
 
     // ------------------------------------------------------------ datos adicionales
 

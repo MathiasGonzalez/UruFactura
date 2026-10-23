@@ -24,27 +24,28 @@ await client.RegistrarCaeAsync(new Cae
 ```
 
 - Un CAE se identifica por tipo, serie y comienzo de rango: registrar el mismo otra vez actualiza sus datos sin hacer retroceder su numeración.
-- Los datos se validan al registrar (`CaeException` si algo está mal), así que un CAE incorrecto no llega a un comprobante.
+- Los datos se validan al registrar (`CaeException` si algo está mal), así que un CAE incorrecto no llega a un comprobante. Tampoco se admite un CAE con números en común con otro del mismo tipo y serie (por ejemplo, por un error de tipeo en el rango): se emitirían números repetidos.
+- Un CAE registrado por error que todavía no numeró ningún CFE se quita con `client.EliminarCaeAsync(cae)`.
 - Para varios tipos de CFE, un CAE por tipo. Con más de un CAE vigente para un tipo, se numera con el de vencimiento más lejano y, a igual vencimiento, con el que tenga más números libres; cuando uno se agota se pasa al siguiente.
 
 ---
 
 ## Dónde vive la numeración
 
-`EmitirAsync` reserva cada número en el **almacenamiento** del cliente (`IUruFacturaStore`), que es la única fuente de verdad:
+La numeración vive en el **almacenamiento** del cliente (`IUruFacturaStore`), que es la única fuente de verdad. `EmitirAsync` toma el próximo número y lo registra **junto con el CFE**, en una sola operación atómica: si algo falla (la firma, la base de datos, una cancelación), no se consume ningún número, así que no quedan huecos sin comprobante.
 
 | Almacenamiento | Para qué |
 |----------------|----------|
-| `InMemoryStore` (por defecto) | Pruebas y desarrollo. Se pierde al reiniciar: la aplicación volvería a usar números ya emitidos |
+| `InMemoryStore` (por defecto en Homologación) | Pruebas y desarrollo. Se pierde al reiniciar: la aplicación volvería a usar números ya emitidos |
 | `EfUruFacturaStore<TContext>` (`UruFactura.EntityFrameworkCore`) | Producción. Durable y seguro con varias instancias |
 
 <Aside type="caution">
-  En producción no uses el almacenamiento en memoria: tras un reinicio repetiría números, y con dos instancias de la aplicación cada una numeraría por su cuenta. La DGI rechaza los duplicados.
+  En Producción el cliente exige que le pases el almacenamiento: con el en memoria, tras un reinicio repetiría números, y con dos instancias de la aplicación cada una numeraría por su cuenta.
 </Aside>
 
 ### Producción y varias instancias: EF Core
 
-`EfUruFacturaStore` reserva cada número con un `UPDATE` condicional (compare-and-swap) sobre la tabla `UruFacturaCaes`, así que dos instancias (réplicas, blue/green, API + worker) nunca obtienen el mismo número. También registra los CFE emitidos (`UruFacturaCfes`), de modo que el reporte diario incluye los de todas.
+`EfUruFacturaStore` avanza el CAE con un `UPDATE` condicional sobre `UruFacturaCaes` (solo si nadie lo cambió desde que se leyó) en la misma transacción que el `INSERT` del CFE en `UruFacturaCfes`. Si otra instancia numeró antes, no se guarda nada y el cliente vuelve a numerar: dos instancias (réplicas, blue/green, API + worker) nunca obtienen el mismo número, y el reporte diario incluye los CFE de todas.
 
 ```csharp
 builder.Services.AddDbContextFactory<UruFacturaDbContext>(o => o.UseSqlServer(connectionString));
@@ -54,7 +55,7 @@ builder.Services.AddSingleton<IUruFacturaClient>(sp => new UruFacturaClient(
     store: new EfUruFacturaStore<UruFacturaDbContext>(sp.GetRequiredService<IDbContextFactory<UruFacturaDbContext>>())));
 ```
 
-Si tu app ya tiene un `DbContext`, llamá a `modelBuilder.ApplyUruFacturaModel()` en `OnModelCreating`, usá `EfUruFacturaStore<TuContexto>` y generá la migración con tu proveedor. Para otro almacenamiento, implementá `IUruFacturaStore`: la reserva de números debe ser atómica.
+Si tu app ya tiene un `DbContext`, llamá a `modelBuilder.ApplyUruFacturaModel()` en `OnModelCreating`, usá `EfUruFacturaStore<TuContexto>` y generá la migración con tu proveedor. Para otro almacenamiento, implementá `IUruFacturaStore`: `RegistrarEmisionAsync` debe avanzar el CAE y guardar el CFE de forma atómica (las dos cosas o ninguna).
 
 ---
 

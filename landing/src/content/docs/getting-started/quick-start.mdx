@@ -42,7 +42,7 @@ using var client = new UruFacturaClient(config);
 ```
 
 <Aside type="caution">
-  Sin más parámetros, el cliente guarda la numeración **en memoria**: sirve para probar, pero si la aplicación se reinicia volvería a usar números. En producción pasale un almacenamiento durable (`store:`), como el de `UruFactura.EntityFrameworkCore`. Ver [Gestión de CAE](../../guides/cae-management/).
+  Sin más parámetros, en Homologación el cliente guarda la numeración **en memoria**: sirve para probar, pero si la aplicación se reinicia volvería a usar números. En Producción hay que pasarle un almacenamiento durable (`store:`), como el de `UruFactura.EntityFrameworkCore`: sin él, el cliente no se crea. Ver [Gestión de CAE](../../guides/cae-management/).
 </Aside>
 
 ---
@@ -123,7 +123,7 @@ await client.RegistrarCaeAsync(new Cae
   </TabItem>
 </Tabs>
 
-Si el CFE no es válido, `EmitirAsync` lanza `CfeValidationException` (con la lista en `Errors`) **sin consumir números**. Para revisar sin emitir: `client.Validar(cfe)`.
+Si el CFE no es válido, `EmitirAsync` lanza `CfeValidationException` (con la lista en `Errores`: campo y motivo de cada uno) **sin consumir números**. Para revisar sin emitir: `client.Validar(cfe)`.
 
 ---
 
@@ -134,11 +134,11 @@ Si el CFE no es válido, `EmitirAsync` lanza `CfeValidationException` (con la li
 var acuse = await client.EnviarAsync(emitido);
 if (!acuse.Recibido)
 {
-    Console.WriteLine($"❌ Sobre rechazado [{acuse.Estado}]: {acuse.Mensaje}");
+    Console.WriteLine($"❌ {acuse.Mensaje}");   // "Sobre rechazado (BS): motivos"
     return;
 }
 
-// 2) Resultado del comprobante (AE = aceptado, BE = rechazado, CE = observado)
+// 2) Resultado del comprobante: EstadoCfe.Aceptado (AE), Rechazado (BE), Observado (CE)
 var estado = await client.ConsultarEnvioAsync(acuse);
 Console.WriteLine(emitido.AceptadoPorDgi
     ? "✅ Aceptado"

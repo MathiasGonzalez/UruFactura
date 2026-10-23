@@ -3,9 +3,10 @@ using UruFactura.Formatting;
 namespace UruFactura;
 
 /// <summary>
-/// Contenido de un CFE (Comprobante Fiscal Electrónico) a emitir. Es inmutable: lo que se emite con
-/// <see cref="IUruFacturaClient.EmitirAsync"/> es exactamente lo que queda firmado. La numeración, el
-/// CAE y los datos del emisor los completa la emisión.
+/// Contenido de un CFE (Comprobante Fiscal Electrónico) a emitir. Es inmutable y
+/// <see cref="IUruFacturaClient.EmitirAsync"/> copia sus listas: lo emitido es exactamente lo que queda
+/// firmado aunque después se modifiquen las listas originales. La numeración, el CAE y los datos del
+/// emisor los completa la emisión.
 /// </summary>
 /// <param name="Tipo">Tipo de comprobante.</param>
 public sealed record Cfe(TipoCfe Tipo)
@@ -79,7 +80,8 @@ public sealed record Cfe(TipoCfe Tipo)
 
     /// <summary>
     /// Calcula los totales a partir del detalle y de los descuentos/recargos globales, con la misma
-    /// precisión con que se escriben en el XML (IVA mínimo 10%, básico 22%).
+    /// precisión con que se escriben en el XML (IVA a las tasas de <see cref="Totales.TasaIvaMinima"/> y
+    /// <see cref="Totales.TasaIvaBasica"/>).
     /// </summary>
     public Totales CalcularTotales()
     {
@@ -107,8 +109,8 @@ public sealed record Cfe(TipoCfe Tipo)
         var suspendido = Neto(TipoIva.Suspendido);
         var minimo = Neto(TipoIva.Minimo);
         var basico = Neto(TipoIva.Basico);
-        var ivaMinimo = CfeFormat.Redondear(minimo * 0.10m);
-        var ivaBasico = CfeFormat.Redondear(basico * 0.22m);
+        var ivaMinimo = CfeFormat.Redondear(minimo * Totales.TasaIvaMinima / 100m);
+        var ivaBasico = CfeFormat.Redondear(basico * Totales.TasaIvaBasica / 100m);
 
         return new Totales
         {
@@ -124,278 +126,348 @@ public sealed record Cfe(TipoCfe Tipo)
     }
 
     /// <summary>
-    /// Valida el contenido del comprobante (sin numeración ni emisor, que valida la emisión).
+    /// Valida el contenido del comprobante (sin numeración ni emisor, que valida la emisión) con las
+    /// restricciones del esquema de la DGI: lo que pasa esta validación produce un XML válido.
     /// </summary>
-    /// <param name="fechaEmision">Fecha de emisión efectiva.</param>
+    /// <param name="hoy">Fecha actual en Uruguay (la de emisión si <see cref="FechaEmision"/> se omite).</param>
     /// <param name="topeMontoNetoSinReceptor">Tope en pesos a partir del cual un e-Ticket debe identificar al receptor (5.000 UI).</param>
-    internal List<string> Validar(DateOnly fechaEmision, decimal? topeMontoNetoSinReceptor)
+    internal List<ErrorValidacion> Validar(DateOnly hoy, decimal? topeMontoNetoSinReceptor)
     {
-        var errors = new List<string>();
+        var v = new Validacion();
 
         if (!Enum.IsDefined(Tipo))
         {
-            errors.Add($"El tipo de CFE {(int)Tipo} no está soportado.");
-            return errors;
+            v.Error(nameof(Tipo), $"El tipo de CFE {(int)Tipo} no está soportado.");
+            return v.Errores;
         }
 
         var familia = Tipo.Familia();
+        var fecha = FechaEmision ?? hoy;
 
-        if (FechaVencimiento is { } venc && venc < fechaEmision)
-            errors.Add("FechaVencimiento no puede ser anterior a la fecha de emisión.");
-        if (NroInterno is { Length: > 50 })
-            errors.Add("NroInterno admite hasta 50 caracteres.");
-        if (InfoAdicional is { Length: > 150 })
-            errors.Add("InfoAdicional admite hasta 150 caracteres.");
+        if (fecha > hoy)
+            v.Error(nameof(FechaEmision), "No puede ser posterior a la fecha actual.");
+        else
+            v.Fecha(nameof(FechaEmision), fecha);
+        if (FechaVencimiento is { } venc && venc < fecha)
+            v.Error(nameof(FechaVencimiento), "No puede ser anterior a la fecha de emisión.");
+        else if (FechaVencimiento > Validacion.FechaMaxima)
+            v.Error(nameof(FechaVencimiento), "Debe ser hasta el 31/12/2050.");
+        v.Texto(nameof(NroInterno), NroInterno, 50);
+        v.Texto(nameof(InfoAdicional), InfoAdicional, 150);
 
         var maxLineas = familia is FamiliaCfe.Ticket or FamiliaCfe.Factura ? 700 : 200;
         if (Detalle.Count == 0)
-            errors.Add("El CFE debe tener al menos una línea de detalle.");
+            v.Error(nameof(Detalle), "Debe tener al menos una línea.");
         else if (Detalle.Count > maxLineas)
-            errors.Add($"El CFE excede la cantidad máxima de líneas de detalle permitida para su tipo ({maxLineas}).");
+            v.Error(nameof(Detalle), $"Admite hasta {maxLineas} líneas en este tipo de comprobante.");
 
         if (familia == FamiliaCfe.Resguardo)
-            ValidarRetenciones(errors);
+            ValidarRetenciones(v);
         else
-            ValidarLineas(errors, familia);
+            ValidarLineas(v, familia);
 
         if (!Enum.IsDefined(Moneda))
-            errors.Add("Moneda no es válida.");
+            v.Error(nameof(Moneda), "No es válida.");
         if (!Enum.IsDefined(FormaPago))
-            errors.Add("FormaPago no es válida.");
-
-        if (Moneda != Moneda.PesoUruguayo && TipoCambio is null or <= 0)
-            errors.Add("TipoCambio es obligatorio y debe ser mayor a cero cuando la moneda no es Peso Uruguayo.");
-        else if (TipoCambio is > 9999.999m)
-            errors.Add("TipoCambio no puede superar 9999.999.");
-
-        if (Tipo.EsNotaCorreccion())
+            v.Error(nameof(FormaPago), "No es válida.");
+        if (Moneda != Moneda.PesoUruguayo)
         {
-            if (Referencias.Count == 0)
-                errors.Add("Las notas de crédito/débito deben referenciar al menos un CFE.");
-
-            // Desde el formato CFE v25.01 las referencias de las notas informan monto y moneda (F-C8 y F-C9).
-            for (int i = 0; i < Referencias.Count; i++)
-            {
-                if (Referencias[i].MontoCfeRef is null)
-                    errors.Add($"Referencia {i + 1}: MontoCfeRef es obligatorio en notas de crédito/débito (CFE v25.01).");
-                if (Referencias[i].MonedaCfeRef is null)
-                    errors.Add($"Referencia {i + 1}: MonedaCfeRef es obligatorio en notas de crédito/débito (CFE v25.01).");
-            }
+            if (TipoCambio is { } tipoCambio)
+                v.TipoCambio(nameof(TipoCambio), tipoCambio);
+            else
+                v.Error(nameof(TipoCambio), "Es obligatorio cuando la moneda no es el peso uruguayo.");
         }
 
-        if (Referencias.Count > 40)
-            errors.Add("Se admiten hasta 40 referencias.");
+        ValidarReferencias(v, fecha);
 
         if (Tipo.EsExportacion())
-        {
-            if (familia == FamiliaCfe.FacturaExportacion && (string.IsNullOrWhiteSpace(ClausulaVenta)
-                    || !(ClausulaVenta == "N/A" || ClausulaVenta.Length is >= 1 and <= 3 && ClausulaVenta.All(char.IsAsciiLetter))))
-                errors.Add("ClausulaVenta es obligatoria en exportación (1 a 3 letras, ej: \"FOB\", o \"N/A\").");
-            if (ViaTransporte is not (1 or 2 or 3 or 9))
-                errors.Add("ViaTransporte es obligatoria en exportación (1 Marítimo, 2 Aéreo, 3 Terrestre, 9 Otro).");
-            if (ModalidadVenta is not (1 or 2 or 3 or 4 or 80 or 90 or 91 or 99)
-                && (familia == FamiliaCfe.RemitoExportacion || Tipo is TipoCfe.EFacturaExportacion or TipoCfe.EFacturaExportacionContingencia))
-                errors.Add("ModalidadVenta es obligatoria en e-Factura y e-Remito de exportación (1, 2, 3, 4, 80, 90, 91 o 99).");
-        }
+            ValidarExportacion(v, familia);
 
-        ValidarReceptor(errors, familia);
+        ValidarReceptor(v, familia);
 
         if (Tipo.EsRemito())
         {
             if (IndTraslado is null)
-                errors.Add("Los e-Remitos requieren indicar el motivo de traslado (IndTraslado).");
+                v.Error(nameof(IndTraslado), "Es obligatorio en los e-Remitos (motivo del traslado).");
             else if (!Enum.IsDefined(IndTraslado.Value))
-                errors.Add("IndTraslado contiene un valor no soportado para e-Remitos.");
+                v.Error(nameof(IndTraslado), "No es un motivo de traslado válido.");
         }
 
         if (Tipo.EsCuentaAjena())
-            ValidarMandante(errors);
+            ValidarMandante(v);
         else if (Mandante is not null)
-            errors.Add("El mandante solo se informa en las ventas por cuenta ajena.");
+            v.Error(nameof(Mandante), "Solo se informa en las ventas por cuenta ajena.");
 
-        ValidarDescuentosYMedios(errors, familia);
+        ValidarDescuentosYMedios(v, familia);
 
-        if (topeMontoNetoSinReceptor is { } tope && familia == FamiliaCfe.Ticket && !Tipo.EsCuentaAjena()
-            && string.IsNullOrWhiteSpace(Receptor?.Documento))
-        {
-            var netoPesos = CalcularTotales().MontoNeto * (Moneda == Moneda.PesoUruguayo ? 1m : TipoCambio ?? 1m);
-            if (netoPesos > tope)
-                errors.Add($"El e-Ticket supera el tope de monto neto sin identificar al receptor ({tope:N2} pesos): informe el documento del receptor.");
-        }
+        // Los totales se calculan con el resto válido: con montos fuera de rango podrían desbordar.
+        if (v.Errores.Count == 0)
+            ValidarTotales(v, familia, topeMontoNetoSinReceptor);
 
-        return errors;
+        return v.Errores;
     }
 
-    private void ValidarLineas(List<string> errors, FamiliaCfe familia)
+    private void ValidarLineas(Validacion v, FamiliaCfe familia)
     {
-        var sinPrecio = familia == FamiliaCfe.Remito;
+        var remito = Tipo.EsRemito();
+        var conPrecio = familia != FamiliaCfe.Remito;
         for (int i = 0; i < Detalle.Count; i++)
         {
             var linea = Detalle[i];
-            var n = i + 1;
-            if (string.IsNullOrWhiteSpace(linea.NombreItem))
-                errors.Add($"Línea {n}: NombreItem es obligatorio.");
-            else if (linea.NombreItem.Length > 80)
-                errors.Add($"Línea {n}: NombreItem admite hasta 80 caracteres.");
-            if (linea.Descripcion is { Length: > 1000 })
-                errors.Add($"Línea {n}: Descripcion admite hasta 1000 caracteres.");
-            if (linea.UnidadMedida is { Length: > 4 })
-                errors.Add($"Línea {n}: UnidadMedida admite hasta 4 caracteres.");
-            if (linea.Cantidad <= 0)
-                errors.Add($"Línea {n}: Cantidad debe ser mayor a cero.");
-            if (!sinPrecio && linea.PrecioUnitario < 0)
-                errors.Add($"Línea {n}: PrecioUnitario no puede ser negativo.");
-            if (linea.DescuentoPorcentaje is < 0 or > 100)
-                errors.Add($"Línea {n}: DescuentoPorcentaje debe estar entre 0 y 100.");
-            if (linea.Codigos.Count > 5 || linea.Codigos.Any(c =>
-                    string.IsNullOrWhiteSpace(c.Tipo) || c.Tipo.Length > 10
-                    || string.IsNullOrWhiteSpace(c.Codigo) || c.Codigo.Length > 35))
-                errors.Add($"Línea {n}: Codigos admite hasta 5 códigos (tipo ≤ 10 y código ≤ 35 caracteres).");
-            if (!sinPrecio && !Tipo.EsExportacion() && !Enum.IsDefined(linea.IndFactIva))
-                errors.Add($"Línea {n}: IndFactIva no es válido.");
-            if (linea.Retenciones.Count > 0)
-                errors.Add($"Línea {n}: las retenciones/percepciones solo se informan en el e-Resguardo.");
-        }
-    }
+            var c = $"{nameof(Detalle)}[{i}]";
+            v.Texto($"{c}.NombreItem", linea.NombreItem, 80, obligatorio: true);
+            v.Texto($"{c}.Descripcion", linea.Descripcion, 1000);
+            v.Texto($"{c}.UnidadMedida", linea.UnidadMedida, 4);
 
-    private void ValidarRetenciones(List<string> errors)
-    {
-        var total = 0;
-        for (int i = 0; i < Detalle.Count; i++)
-        {
-            var linea = Detalle[i];
-            var n = i + 1;
-            if (linea.Retenciones.Count is < 1 or > 5)
-                errors.Add($"Línea {n}: el e-Resguardo requiere de 1 a 5 retenciones/percepciones por línea.");
+            var errores = v.Errores.Count;
+            if (CfeFormat.Redondear(linea.Cantidad, 3) <= 0)
+                v.Error($"{c}.Cantidad", "Debe ser mayor a cero (se informa con 3 decimales).");
+            else if (linea.Cantidad > Validacion.CantidadMaxima)
+                v.Error($"{c}.Cantidad", "Supera el máximo del formato CFE (14 dígitos enteros).");
+            if (conPrecio && linea.PrecioUnitario < 0)
+                v.Error($"{c}.PrecioUnitario", "No puede ser negativo.");
+            else if (conPrecio && linea.PrecioUnitario > Validacion.PrecioMaximo)
+                v.Error($"{c}.PrecioUnitario", "Supera el máximo del formato CFE (11 dígitos enteros).");
 
-            foreach (var r in linea.Retenciones)
+            if (remito)
             {
-                total++;
-                if (string.IsNullOrWhiteSpace(r.Codigo) || r.Codigo.Length > 8)
-                    errors.Add($"Línea {n}: el código de retención es obligatorio (máx. 8 caracteres).");
-                if (r.Valor < 0 || r.MontoSujeto < 0)
-                    errors.Add($"Línea {n}: los montos de retención no pueden ser negativos.");
+                // Item_Rem y Item_Rem_Exp no informan descuentos ni recargos.
+                if (linea.DescuentoMonto != 0 || linea.DescuentoPorcentaje is not (null or 0) || linea.RecargoMonto != 0)
+                    v.Error(c, "Los remitos no admiten descuentos ni recargos por línea.");
+            }
+            else
+            {
+                v.Monto($"{c}.DescuentoMonto", linea.DescuentoMonto);
+                v.Monto($"{c}.RecargoMonto", linea.RecargoMonto);
+                if (linea.DescuentoPorcentaje is < 0 or > 100)
+                    v.Error($"{c}.DescuentoPorcentaje", "Debe estar entre 0 y 100.");
+            }
+
+            // Con cantidad, precio y ajustes en rango, el monto de la línea no puede desbordar.
+            if (conPrecio && v.Errores.Count == errores)
+            {
+                if (linea.DescuentoEfectivo > linea.Bruto)
+                    v.Error($"{c}.DescuentoMonto", "No puede superar Cantidad × PrecioUnitario.");
+                else if (linea.MontoTotal > Validacion.MontoMaximo)
+                    v.Error(c, "El monto de la línea supera el máximo del formato CFE (15 dígitos enteros).");
+            }
+
+            if (linea.Codigos.Count > 5)
+                v.Error($"{c}.Codigos", "Admite hasta 5 códigos.");
+            for (int j = 0; j < linea.Codigos.Count; j++)
+            {
+                v.Texto($"{c}.Codigos[{j}].Tipo", linea.Codigos[j].Tipo, 10, obligatorio: true);
+                v.Texto($"{c}.Codigos[{j}].Codigo", linea.Codigos[j].Codigo, 35, obligatorio: true);
+            }
+
+            if (!remito && !Tipo.EsExportacion() && !Enum.IsDefined(linea.IndFactIva))
+                v.Error($"{c}.IndFactIva", "No es válido.");
+            if (linea.Retenciones.Count > 0)
+                v.Error($"{c}.Retenciones", "Solo se informan en el e-Resguardo.");
+        }
+    }
+
+    private void ValidarRetenciones(Validacion v)
+    {
+        for (int i = 0; i < Detalle.Count; i++)
+        {
+            var linea = Detalle[i];
+            var c = $"{nameof(Detalle)}[{i}]";
+            if (linea.Retenciones.Count is < 1 or > 5)
+                v.Error($"{c}.Retenciones", "El e-Resguardo requiere de 1 a 5 retenciones/percepciones por línea.");
+
+            for (int j = 0; j < linea.Retenciones.Count; j++)
+            {
+                var r = linea.Retenciones[j];
+                var cr = $"{c}.Retenciones[{j}]";
+                v.Texto($"{cr}.Codigo", r.Codigo, 8, obligatorio: true);
+                v.Monto($"{cr}.MontoSujeto", r.MontoSujeto);
+                v.Monto($"{cr}.Valor", r.Valor);
                 if (r.Tasa is < 0 or > 100)
-                    errors.Add($"Línea {n}: la tasa de retención debe estar entre 0 y 100.");
-                if (r.InfoAdicional is { Length: > 150 })
-                    errors.Add($"Línea {n}: InfoAdicional de la retención admite hasta 150 caracteres.");
+                    v.Error($"{cr}.Tasa", "Debe estar entre 0 y 100.");
+                v.Texto($"{cr}.InfoAdicional", r.InfoAdicional, 150);
             }
         }
 
         if (Detalle.SelectMany(l => l.Retenciones).Select(r => r.Codigo).Distinct().Count() > 20)
-            errors.Add("El e-Resguardo admite hasta 20 códigos de retención distintos.");
-        if (total == 0 && Detalle.Count > 0)
-            errors.Add("El e-Resguardo debe informar al menos una retención/percepción.");
+            v.Error(nameof(Detalle), "El e-Resguardo admite hasta 20 códigos de retención distintos.");
     }
 
-    private void ValidarReceptor(List<string> errors, FamiliaCfe familia)
+    private void ValidarReferencias(Validacion v, DateOnly fechaEmision)
     {
-        if (Tipo.RequiereReceptor() && Receptor is null)
+        var nota = Tipo.EsNotaCorreccion();
+        if (nota && Referencias.Count == 0)
+            v.Error(nameof(Referencias), "Las notas de crédito y débito deben referenciar al menos un CFE.");
+        if (Referencias.Count > 40)
+            v.Error(nameof(Referencias), "Admite hasta 40 referencias.");
+
+        for (int i = 0; i < Referencias.Count; i++)
         {
-            errors.Add(familia == FamiliaCfe.Resguardo
-                ? "El e-Resguardo requiere datos del receptor."
-                : "Las e-Facturas requieren datos del receptor.");
+            var r = Referencias[i];
+            var c = $"{nameof(Referencias)}[{i}]";
+            if (!Enum.IsDefined(r.TipoCfe))
+                v.Error($"{c}.TipoCfe", "No es un tipo de CFE soportado.");
+            if (!Validacion.EsSerie(r.Serie))
+                v.Error($"{c}.Serie", "Debe ser una letra, dos letras o un dígito 1-9 y una letra (ej: \"A\").");
+            if (r.NroCfe is < 1 or > 9_999_999)
+                v.Error($"{c}.NroCfe", "Debe estar entre 1 y 9999999.");
+            if (r.FechaCfe > fechaEmision)
+                v.Error($"{c}.FechaCfe", "No puede ser posterior a la fecha de emisión.");
+            else
+                v.Fecha($"{c}.FechaCfe", r.FechaCfe);
+            v.Texto($"{c}.Razon", r.Razon, 90);
+
+            // Desde el formato CFE v25.01 las notas informan monto y moneda del CFE referenciado (F-C8 y F-C9).
+            if (r.MontoCfeRef is { } monto)
+                v.Monto($"{c}.MontoCfeRef", monto);
+            else if (nota)
+                v.Error($"{c}.MontoCfeRef", "Es obligatorio en las notas de crédito y débito (formato CFE v25.01).");
+            if (r.MonedaCfeRef is { } moneda && !Enum.IsDefined(moneda))
+                v.Error($"{c}.MonedaCfeRef", "No es válida.");
+            else if (r.MonedaCfeRef is null && nota)
+                v.Error($"{c}.MonedaCfeRef", "Es obligatoria en las notas de crédito y débito (formato CFE v25.01).");
+            if (r.TipoCambioCfeRef is { } tipoCambio)
+                v.TipoCambio($"{c}.TipoCambioCfeRef", tipoCambio);
+        }
+    }
+
+    private void ValidarExportacion(Validacion v, FamiliaCfe familia)
+    {
+        var clausulaValida = ClausulaVenta is "N/A"
+            || ClausulaVenta is { Length: >= 1 and <= 3 } && ClausulaVenta.All(char.IsAsciiLetter);
+        if (familia == FamiliaCfe.FacturaExportacion ? !clausulaValida : !string.IsNullOrWhiteSpace(ClausulaVenta) && !clausulaValida)
+            v.Error(nameof(ClausulaVenta), "Es obligatoria en la e-Factura de exportación: de 1 a 3 letras (ej: \"FOB\") o \"N/A\".");
+        if (ViaTransporte is not (1 or 2 or 3 or 9))
+            v.Error(nameof(ViaTransporte), "Es obligatoria en exportación: 1 Marítimo, 2 Aéreo, 3 Terrestre o 9 Otro.");
+
+        var modalidadObligatoria = familia == FamiliaCfe.RemitoExportacion
+            || Tipo is TipoCfe.EFacturaExportacion or TipoCfe.EFacturaExportacionContingencia;
+        if (ModalidadVenta is not (1 or 2 or 3 or 4 or 80 or 90 or 91 or 99) && (modalidadObligatoria || ModalidadVenta is not null))
+            v.Error(nameof(ModalidadVenta), "Debe ser 1, 2, 3, 4, 80, 90, 91 o 99 (obligatoria en la e-Factura y el e-Remito de exportación).");
+    }
+
+    private void ValidarReceptor(Validacion v, FamiliaCfe familia)
+    {
+        if (Receptor is not { } r)
+        {
+            if (Tipo.RequiereReceptor())
+                v.Error(nameof(Receptor), familia == FamiliaCfe.Resguardo
+                    ? "El e-Resguardo requiere los datos del receptor."
+                    : "Las e-Facturas requieren los datos del receptor.");
             return;
         }
 
-        if (Receptor is not { } r)
-            return;
-
-        var conDocumento = !string.IsNullOrWhiteSpace(r.Documento);
+        const string c = nameof(Receptor);
         var pais = string.IsNullOrWhiteSpace(r.CodigoPais) ? "UY" : r.CodigoPais.ToUpperInvariant();
 
-        if (familia == FamiliaCfe.Factura && conDocumento)
+        if (!string.IsNullOrWhiteSpace(r.Documento))
         {
-            if (r.TipoDocumento != TipoDocumentoReceptor.Rut || pais != "UY")
-                errors.Add("El receptor de una e-Factura debe identificarse con un RUT uruguayo.");
-            else if (!Rut.EsValido(r.Documento))
-                errors.Add("El RUT del receptor debe tener 12 dígitos y un dígito verificador válido.");
+            if (familia == FamiliaCfe.Factura && (r.TipoDocumento != TipoDocumentoReceptor.Rut || pais != "UY"))
+                v.Error($"{c}.TipoDocumento", "El receptor de una e-Factura se identifica con un RUT uruguayo.");
+            else if (r.TipoDocumento == TipoDocumentoReceptor.Rut && pais == "UY" && !Rut.EsValido(r.Documento))
+                v.Error($"{c}.Documento", "El RUT debe tener 12 dígitos y un dígito verificador válido.");
+            if (!Enum.IsDefined(r.TipoDocumento))
+                v.Error($"{c}.TipoDocumento", "No es válido.");
+            v.CodigoPais($"{c}.CodigoPais", pais);
+            v.Texto($"{c}.Documento", r.Documento, pais == "UY" ? 12 : 20);
         }
-        else if (conDocumento && r.TipoDocumento == TipoDocumentoReceptor.Rut && pais == "UY" && !Rut.EsValido(r.Documento))
-            errors.Add("El RUT del receptor debe tener 12 dígitos y un dígito verificador válido.");
+        else if (familia == FamiliaCfe.Factura)
+            v.Error($"{c}.Documento", "La e-Factura requiere el RUT del receptor.");
 
-        if (conDocumento && (pais.Length != 2 || !pais.All(char.IsAsciiLetterUpper)))
-            errors.Add("CodigoPais del receptor debe ser un código ISO de 2 letras.");
-        if (conDocumento && r.Documento!.Length > (pais == "UY" ? 12 : 20))
-            errors.Add($"El documento del receptor admite hasta {(pais == "UY" ? 12 : 20)} caracteres.");
-        if (r.RazonSocial is { Length: > 150 })
-            errors.Add("La razón social del receptor admite hasta 150 caracteres.");
-        if (familia == FamiliaCfe.Remito)
-        {
-            if (string.IsNullOrWhiteSpace(r.RazonSocial))
-                errors.Add("El receptor de un e-Remito requiere razón social.");
-            if (string.IsNullOrWhiteSpace(r.Direccion))
-                errors.Add("El receptor de un e-Remito requiere dirección.");
-            if (string.IsNullOrWhiteSpace(r.Ciudad))
-                errors.Add("El receptor de un e-Remito requiere ciudad.");
-        }
-        if (r.Direccion is { Length: > 70 })
-            errors.Add("La dirección del receptor admite hasta 70 caracteres.");
-        if (r.Ciudad is { Length: > 30 } || r.Departamento is { Length: > 30 } || r.Pais is { Length: > 30 })
-            errors.Add("Ciudad, departamento y país del receptor admiten hasta 30 caracteres.");
+        v.Texto($"{c}.RazonSocial", r.RazonSocial, 150, obligatorio: familia == FamiliaCfe.Remito);
+        v.Texto($"{c}.Direccion", r.Direccion, 70, obligatorio: familia == FamiliaCfe.Remito);
+        v.Texto($"{c}.Ciudad", r.Ciudad, 30, obligatorio: familia == FamiliaCfe.Remito);
+        v.Texto($"{c}.Departamento", r.Departamento, 30);
+        v.Texto($"{c}.Pais", r.Pais, 30);
         if (r.CodigoPostal is not null && !(r.CodigoPostal.Length is >= 1 and <= 5 && r.CodigoPostal.All(char.IsAsciiDigit)))
-            errors.Add("CodigoPostal del receptor debe ser numérico de hasta 5 dígitos.");
-        if (r.InfoAdicional is { Length: > 150 })
-            errors.Add("InfoAdicional del receptor admite hasta 150 caracteres.");
-        if (r.CompraId is { Length: > 50 })
-            errors.Add("CompraId del receptor admite hasta 50 caracteres.");
-        if (r.LugarDestinoEntrega is { Length: > 100 })
-            errors.Add("LugarDestinoEntrega admite hasta 100 caracteres.");
+            v.Error($"{c}.CodigoPostal", "Debe ser numérico, de hasta 5 dígitos.");
+        v.Texto($"{c}.InfoAdicional", r.InfoAdicional, 150);
+        v.Texto($"{c}.CompraId", r.CompraId, 50);
+        v.Texto($"{c}.LugarDestinoEntrega", r.LugarDestinoEntrega, 100);
     }
 
-    private void ValidarMandante(List<string> errors)
+    private void ValidarMandante(Validacion v)
     {
         if (Mandante is not { } m)
         {
-            errors.Add("Las ventas por cuenta ajena requieren los datos del mandante (Mandante).");
+            v.Error(nameof(Mandante), "Las ventas por cuenta ajena requieren los datos del mandante.");
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(m.Documento) || m.Documento.Length > 20)
-            errors.Add("Mandante.Documento es obligatorio (máx. 20 caracteres).");
-        if (string.IsNullOrWhiteSpace(m.Nombre) || m.Nombre.Length > 150)
-            errors.Add("Mandante.Nombre es obligatorio (máx. 150 caracteres).");
-        if (m.CodigoPais is not { Length: 2 } || !m.CodigoPais.All(char.IsAsciiLetterUpper))
-            errors.Add("Mandante.CodigoPais debe ser un código ISO de 2 letras.");
+        v.Texto("Mandante.Documento", m.Documento, 20, obligatorio: true);
+        v.Texto("Mandante.Nombre", m.Nombre, 150, obligatorio: true);
+        v.CodigoPais("Mandante.CodigoPais", m.CodigoPais?.ToUpperInvariant());
+        if (!Enum.IsDefined(m.TipoDocumento))
+            v.Error("Mandante.TipoDocumento", "No es válido.");
     }
 
-    private void ValidarDescuentosYMedios(List<string> errors, FamiliaCfe familia)
+    private void ValidarDescuentosYMedios(Validacion v, FamiliaCfe familia)
     {
         var sinZona = familia is FamiliaCfe.Remito or FamiliaCfe.RemitoExportacion or FamiliaCfe.Resguardo;
 
         if (sinZona && DescuentosRecargos.Count > 0)
-            errors.Add("Los remitos y resguardos no admiten descuentos/recargos globales.");
+            v.Error(nameof(DescuentosRecargos), "Los remitos y resguardos no admiten descuentos ni recargos globales.");
         if (sinZona && MediosPago.Count > 0)
-            errors.Add("Los remitos y resguardos no admiten medios de pago.");
+            v.Error(nameof(MediosPago), "Los remitos y resguardos no admiten medios de pago.");
 
         if (DescuentosRecargos.Count > 20)
-            errors.Add("Se admiten hasta 20 descuentos/recargos globales.");
+            v.Error(nameof(DescuentosRecargos), "Admite hasta 20 descuentos o recargos globales.");
         for (int i = 0; i < DescuentosRecargos.Count; i++)
         {
             var d = DescuentosRecargos[i];
-            var n = i + 1;
+            var c = $"{nameof(DescuentosRecargos)}[{i}]";
             if (d.Monto <= 0)
-                errors.Add($"Descuento/recargo {n}: el monto debe ser mayor a cero.");
-            if (string.IsNullOrWhiteSpace(d.Glosa) || d.Glosa.Length > 100)
-                errors.Add($"Descuento/recargo {n}: la glosa es obligatoria (máx. 100 caracteres).");
+                v.Error($"{c}.Monto", "Debe ser mayor a cero.");
+            else
+                v.Monto($"{c}.Monto", d.Monto);
+            v.Texto($"{c}.Glosa", d.Glosa, 100, obligatorio: true);
             if (d.Codigo is < 0 or > 999)
-                errors.Add($"Descuento/recargo {n}: el código debe tener hasta 3 dígitos.");
+                v.Error($"{c}.Codigo", "Debe tener hasta 3 dígitos.");
+            if (!Enum.IsDefined(d.Tipo))
+                v.Error($"{c}.Tipo", "No es válido.");
             if (!Enum.IsDefined(d.IndFact))
-                errors.Add($"Descuento/recargo {n}: IndFact no es válido.");
+                v.Error($"{c}.IndFact", "No es válido.");
         }
 
         if (MediosPago.Count > 40)
-            errors.Add("Se admiten hasta 40 medios de pago.");
+            v.Error(nameof(MediosPago), "Admite hasta 40 medios de pago.");
         for (int i = 0; i < MediosPago.Count; i++)
         {
             var m = MediosPago[i];
-            var n = i + 1;
-            if (string.IsNullOrWhiteSpace(m.Glosa) || m.Glosa.Length > 100)
-                errors.Add($"Medio de pago {n}: la glosa es obligatoria (máx. 100 caracteres).");
+            var c = $"{nameof(MediosPago)}[{i}]";
+            v.Texto($"{c}.Glosa", m.Glosa, 100, obligatorio: true);
             if (m.Codigo is < 0 or > 999)
-                errors.Add($"Medio de pago {n}: el código debe tener hasta 3 dígitos.");
+                v.Error($"{c}.Codigo", "Debe tener hasta 3 dígitos.");
             if (m.Orden is < 0 or > 99)
-                errors.Add($"Medio de pago {n}: el orden debe tener hasta 2 dígitos.");
+                v.Error($"{c}.Orden", "Debe tener hasta 2 dígitos.");
+            v.Monto($"{c}.Valor", m.Valor, admiteNegativo: true);
+        }
+    }
+
+    private void ValidarTotales(Validacion v, FamiliaCfe familia, decimal? topeMontoNetoSinReceptor)
+    {
+        var t = CalcularTotales();
+
+        if (familia == FamiliaCfe.Resguardo)
+        {
+            if (t.MontoRetenido > Validacion.MontoMaximo)
+                v.Error(nameof(Detalle), "El total retenido supera el máximo del formato CFE (15 dígitos enteros).");
+            return;
+        }
+
+        // Las líneas no pueden quedar negativas: solo un descuento global puede dejar una base negativa.
+        if (t.MontoTotal < 0 || t.MontoNetoExento < 0 || t.MontoNetoSuspendido < 0 || t.MontoNetoMinimo < 0 || t.MontoNetoBasico < 0)
+            v.Error(nameof(DescuentosRecargos), "Los descuentos globales superan la base de su tipo de IVA.");
+        else if (t.MontoTotal > Validacion.MontoMaximo)
+            v.Error(nameof(Detalle), "El total del comprobante supera el máximo del formato CFE (15 dígitos enteros).");
+
+        if (topeMontoNetoSinReceptor is { } tope && familia == FamiliaCfe.Ticket && !Tipo.EsCuentaAjena()
+            && string.IsNullOrWhiteSpace(Receptor?.Documento))
+        {
+            var netoPesos = t.MontoNeto * (Moneda == Moneda.PesoUruguayo ? 1m : TipoCambio ?? 1m);
+            if (netoPesos > tope)
+                v.Error($"{nameof(Receptor)}.Documento",
+                    $"El e-Ticket supera el tope de monto neto sin identificar al receptor ({CfeFormat.MonetaryPdf(tope)} pesos): informe su documento.");
         }
     }
 }

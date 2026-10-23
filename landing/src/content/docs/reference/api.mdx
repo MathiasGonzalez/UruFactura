@@ -16,28 +16,29 @@ El cliente. Es thread-safe: registralo como singleton (como `IUruFacturaClient` 
 ```csharp
 public UruFacturaClient(
     UruFacturaConfig config,
-    IUruFacturaStore? store = null,      // por defecto InMemoryStore
+    IUruFacturaStore? store = null,      // obligatorio en Producción; en Homologación, por defecto InMemoryStore
     HttpClient? httpClient = null,       // p. ej. de IHttpClientFactory
     IDgiClient? dgiClient = null,        // transporte propio (tests, proxy)
     TimeProvider? reloj = null)          // reloj de las fechas fiscales
 ```
 
-Valida la configuración (`UruFacturaException`) y carga el certificado (`FirmaDigitalException`). Con un `httpClient` propio, su handler debe tener el certificado de cliente TLS y la validación del servidor configurados; no se combina con `dgiClient`.
+Valida la configuración (`UruFacturaException`, también si falta el almacenamiento en Producción) y carga el certificado (`FirmaDigitalException`). Con un `httpClient` propio, su handler debe tener el certificado de cliente TLS y la validación del servidor configurados; no se combina con `dgiClient`.
 
 ### Métodos
 
 | Método | Descripción |
 |--------|-------------|
-| `Task RegistrarCaeAsync(Cae cae, CancellationToken ct = default)` | Registra un CAE (o actualiza uno existente: mismo tipo, serie y comienzo de rango). Lo valida: `CaeException` si los datos no son correctos |
+| `Task RegistrarCaeAsync(Cae cae, CancellationToken ct = default)` | Registra un CAE (o actualiza uno existente: mismo tipo, serie y comienzo de rango). `CaeException` si los datos no son correctos o el rango se superpone con otro CAE del mismo tipo y serie |
+| `Task EliminarCaeAsync(Cae cae, CancellationToken ct = default)` | Quita un CAE registrado por error que todavía no numeró ningún CFE (`CaeException` si no existe o ya se usó) |
 | `Task<IReadOnlyList<Cae>> ObtenerCaesAsync(CancellationToken ct = default)` | Los CAE con su último número usado |
 | `Task<IReadOnlyList<string>> ObtenerAdvertenciasCaeAsync(int diasAlertaVencimiento = 7, decimal porcentajeAlertaUso = 80m, CancellationToken ct = default)` | CAE vencidos, agotados, por vencer o con el rango casi usado |
-| `IReadOnlyList<string> Validar(Cfe cfe)` | Errores que impedirían emitir (vacía si es válido). No reserva números |
-| `Task<CfeEmitido> EmitirAsync(Cfe cfe, CancellationToken ct = default)` | Valida (`CfeValidationException`, sin consumir números), reserva el próximo número del CAE vigente (`CaeException` si no hay), genera el XML, lo firma y lo registra en el almacenamiento. No envía |
-| `Task<AcuseSobre> EnviarAsync(CfeEmitido cfe, CancellationToken ct = default)` | Envía el CFE en un sobre `EnvioCFE`. El acuse indica si la DGI **recibió el sobre** |
+| `IReadOnlyList<ErrorValidacion> Validar(Cfe cfe)` | Errores que impedirían emitir, con el campo de cada uno (vacía si es válido). No numera |
+| `Task<CfeEmitido> EmitirAsync(Cfe cfe, CancellationToken ct = default)` | Valida (`CfeValidationException`), toma el próximo número del CAE vigente (`CaeException` si no hay), genera el XML, lo firma y lo registra junto con el número en una operación atómica: si algo falla, no se consume ningún número. `CfeDuplicadoException` si ya se emitió uno del mismo tipo con el mismo `NroInterno`. No envía |
+| `Task<AcuseSobre> EnviarAsync(CfeEmitido cfe, CancellationToken ct = default)` | Envía el CFE en un sobre `EnvioCFE`. El acuse indica si la DGI **recibió el sobre**. `InvalidOperationException` si el CFE ya fue recibido o tiene resultado (no se reenvía) |
 | `Task<AcuseSobre> EnviarAsync(IReadOnlyCollection<CfeEmitido> cfes, CancellationToken ct = default)` | De 1 a 250 CFE en un sobre |
-| `Task<EstadoEnvio> ConsultarEnvioAsync(AcuseSobre acuse, CancellationToken ct = default)` | Resultado de cada comprobante del sobre; actualiza su `EstadoDgi` y lo guarda. `InvalidOperationException` si el sobre no fue recibido |
+| `Task<EstadoEnvio> ConsultarEnvioAsync(AcuseSobre acuse, CancellationToken ct = default)` | Resultado de cada comprobante del sobre (por tipo, serie y número o, si la DGI no los informa, por `Nro_ordinal`); actualiza su `EstadoDgi` y lo guarda. `InvalidOperationException` si el sobre no fue recibido |
 | `Task<EstadoComprobante> ConsultarCfeAsync(CfeEmitido cfe, CancellationToken ct = default)` | Estado de un CFE (servicio `ws_consultas`); actualiza su `EstadoDgi` y lo guarda |
-| `Task<AcuseReporte> EnviarReporteDiarioAsync(DateOnly fecha, int secEnvio = 0, CancellationToken ct = default)` | Reporte diario firmado con los CFE emitidos en la fecha, tomados del almacenamiento. `secEnvio` 0 el primero, 1 si se reenvía, … |
+| `Task<AcuseReporte> EnviarReporteDiarioAsync(DateOnly fecha, int secEnvio = 1, CancellationToken ct = default)` | Reporte diario firmado con los CFE emitidos en la fecha, tomados del almacenamiento. `secEnvio` 1 el primero; para corregir uno ya recibido, la secuencia anterior + 1 |
 
 ---
 
@@ -55,7 +56,7 @@ public sealed record UruFacturaConfig
     public string? UrlEnvio { get; init; }                  // obligatoria en Producción
     public string? UrlConsultas { get; init; }              // obligatoria en Producción
     public TimeSpan Timeout { get; init; }                  // default: 30 s
-    public bool OmitirValidacionSsl { get; init; }          // default: false; nunca en Producción
+    public bool OmitirValidacionSsl { get; init; }          // default: false; en Producción no es válida
     public decimal? ValorUnidadIndexada { get; init; }      // activa el tope de 5.000 UI de los e-Tickets
 
     public IReadOnlyList<string> Validar();                 // errores (vacía si es válida)
@@ -71,7 +72,7 @@ public sealed record UruFacturaConfig
 | `Rut` | `string` | 12 dígitos con dígito verificador válido |
 | `RazonSocial` | `string` | Hasta 150 caracteres |
 | `DomicilioFiscal`, `Ciudad`, `Departamento` | `string` | Hasta 70 / 30 / 30 caracteres |
-| `NombreComercial`, `Giro` | `string?` | Hasta 30 / 100 |
+| `NombreComercial`, `Giro` | `string?` | Hasta 30 / 100 caracteres |
 | `CodigoSucursal` | `int` | `CdgDGISucur` (1-9999, default 1) |
 | `Sucursal` | `string?` | `EmiSucursal` (hasta 20) |
 | `Telefonos` | `IReadOnlyList<string>` | Hasta 2 |
@@ -82,7 +83,7 @@ public sealed record UruFacturaConfig
 
 ## Modelos del comprobante
 
-Records inmutables: se arman con inicializadores y se modifican con `with`. Las colecciones son `IReadOnlyList<T>` y se asignan con `[ … ]`.
+Records inmutables: se arman con inicializadores y se modifican con `with`. Las colecciones son `IReadOnlyList<T>` y se asignan con `[ … ]`; `EmitirAsync` las copia, así que cambiar después una lista propia no altera lo emitido.
 
 ### `Cfe`
 
@@ -101,26 +102,35 @@ public sealed record Cfe(TipoCfe Tipo)
 | `ClausulaVenta`, `ModalidadVenta`, `ViaTransporte` | `string?`, `int?`, `int?` | Datos de exportación |
 | `FormaPago` | `FormaPago` | `Contado` (default) o `Credito` |
 | `Moneda` / `TipoCambio` | `Moneda` / `decimal?` | `TipoCambio` es obligatorio si la moneda no es el peso |
-| `NroInterno`, `InfoAdicional` | `string?` | Hasta 50 / 150 caracteres |
+| `NroInterno` | `string?` | Hasta 50 caracteres. Identifica el comprobante en tu sistema: no se emiten dos del mismo tipo con el mismo valor (`CfeDuplicadoException`) |
+| `InfoAdicional` | `string?` | Hasta 150 caracteres |
 | `FechaVencimiento` | `DateOnly?` | Vencimiento del pago |
 | `Detalle` | `IReadOnlyList<LineaDetalle>` | Al menos una línea |
 | `DescuentosRecargos` | `IReadOnlyList<DescuentoRecargoGlobal>` | Hasta 20; cambian la base del IVA |
 | `MediosPago` | `IReadOnlyList<MedioPago>` | Hasta 40 |
 | `Referencias` | `IReadOnlyList<RefCfe>` | Obligatorias en las notas (hasta 40) |
 
-`Totales CalcularTotales()` calcula los totales (IVA mínimo 10 %, básico 22 %) con la precisión del XML.
+`Totales CalcularTotales()` calcula los totales (IVA a `Totales.TasaIvaMinima` y `Totales.TasaIvaBasica`: 10 % y 22 %) con la precisión del XML.
+
+### `ErrorValidacion`
+
+```csharp
+public sealed record ErrorValidacion(string Campo, string Mensaje);   // ToString(): "Campo: Mensaje"
+```
+
+`Campo` es la ruta de la propiedad dentro del `Cfe` (`Detalle[0].PrecioUnitario`, `Receptor.Documento`, `Referencias[1].Serie`, …), para mostrar el error junto al dato. Todo CFE sin errores produce un XML válido contra los XSD de la DGI.
 
 ### `LineaDetalle`
 
 | Propiedad | Tipo | Descripción |
 |-----------|------|-------------|
 | `NombreItem` | `string` | Hasta 80 caracteres (obligatorio salvo en e-Resguardo) |
-| `Cantidad` | `decimal` | Mayor a cero (3 decimales en el XML) |
-| `PrecioUnitario` | `decimal` | Sin IVA (6 decimales). Los remitos no llevan precio |
+| `Cantidad` | `decimal` | Mayor a cero (3 decimales en el XML; hasta 14 enteros) |
+| `PrecioUnitario` | `decimal` | Sin IVA (6 decimales; hasta 11 enteros). Los remitos no llevan precio |
 | `IndFactIva` | `TipoIva` | Default `Basico`; en exportación se informa `IndFact` 10 |
 | `UnidadMedida` | `string?` | Hasta 4 caracteres; si se omite, `N/A` |
 | `Descripcion` | `string?` | Hasta 1000 caracteres |
-| `DescuentoMonto`, `DescuentoPorcentaje`, `RecargoMonto` | `decimal`, `decimal?`, `decimal` | El monto tiene prioridad sobre el porcentaje |
+| `DescuentoMonto`, `DescuentoPorcentaje`, `RecargoMonto` | `decimal`, `decimal?`, `decimal` | No negativos; el descuento no supera Cantidad × Precio y el monto tiene prioridad sobre el porcentaje. No aplican a remitos |
 | `Codigos` | `IReadOnlyList<CodigoItem>` | Hasta 5 (`Tipo`, `Codigo`) |
 | `Retenciones` | `IReadOnlyList<RetencionPercepcion>` | Solo e-Resguardo, de 1 a 5 (`Codigo`, `Tasa`, `MontoSujeto`, `Valor`, `InfoAdicional`) |
 | `MontoTotal` | `decimal` | *(calculado)* Cantidad × Precio − Descuento + Recargo |
@@ -133,7 +143,7 @@ Las líneas se numeran por su posición.
 |-----------|------|-------------|
 | `Documento` | `string?` | En e-Factura, un RUT uruguayo válido |
 | `TipoDocumento` | `TipoDocumentoReceptor` | Default `Rut` |
-| `CodigoPais` | `string` | ISO alfa-2 (default `UY`); si no es `UY`, se informa como documento extranjero |
+| `CodigoPais` | `string` | ISO alfa-2 de la lista de la DGI (default `UY`); si no es `UY`, se informa como documento extranjero |
 | `RazonSocial`, `Direccion`, `Ciudad`, `Departamento`, `Pais` | `string?` | En e-Remito, razón social, dirección y ciudad son obligatorias |
 | `CodigoPostal`, `InfoAdicional`, `CompraId`, `LugarDestinoEntrega` | `string?` | Opcionales |
 
@@ -141,17 +151,17 @@ Las líneas se numeran por su posición.
 
 | Modelo | Propiedades |
 |--------|-------------|
-| `RefCfe` | `TipoCfe`, `Serie`, `NroCfe`, `FechaCfe` (`DateOnly`), `MontoCfeRef` y `MonedaCfeRef` (obligatorios en notas), `TipoCambioCfeRef`, `Razon` |
+| `RefCfe` | `TipoCfe`, `Serie`, `NroCfe` (1-9999999), `FechaCfe` (`DateOnly`, no posterior a la emisión), `MontoCfeRef` y `MonedaCfeRef` (obligatorios en notas), `TipoCambioCfeRef`, `Razon` (hasta 90) |
 | `Mandante` | `TipoDocumento`, `CodigoPais` (default `UY`), `Documento`, `Nombre` |
 | `DescuentoRecargoGlobal` | `Tipo` (`Descuento`/`Recargo`), `Glosa`, `Monto` (sin IVA), `IndFact` (base de IVA), `Codigo` |
 | `MedioPago` | `Glosa`, `Valor`, `Codigo`, `Orden` |
-| `Totales` | `MontoNetoExento`, `MontoNetoSuspendido`, `MontoNetoMinimo`, `MontoNetoBasico`, `IvaMinimo`, `IvaBasico`, `MontoExportacion`, `MontoTotal`, `MontoRetenido`, `MontoNeto` |
+| `Totales` | `MontoNetoExento`, `MontoNetoSuspendido`, `MontoNetoMinimo`, `MontoNetoBasico`, `IvaMinimo`, `IvaBasico`, `MontoExportacion`, `MontoTotal`, `MontoRetenido`, `MontoNeto`; constantes `TasaIvaMinima` (10) y `TasaIvaBasica` (22) |
 
 ---
 
 ## `CfeEmitido`
 
-El resultado de `EmitirAsync`. Los datos fiscales son inmutables; el estado ante la DGI se actualiza al enviar y consultar.
+El resultado de `EmitirAsync`. Los datos fiscales son inmutables; el estado ante la DGI lo actualiza el cliente al enviar y consultar (desde afuera solo se fija al construirlo, por ejemplo en un almacenamiento propio).
 
 | Propiedad | Tipo | Descripción |
 |-----------|------|-------------|
@@ -164,8 +174,9 @@ El resultado de `EmitirAsync`. Los datos fiscales son inmutables; el estado ante
 | `CodigoSeguridad` | `string` | `DigestValue` de la firma; los primeros 6 caracteres se imprimen |
 | `UrlQr` | `string` | Contenido del código QR |
 | `IdReceptorDgi`, `TokenDgi` | `string?` | Sobre en que se envió |
-| `EstadoDgi`, `MensajeDgi` | `string?` | `AE`, `BE`, `CE`, `FE` y sus motivos; `null` sin resultado |
-| `AceptadoPorDgi`, `Enviado` | `bool` | `EstadoDgi == "AE"` / se envió en un sobre recibido |
+| `EstadoDgi` | `EstadoCfe?` | `Aceptado` (`AE`), `Rechazado` (`BE`), `Observado` (`CE`) o `Reliquidado` (`FE`); `null` sin resultado |
+| `MensajeDgi` | `string?` | Motivos del estado, o el mensaje del rechazo del sobre |
+| `AceptadoPorDgi`, `Enviado` | `bool` | `EstadoDgi == EstadoCfe.Aceptado` / se envió en un sobre recibido |
 
 ## `Cae`
 
@@ -176,7 +187,8 @@ El resultado de `EmitirAsync`. Los datos fiscales son inmutables; el estado ante
 | `RangoDesde`, `RangoHasta` | `long` | Rango autorizado (1-9999999) |
 | `FechaVencimiento` | `DateOnly` | |
 | `UltimoNroUsado` | `long` | Lo actualiza el almacenamiento al numerar |
-| `EsVigente`, `Disponibles`, `PorcentajeUso` | | *(calculados)* |
+| `Disponibles`, `PorcentajeUso` | | *(calculados)* |
+| `EsVigenteEn(DateOnly fecha)` | `bool` | Si sigue vigente en la fecha (en general, `HoraUruguay.Hoy()`) |
 
 ---
 
@@ -184,10 +196,10 @@ El resultado de `EmitirAsync`. Los datos fiscales son inmutables; el estado ante
 
 | Tipo | Propiedades |
 |------|-------------|
-| `AcuseSobre` | `Estado` (`AS`/`BS`/`BA`), `Recibido`, `Mensaje`, `Motivos`, `IdReceptor`, `Token`, `ConsultarDesde`, `Comprobantes` (los `CfeEmitido` del sobre), `XmlRespuesta` |
+| `AcuseSobre` | `Estado` (`EstadoSobre`: `Recibido` `AS`, `Rechazado` `BS`, `ArchivoRechazado` `BA`), `Recibido`, `Mensaje`, `Motivos`, `IdReceptor`, `Token`, `ConsultarDesde`, `Comprobantes` (los `CfeEmitido` del sobre, en orden), `XmlRespuesta` |
 | `EstadoEnvio` | `Comprobantes` (`EstadoComprobante`), `Procesado`, `TodosAceptados`, `Mensaje`, `XmlRespuesta` |
-| `EstadoComprobante` | `TipoCfe`, `Serie`, `Numero`, `Estado` (`AE`/`BE`/`CE`/`FE`), `Aceptado`, `Motivos` |
-| `AcuseReporte` | `Estado` (`AR`/`BR`/`BA`), `Recibido`, `Mensaje`, `Motivos`, `IdReceptor`, `Fecha`, `CantidadCfe` |
+| `EstadoComprobante` | `NroOrdinal` (posición en el sobre), `TipoCfe`, `Serie`, `Numero` (opcionales en el acuse), `Estado` (`EstadoCfe`), `Aceptado`, `Motivos` |
+| `AcuseReporte` | `Estado` (`EstadoReporte`: `Recibido` `AR`, `Rechazado` `BR`, `ArchivoRechazado` `BA`), `Recibido`, `Mensaje`, `Motivos`, `IdReceptor`, `Fecha`, `CantidadCfe` |
 
 Ver [Códigos DGI](../dgi-codes/).
 
@@ -198,7 +210,7 @@ Ver [Códigos DGI](../dgi-codes/).
 | Interfaz | Implementaciones | Para qué |
 |----------|------------------|----------|
 | `IUruFacturaClient` | `UruFacturaClient` | Inyección y mocks en tu aplicación |
-| `IUruFacturaStore` | `InMemoryStore` (default), `EfUruFacturaStore<TContext>` | CAE, numeración atómica, número de envío y CFE emitidos |
+| `IUruFacturaStore` | `InMemoryStore` (default en Homologación), `EfUruFacturaStore<TContext>` | CAE, numeración atómica, número de envío y CFE emitidos |
 | `IDgiClient` | SOAP con WS-Security (interno) | Transporte hacia la DGI (tests, proxy) |
 
 <Aside type="note">
@@ -210,13 +222,17 @@ Ver [Códigos DGI](../dgi-codes/).
 ```csharp
 ValueTask GuardarCaeAsync(Cae cae, CancellationToken ct = default);            // upsert; UltimoNroUsado nunca retrocede
 ValueTask<IReadOnlyList<Cae>> ListarCaesAsync(CancellationToken ct = default);
-ValueTask<Cae?> ReservarNumeroAsync(TipoCfe tipo, DateOnly hoy, CancellationToken ct = default);  // atómico
+ValueTask<bool> EliminarCaeAsync(Cae cae, CancellationToken ct = default);     // solo si no numeró nada
+ValueTask<bool> RegistrarEmisionAsync(CfeEmitido emitido, long ultimoNroUsadoLeido, CancellationToken ct = default);
 ValueTask<long> ReservarIdEnvioAsync(CancellationToken ct = default);           // creciente y único entre instancias
-ValueTask GuardarCfesAsync(IReadOnlyCollection<CfeEmitido> cfes, CancellationToken ct = default);
-ValueTask<IReadOnlyList<CfeEmitido>> ListarCfesAsync(DateOnly fechaEmision, CancellationToken ct = default);
+ValueTask GuardarCfesAsync(IReadOnlyCollection<CfeEmitido> cfes, CancellationToken ct = default);   // estado ante la DGI
+ValueTask<IReadOnlyList<CfeEmitido>> BuscarCfesAsync(string nroInterno, CancellationToken ct = default);
+IAsyncEnumerable<CfeEmitido> ListarCfesAsync(DateOnly fechaEmision, CancellationToken ct = default);  // de a uno
 ```
 
-`InMemoryStore.DiasRetencionCfe` (default 7) limita cuántos días de CFE conserva. `EfUruFacturaStore` reserva con compare-and-swap y reintenta hasta `MaxIntentos` (default 100); sus entidades (`CaeEntity`, `CfeEntity` con `ToCfeEmitido()`) son públicas para consultas propias.
+`RegistrarEmisionAsync` es la numeración: avanza el CAE del CFE a su número **y** guarda el CFE en una sola operación atómica, siempre que el CAE siga con el `UltimoNroUsado` leído; si otra emisión lo usó antes, devuelve `false` sin guardar nada y el cliente vuelve a numerar. `ListarCfesAsync` lanza `UruFacturaException` si el almacenamiento no tiene completos los CFE de la fecha (para no enviar un reporte diario incompleto).
+
+`InMemoryStore(TimeProvider? reloj = null)` conserva los CFE de los últimos `DiasRetencionCfe` días (default 7, contando desde hoy) y no tiene los anteriores a su creación. `EfUruFacturaStore` hace el `UPDATE` condicional (token de concurrencia) y el `INSERT` en la misma transacción; `MaxIntentos` (default 100) acota la reserva del número de envío. Sus entidades (`CaeEntity`, `CfeEntity` con `ToCfeEmitido()`) son públicas para consultas propias.
 
 ---
 
@@ -225,7 +241,8 @@ ValueTask<IReadOnlyList<CfeEmitido>> ListarCfesAsync(DateOnly fechaEmision, Canc
 | Miembro | Descripción |
 |---------|-------------|
 | `CfePdf.GenerarA4(emitido)`, `GenerarTermico(emitido)`, `GenerarQr(emitido)` | Representación impresa (paquete `UruFactura.Pdf`) |
-| `FirmaDigital.Verificar(string xml)` | Verifica la firma de un CFE (por ejemplo, de un proveedor) |
+| `FirmaDigital.VerificarFirma(string xml)` | Verifica la firma de un CFE (por ejemplo, de un proveedor) y devuelve el certificado firmante, o `null` si no es válida. Comprobá que el certificado sea del emisor: la firma sola no lo prueba |
+| `moneda.CodigoIso()` | Código ISO 4217 de la moneda (`UYU`, `USD`, `EUR`) |
 | `Rut.EsValido(string? rut)` | 12 dígitos y dígito verificador (módulo 11) correcto |
 | `HoraUruguay.Hoy()` / `Ahora()` | Fecha y hora de Uruguay (UTC−03:00): usalas en lugar de `DateTime.Today` / `Now` |
 
@@ -239,6 +256,9 @@ ValueTask<IReadOnlyList<CfeEmitido>> ListarCfesAsync(DateOnly fechaEmision, Canc
 | `TipoIva` | `Exento` (1), `Minimo` (2, 10 %), `Basico` (3, 22 %), `Suspendido` (4) |
 | `TipoDocumentoReceptor` | `Rut` (2), `CedulaIdentidad` (3), `Otro` (4), `Pasaporte` (5), `Dni` (6), `Nife` (7) |
 | `Moneda` | `PesoUruguayo`, `DolarAmericano`, `Euro` |
+| `EstadoCfe` | `Aceptado` (`AE`), `Rechazado` (`BE`), `Observado` (`CE`), `Reliquidado` (`FE`) |
+| `EstadoSobre` | `Recibido` (`AS`), `Rechazado` (`BS`), `ArchivoRechazado` (`BA`) |
+| `EstadoReporte` | `Recibido` (`AR`), `Rechazado` (`BR`), `ArchivoRechazado` (`BA`) |
 | `FormaPago` | `Contado`, `Credito` |
 | `IndTraslado` | `TrasladoPropio`, `TrasladoEnComision`, `Devolucion`, `TrasladoPorVenta`, `TrasladoEnConsignacion`, `TrasladoPorExposicion` |
 | `TipoMovimientoGlobal` | `Descuento`, `Recargo` |
@@ -251,9 +271,10 @@ ValueTask<IReadOnlyList<CfeEmitido>> ListarCfesAsync(DateOnly fechaEmision, Canc
 
 | Excepción | Cuándo |
 |-----------|--------|
-| `UruFacturaException` | Base; configuración inválida, sobre fuera de 1-250 CFE |
-| `CfeValidationException` | El CFE no es válido (`Errors`) |
-| `CaeException` | CAE inválido al registrarlo, o no hay CAE vigente con números |
+| `UruFacturaException` | Base; configuración inválida, Producción sin almacenamiento, sobre fuera de 1-250 CFE, reporte de una fecha futura o incompleta |
+| `CfeValidationException` | El CFE no es válido (`Errores`, de tipo `ErrorValidacion`); no se consumió ningún número |
+| `CfeDuplicadoException` | Ya se emitió un CFE del mismo tipo con el mismo `NroInterno` que la DGI no rechazó (`Existente`) |
+| `CaeException` | CAE inválido o superpuesto al registrarlo, CAE que no se puede eliminar, o no hay CAE vigente con números |
 | `FirmaDigitalException` | Certificado inexistente, contraseña incorrecta, sin clave privada; falla de firma |
 | `DgiCommunicationException` | Red, timeout, SOAP Fault o HTTP sin acuse (`CodigoRespuesta`, `Respuesta`) |
 | `PdfGenerationException` | Falla del PDF (`UruFactura.Pdf`) |

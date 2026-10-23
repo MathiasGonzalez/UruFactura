@@ -3,16 +3,22 @@ namespace UruFactura;
 /// <summary>Totales de un CFE, en la moneda del comprobante (los calcula <see cref="Cfe.CalcularTotales"/>).</summary>
 public sealed record Totales
 {
+    /// <summary>Tasa mínima de IVA, en porcentaje (<c>IVATasaMin</c>).</summary>
+    public const decimal TasaIvaMinima = 10m;
+
+    /// <summary>Tasa básica de IVA, en porcentaje (<c>IVATasaBasica</c>).</summary>
+    public const decimal TasaIvaBasica = 22m;
+
     /// <summary>Monto neto exento de IVA (<c>MntNoGrv</c>).</summary>
     public decimal MontoNetoExento { get; init; }
 
     /// <summary>Monto neto con IVA en suspenso (<c>MntIVaenSusp</c>).</summary>
     public decimal MontoNetoSuspendido { get; init; }
 
-    /// <summary>Monto neto gravado a la tasa mínima (10%).</summary>
+    /// <summary>Monto neto gravado a la tasa mínima (<see cref="TasaIvaMinima"/>).</summary>
     public decimal MontoNetoMinimo { get; init; }
 
-    /// <summary>Monto neto gravado a la tasa básica (22%).</summary>
+    /// <summary>Monto neto gravado a la tasa básica (<see cref="TasaIvaBasica"/>).</summary>
     public decimal MontoNetoBasico { get; init; }
 
     /// <summary>IVA a la tasa mínima.</summary>

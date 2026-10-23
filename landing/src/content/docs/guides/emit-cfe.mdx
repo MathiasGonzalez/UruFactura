@@ -82,11 +82,35 @@ var notaCredito = await client.EmitirAsync(new Cfe(TipoCfe.NotaCreditoETicket)
 
 ## Validar antes de emitir
 
-`EmitirAsync` valida antes de reservar el número: un CFE inválido lanza `CfeValidationException` (con la lista en `Errors`) sin consumir números. Para revisar sin emitir (por ejemplo, en el validador de un endpoint):
+`EmitirAsync` valida antes de numerar: un CFE inválido lanza `CfeValidationException` (con la lista en `Errores`) sin consumir números. La validación aplica las restricciones de los XSD de la DGI (largos, montos, fechas, series, caracteres de control) y las reglas del formato, así que lo que la pasa produce un XML válido. Para revisar sin emitir (por ejemplo, en el validador de un endpoint):
 
 ```csharp
-IReadOnlyList<string> errores = client.Validar(cfe);
+IReadOnlyList<ErrorValidacion> errores = client.Validar(cfe);
+foreach (var error in errores)
+    Console.WriteLine($"{error.Campo}: {error.Mensaje}");   // p. ej. "Detalle[0].PrecioUnitario: No puede ser negativo."
 ```
+
+`Campo` es la ruta de la propiedad dentro del `Cfe`, para mostrar el error junto al dato en un formulario.
+
+---
+
+## Emitir una sola vez
+
+Si el comprobante corresponde a algo de tu sistema (un pedido, un pago), informá su id en `NroInterno`. Un reintento —por ejemplo, porque el request expiró aunque la emisión se completó— no factura dos veces: `EmitirAsync` lanza `CfeDuplicadoException` con el CFE ya emitido.
+
+```csharp
+CfeEmitido emitido;
+try
+{
+    emitido = await client.EmitirAsync(cfe with { NroInterno = pedido.Id });
+}
+catch (CfeDuplicadoException ex)
+{
+    emitido = ex.Existente;   // ya estaba emitido
+}
+```
+
+La regla es por tipo de comprobante (una nota de crédito puede llevar el mismo `NroInterno` que su factura) y no cuenta los CFE que la DGI rechazó: para corregir uno rechazado se emite otro.
 
 ---
 
@@ -114,13 +138,15 @@ if (!acuse.Recibido)
     return;
 }
 
-// 2) Resultado de cada comprobante: AE aceptado, BE rechazado, CE observado
+// 2) Resultado de cada comprobante: Aceptado (AE), Rechazado (BE), Observado (CE)
 var estado = await client.ConsultarEnvioAsync(acuse);
 foreach (var cfe in acuse.Comprobantes)
     Console.WriteLine($"{cfe}: {cfe.EstadoDgi} {cfe.MensajeDgi}");
 ```
 
 Tras un reinicio (cuando ya no tenés el acuse), `client.ConsultarCfeAsync(emitido)` consulta un comprobante suelto. Las consultas actualizan el estado en el almacenamiento.
+
+Un CFE que la DGI ya recibió o procesó no se reenvía: `EnviarAsync` lanza `InvalidOperationException`, porque la DGI lo trataría como duplicado (y el estado aceptado quedaría tapado por el rechazo del duplicado). Si el **sobre** fue rechazado (`BS`), sí se reenvía el mismo `CfeEmitido`.
 
 ---
 
@@ -146,7 +172,7 @@ try
 }
 catch (CfeValidationException ex)        // el CFE no es válido (no se consumió número)
 {
-    Console.Error.WriteLine(string.Join(Environment.NewLine, ex.Errors));
+    Console.Error.WriteLine(string.Join(Environment.NewLine, ex.Errores));
 }
 catch (CaeException ex)                  // no hay CAE vigente con números para el tipo
 {
@@ -159,7 +185,7 @@ catch (DgiCommunicationException ex)     // red, timeout, SOAP Fault o HTTP sin 
 ```
 
 <Aside type="note">
-  Si el envío falla por comunicación, el CFE ya está emitido y registrado: reintentá `EnviarAsync(emitido)` con el mismo objeto (o recuperándolo del almacenamiento). No lo vuelvas a emitir: consumiría otro número.
+  Si el envío falla por comunicación, el CFE ya está emitido y registrado: no lo vuelvas a emitir (consumiría otro número). Tampoco se sabe si la DGI llegó a recibirlo (un timeout puede ocurrir después de que lo recibió): consultalo con `ConsultarCfeAsync(emitido)` y, si la DGI no lo tiene, reenviá el mismo `CfeEmitido` (o recuperándolo del almacenamiento).
 </Aside>
 
 Ver [Códigos de respuesta DGI](../../reference/dgi-codes/) para la lista completa de estados.

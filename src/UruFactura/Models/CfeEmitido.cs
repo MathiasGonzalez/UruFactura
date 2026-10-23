@@ -97,27 +97,51 @@ public sealed class CfeEmitido
     internal const string UrlConsultaQr = "https://www.efactura.dgi.gub.uy/consultaQR/cfe";
 
     // --- Estado ante la DGI ---
+    // Lo actualiza el cliente al enviar y consultar; un almacenamiento lo restaura al reconstruir el
+    // CFE (inicializadores). Desde afuera no se puede cambiar después: el PDF y el reporte confían en él.
+
+    private string? _idReceptorDgi;
+    private string? _tokenDgi;
+    private EstadoCfe? _estadoDgi;
+    private string? _mensajeDgi;
 
     /// <summary>Número asignado por la DGI al sobre en que se envió (para consultar el resultado).</summary>
-    public string? IdReceptorDgi { get; set; }
+    public string? IdReceptorDgi { get => _idReceptorDgi; init => _idReceptorDgi = value; }
 
     /// <summary>Token del sobre en que se envió (para consultar el resultado).</summary>
-    public string? TokenDgi { get; set; }
+    public string? TokenDgi { get => _tokenDgi; init => _tokenDgi = value; }
 
-    /// <summary>
-    /// Último estado informado por la DGI para el comprobante: <c>AE</c> aceptado, <c>BE</c> rechazado,
-    /// <c>CE</c> observado, <c>FE</c> reliquidado; <c>null</c> mientras no haya resultado.
-    /// </summary>
-    public string? EstadoDgi { get; set; }
+    /// <summary>Último estado informado por la DGI para el comprobante; <c>null</c> mientras no haya resultado.</summary>
+    public EstadoCfe? EstadoDgi { get => _estadoDgi; init => _estadoDgi = value; }
 
-    /// <summary>Motivos o mensaje del último estado.</summary>
-    public string? MensajeDgi { get; set; }
+    /// <summary>Motivos del último estado, o el mensaje del rechazo del sobre.</summary>
+    public string? MensajeDgi { get => _mensajeDgi; init => _mensajeDgi = value; }
 
     /// <summary>Indica si la DGI aceptó el comprobante (<c>AE</c>).</summary>
-    public bool AceptadoPorDgi => EstadoDgi == "AE";
+    public bool AceptadoPorDgi => EstadoDgi == EstadoCfe.Aceptado;
 
     /// <summary>Indica si ya se envió en un sobre recibido por la DGI.</summary>
     public bool Enviado => !string.IsNullOrEmpty(IdReceptorDgi);
+
+    /// <summary>Registra el acuse del sobre en que se envió.</summary>
+    internal void RegistrarEnvio(AcuseSobre acuse)
+    {
+        if (acuse.Recibido)
+        {
+            _idReceptorDgi = acuse.IdReceptor;
+            _tokenDgi = acuse.Token;
+            _mensajeDgi = null;
+        }
+        else
+            _mensajeDgi = acuse.Mensaje;
+    }
+
+    /// <summary>Registra el estado informado por la DGI.</summary>
+    internal void RegistrarEstado(EstadoComprobante estado)
+    {
+        _estadoDgi = estado.Estado;
+        _mensajeDgi = estado.Motivos.Count > 0 ? string.Join("; ", estado.Motivos) : null;
+    }
 
     /// <inheritdoc />
     public override string ToString() => $"{Tipo} {Serie}-{Numero}";

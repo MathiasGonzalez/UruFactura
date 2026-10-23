@@ -40,8 +40,8 @@ public class CfeEntity
     public string? IdReceptorDgi { get; set; }
     public string? TokenDgi { get; set; }
 
-    /// <summary>Último estado informado por la DGI (<c>AE</c>, <c>BE</c>, <c>CE</c>, <c>FE</c>); <c>null</c> sin resultado.</summary>
-    public string? EstadoDgi { get; set; }
+    /// <summary>Último estado informado por la DGI (se guarda como texto: <c>Aceptado</c>, <c>Rechazado</c>, ...); <c>null</c> sin resultado.</summary>
+    public EstadoCfe? EstadoDgi { get; set; }
 
     public string? MensajeDgi { get; set; }
 

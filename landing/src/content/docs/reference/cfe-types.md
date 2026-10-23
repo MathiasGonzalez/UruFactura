@@ -139,4 +139,5 @@ CAE y se resumen en el reporte diario en su propio bloque.
 ## Numeración
 
 Cada tipo de CFE tiene su propio CAE: un CAE de e-Ticket **no puede usarse** para e-Facturas. Registrá uno por tipo
-(y por serie) con `client.RegistrarCaeAsync`; `EmitirAsync` toma el número del CAE vigente del tipo del comprobante.
+(y por serie) con `client.RegistrarCaeAsync`, sin rangos superpuestos dentro de una misma serie; `EmitirAsync` toma el
+número del CAE vigente del tipo del comprobante.

@@ -57,5 +57,6 @@ public sealed record LineaDetalle
     /// </summary>
     public decimal MontoTotal => CfeFormat.Redondear(Bruto - DescuentoEfectivo + CfeFormat.Redondear(RecargoMonto));
 
-    private decimal Bruto => CfeFormat.Redondear(Cantidad, 3) * CfeFormat.Redondear(PrecioUnitario, 6);
+    /// <summary>Cantidad × PrecioUnitario con la precisión del XML.</summary>
+    internal decimal Bruto => CfeFormat.Redondear(Cantidad, 3) * CfeFormat.Redondear(PrecioUnitario, 6);
 }
