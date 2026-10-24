@@ -2,7 +2,7 @@ name: Publish NuGet
 
 on:
   push:
-    branches: [ "main" ]
+    tags: [ "v*" ]
   workflow_dispatch:
 
 jobs:
@@ -26,6 +26,17 @@ jobs:
         id: version
         run: |
           VERSION=$(grep -oP '(?<=<Version>)[^<]+' src/UruFactura/UruFactura.csproj)
+          for csproj in src/UruFactura.Pdf/UruFactura.Pdf.csproj src/UruFactura.EntityFrameworkCore/UruFactura.EntityFrameworkCore.csproj; do
+            OTHER=$(grep -oP '(?<=<Version>)[^<]+' "$csproj")
+            if [ "$OTHER" != "$VERSION" ]; then
+              echo "::error::$csproj tiene la versión $OTHER y UruFactura.csproj $VERSION"
+              exit 1
+            fi
+          done
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+            echo "::error::El tag $GITHUB_REF_NAME no coincide con la versión v$VERSION de los csproj"
+            exit 1
+          fi
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Restore dependencies

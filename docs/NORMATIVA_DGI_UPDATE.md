@@ -97,6 +97,7 @@ Cuando se detecta un cambio que requiere actualización:
    - `docs/CERTIFICACION_DGI.md`: si cambian procesos de homologación
    - `README.md`: si cambia la característica principal (ej: versión del formato)
 8. **Actualizar este runbook**: actualizar la versión implementada en la sección 2.1.
+9. **Publicar**: subir `<Version>` en los tres `.csproj` de `src/` y, ya en `main`, crear el tag `v<versión>` (`git tag v2.0.1 && git push origin v2.0.1`). El workflow `publish.yml` publica en NuGet solo con el tag, y falla si el tag no coincide con las versiones de los `.csproj`.
 
 ---
 
