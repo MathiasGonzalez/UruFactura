@@ -11,6 +11,14 @@ updates:
     directories: ["/src/*", "/tests/*"]
     schedule:
       interval: monthly
+    # Igual que FluentReport: SkiaSharp 4.153 con NativeAssets.Linux.NoDependencies no encuentra
+    # fuentes en Linux y el texto de los PDF sale vacío. Seguir en 3.x hasta una 4.x estable que lo
+    # corrija; ZXing.Net.Bindings.SkiaSharp 0.16.23+ ya exige SkiaSharp 4.
+    ignore:
+      - dependency-name: "SkiaSharp*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "ZXing.Net.Bindings.SkiaSharp"
+        versions: [">= 0.16.23"]
     groups:
       nuget:
         patterns: ["*"]
