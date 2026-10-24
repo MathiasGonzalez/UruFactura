@@ -1,48 +1,10 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
-import { visit } from 'unist-util-visit';
-
-/**
- * Minimal rehype plugin: converts mermaid fenced-code blocks produced by
- * remark-rehype (<code class="language-mermaid">) into <pre class="mermaid">
- * so that the client-side Mermaid.js can pick them up and render them.
- */
-function rehypePreMermaid() {
-  return (tree) => {
-    visit(tree, 'element', (node, index, parent) => {
-      if (
-        node.tagName !== 'code' ||
-        !node.properties?.className?.includes('language-mermaid')
-      ) {
-        return;
-      }
-      const text = node.children
-        .filter((c) => c.type === 'text')
-        .map((c) => c.value)
-        .join('');
-      const pre = {
-        type: 'element',
-        tagName: 'pre',
-        properties: { className: ['mermaid'] },
-        children: [{ type: 'text', value: text }],
-      };
-      // Replace the wrapping <pre><code> pair (or bare <code>) with <pre class="mermaid">
-      if (parent?.tagName === 'pre') {
-        Object.assign(parent, pre);
-      } else {
-        parent?.children?.splice(index, 1, pre);
-      }
-    });
-  };
-}
 
 // https://astro.build/config
 export default defineConfig({
   site: 'https://mathiasgonzalez.github.io',
   base: '/UruFactura',
-  markdown: {
-    rehypePlugins: [rehypePreMermaid],
-  },
   integrations: [
     starlight({
       components: {

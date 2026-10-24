@@ -15,7 +15,7 @@ Esta página reúne los flujos de trabajo principales en formato de diagrama par
 
 Desde la configuración inicial hasta obtener el PDF listo para entregar al cliente.
 
-```mermaid
+<pre class="mermaid">{String.raw`
 flowchart TD
     A([Inicio]) --> B[new UruFacturaClient config\nvalida la config y carga el certificado]
     B --> C[RegistrarCaeAsync\nuna vez por CAE]
@@ -32,13 +32,13 @@ flowchart TD
     L2 -- BE / CE --> N2[❌ emitido.MensajeDgi]
     M --> O[CfePdf.GenerarA4 / GenerarTermico]
     O --> Q([Fin])
-```
+`}</pre>
 
 ---
 
 ## Pipeline interno de EmitirAsync y EnviarAsync
 
-```mermaid
+<pre class="mermaid">{String.raw`
 sequenceDiagram
     participant App as Tu aplicación
     participant Client as UruFacturaClient
@@ -59,13 +59,13 @@ sequenceDiagram
     DGI-->>Client: ACKSobre (AS/BS, IdReceptor, Token)
     Client->>Store: GuardarCfesAsync (IdReceptor y Token)
     Client-->>App: AcuseSobre
-```
+`}</pre>
 
 ---
 
 ## Flujo de firma digital
 
-```mermaid
+<pre class="mermaid">{String.raw`
 flowchart LR
     A[CFE validado y numerado] --> B[Serializar a XML\nesquema DGI]
     B --> C[Calcular digest\nSHA-256 / SHA-1]
@@ -74,13 +74,13 @@ flowchart LR
     E --> F[Adjuntar certificado\nKeyInfo X509]
     F --> G[CfeEmitido.Xml\nCodigoSeguridad = DigestValue]
     G --> H[Sobre EnvioCFE\n+ SOAP firmado con WS-Security]
-```
+`}</pre>
 
 ---
 
 ## Ciclo de vida de un CAE
 
-```mermaid
+<pre class="mermaid">{String.raw`
 stateDiagram-v2
     [*] --> Registrado : RegistrarCaeAsync
     Registrado --> EnUso : EmitirAsync usa el primer número
@@ -94,7 +94,7 @@ stateDiagram-v2
 
     Agotado --> [*] : se usa el siguiente CAE vigente
     Vencido --> [*] : se usa el siguiente CAE vigente
-```
+`}</pre>
 
 <Aside type="tip">
   Monitoreá los CAE con `client.ObtenerAdvertenciasCaeAsync()` y registrá el siguiente antes de que el actual venza o se agote.
@@ -106,7 +106,7 @@ stateDiagram-v2
 
 Pasos necesarios para pasar de cero a emitir en producción.
 
-```mermaid
+<pre class="mermaid">{String.raw`
 flowchart TD
     A([Empresa sin habilitación]) --> B[1. Inscripción\nDGI en línea → Gestión CFE\n→ Inscripción como Emisor Electrónico]
     B --> C{Aprobada?}
@@ -127,7 +127,7 @@ flowchart TD
     O --> H
     N -- Sí --> P[9. Cambiar a Producción\nAmbiente.Produccion]
     P --> Q([✅ Habilitado para emitir en producción])
-```
+`}</pre>
 
 ---
 
@@ -135,7 +135,7 @@ flowchart TD
 
 DGI exige enviar un resumen de todos los CFE emitidos cada día.
 
-```mermaid
+<pre class="mermaid">{String.raw`
 flowchart TD
     A([Fin de la jornada]) --> B{¿Se emitió\nalgún CFE hoy?}
     B -- No --> C[No es obligatorio\npero recomendable enviar\nreporte vacío]
@@ -150,7 +150,7 @@ flowchart TD
     K --> F
     J --> L([Fin del día])
     C --> L
-```
+`}</pre>
 
 <Aside type="caution">
   El Reporte Diario es **obligatorio** incluso si solo emitiste un CFE. No enviarlo puede generar infracciones ante DGI.
@@ -162,7 +162,7 @@ flowchart TD
 
 Las tres costuras públicas son el cliente, el almacenamiento y el transporte a la DGI. Todo lo demás (XML, firma, sobre, reporte) es interno.
 
-```mermaid
+<pre class="mermaid">{String.raw`
 classDiagram
     direction LR
 
@@ -210,4 +210,4 @@ classDiagram
     IUruFacturaStore <|.. InMemoryStore
     IUruFacturaStore <|.. EfUruFacturaStore
     IDgiClient <|.. DgiSoapClient : interno
-```
+`}</pre>
