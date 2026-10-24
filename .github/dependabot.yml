@@ -4,6 +4,16 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: nuget
+    directories: ["/src/*", "/tests/*"]
+    schedule:
+      interval: monthly
+    groups:
+      nuget:
+        patterns: ["*"]
   - package-ecosystem: npm
     directory: /landing
     schedule:
