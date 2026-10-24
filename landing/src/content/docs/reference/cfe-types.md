@@ -5,76 +5,89 @@ description: Referencia de todos los tipos de comprobantes fiscales electrónico
 
 ## Comprobantes soportados
 
-| Código | Nombre | Enum `TipoCfe` | Método de creación | Requiere receptor |
-|--------|--------|----------------|-------------------|------------------|
-| 101 | e-Ticket | `ETicket` | `CrearETicket()` | No |
-| 102 | Nota de Crédito e-Ticket | `NotaCreditoETicket` | `CrearNotaCreditoETicket()` | No |
-| 103 | Nota de Débito e-Ticket | `NotaDebitoETicket` | `CrearNotaDebitoETicket()` | No |
-| 111 | e-Factura | `EFactura` | `CrearEFactura()` | ✅ Sí |
-| 112 | Nota de Crédito e-Factura | `NotaCreditoEFactura` | `CrearNotaCreditoEFactura()` | ✅ Sí |
-| 113 | Nota de Débito e-Factura | `NotaDebitoEFactura` | `CrearNotaDebitoEFactura()` | ✅ Sí |
-| 121 | e-Factura de Exportación | `EFacturaExportacion` | `CrearEFacturaExportacion()` | ✅ Sí |
-| 122 | NC e-Factura de Exportación | `NotaCreditoEFacturaExportacion` | `CrearNotaCreditoEFacturaExportacion()` | ✅ Sí |
-| 123 | ND e-Factura de Exportación | `NotaDebitoEFacturaExportacion` | `CrearNotaDebitoEFacturaExportacion()` | ✅ Sí |
-| 124 | e-Remito de Exportación | `ERemitoExportacion` | `CrearERemitoExportacion()` | Condicional |
-| 181 | e-Remito | `ERemito` | `CrearERemito()` | Condicional |
-| 182 | e-Resguardo | `EResguardo` | `CrearEResguardo()` | ✅ Sí |
-| 131-133 | e-Ticket y notas, cuenta ajena | `ETicketCuentaAjena`… | `Crear(TipoCfe.…)` | No (exige `Mandante`) |
-| 141-143 | e-Factura y notas, cuenta ajena | `EFacturaCuentaAjena`… | `Crear(TipoCfe.…)` | ✅ Sí (exige `Mandante`) |
-| 2xx | Contingencia (CFC) de cada tipo | `ETicketContingencia`… | `Crear(TipoCfe.…)` | Igual que el tipo que sustituye |
+Todos se crean igual: `new Cfe(TipoCfe.X) { … }`, y se emiten con `client.EmitirAsync(cfe)`.
+
+| Código | Nombre | `TipoCfe` | Requiere receptor |
+|--------|--------|-----------|-------------------|
+| 101 | e-Ticket | `ETicket` | No (sí sobre 5.000 UI con `ValorUnidadIndexada`) |
+| 102 | Nota de Crédito e-Ticket | `NotaCreditoETicket` | No |
+| 103 | Nota de Débito e-Ticket | `NotaDebitoETicket` | No |
+| 111 | e-Factura | `EFactura` | ✅ Sí (RUT) |
+| 112 | Nota de Crédito e-Factura | `NotaCreditoEFactura` | ✅ Sí |
+| 113 | Nota de Débito e-Factura | `NotaDebitoEFactura` | ✅ Sí |
+| 121 | e-Factura de Exportación | `EFacturaExportacion` | ✅ Sí |
+| 122 | NC e-Factura de Exportación | `NotaCreditoEFacturaExportacion` | ✅ Sí |
+| 123 | ND e-Factura de Exportación | `NotaDebitoEFacturaExportacion` | ✅ Sí |
+| 124 | e-Remito de Exportación | `ERemitoExportacion` | Condicional |
+| 181 | e-Remito | `ERemito` | Condicional (si se informa: razón social, dirección y ciudad) |
+| 182 | e-Resguardo | `EResguardo` | ✅ Sí |
+| 131-133 | e-Ticket y notas, cuenta ajena | `ETicketCuentaAjena`… | No (exige `Mandante`) |
+| 141-143 | e-Factura y notas, cuenta ajena | `EFacturaCuentaAjena`… | ✅ Sí (exige `Mandante`) |
+| 2xx | Contingencia (CFC) de cada tipo | `ETicketContingencia`… | Igual que el tipo que sustituye |
 
 Los códigos son los del formato CFE de la DGI. **No están soportados:** la e-Boleta de entrada (151-153 y 251-253),
 la adenda y los descuentos/recargos globales en porcentaje (solo en monto). Los e-Remitos no tienen notas de crédito/débito.
+
+`TipoCfeExtensions` clasifica cada tipo: `Familia()`, `EsNotaCorreccion()`, `EsNotaCredito()`, `EsContingencia()`,
+`EsCuentaAjena()`, `EsExportacion()`, `EsRemito()` y `RequiereReceptor()`.
 
 ---
 
 ## Cuándo usar cada tipo
 
 ### e-Ticket (101) — el más común
-Para ventas al consumidor final cuando **no se necesita identificar al comprador**. Es el equivalente electrónico del ticket de caja.
+Para ventas al consumidor final cuando **no se necesita identificar al comprador**.
 
 ```csharp
-var ticket = client.CrearETicket();
+var ticket = new Cfe(TipoCfe.ETicket) { Detalle = [new LineaDetalle { NombreItem = "Café", Cantidad = 2, PrecioUnitario = 90m }] };
 ```
 
 ### e-Factura (111) — con identificación del receptor
 Cuando el comprador es una **empresa o contribuyente** y necesita el documento para deducir IVA o gastos.
 
 ```csharp
-var factura = client.CrearEFactura();
-factura.Receptor = new Receptor { Documento = "...", TipoDocumento = TipoDocumentoReceptor.Rut, ... };
+var factura = new Cfe(TipoCfe.EFactura)
+{
+    Receptor = new Receptor { Documento = "214844360018", RazonSocial = "Cliente S.A." },
+    Detalle  = [new LineaDetalle { NombreItem = "Consultoría", Cantidad = 1, PrecioUnitario = 10000m }],
+};
 ```
 
 ### e-Factura de Exportación (121)
-Para **ventas al exterior**. Requiere información adicional del receptor extranjero.
+Para **ventas al exterior**. Sin IVA (se informa `IndFact` 10); exige cláusula de venta, modalidad y vía de transporte.
 
 ```csharp
-var exportacion = client.CrearEFacturaExportacion();
-```
-
-### Notas de Crédito (102, 112, 122)
-Para **anular o ajustar a la baja** un CFE emitido previamente. Deben referenciar el comprobante original.
-
-```csharp
-var nc = client.CrearNotaCreditoETicket();
-nc.Referencias.Add(new RefCfe
+var exportacion = new Cfe(TipoCfe.EFacturaExportacion)
 {
-    TipoCfe  = TipoCfe.ETicket,
-    NroCfe   = 42,
-    FechaCfe = new DateTime(2025, 6, 1),
-    Razon    = "Devolución total",
-});
+    Moneda = Moneda.DolarAmericano, TipoCambio = 40.5m,
+    ClausulaVenta = "FOB", ModalidadVenta = 1, ViaTransporte = 1,
+    Receptor = new Receptor { Documento = "X1234567", TipoDocumento = TipoDocumentoReceptor.Pasaporte, CodigoPais = "US", RazonSocial = "Importer Inc." },
+    Detalle  = [new LineaDetalle { NombreItem = "Mercadería", Cantidad = 10, PrecioUnitario = 100m }],
+};
 ```
 
-### Notas de Débito (103, 113, 123)
-Para **ajustar al alza** o cobrar diferencias sobre un CFE emitido.
+### Notas de Crédito (102, 112, 122) y de Débito (103, 113, 123)
+Para **ajustar a la baja o al alza** un CFE emitido. Deben referenciarlo con su monto y moneda (obligatorios desde el formato CFE v25.01).
+
+```csharp
+var nc = new Cfe(TipoCfe.NotaCreditoETicket)
+{
+    Referencias =
+    [
+        new RefCfe
+        {
+            TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 42, FechaCfe = new DateOnly(2026, 6, 1),
+            MontoCfeRef = 1220m, MonedaCfeRef = Moneda.PesoUruguayo, Razon = "Devolución total",
+        },
+    ],
+    Detalle = [new LineaDetalle { NombreItem = "Devolución", Cantidad = 1, PrecioUnitario = 1000m }],
+};
+```
 
 ### e-Remito (181) y e-Remito de Exportación (124)
-Para **documentar el traslado de mercadería** sin implicar una transacción de venta.
-El campo `IndTraslado` es **obligatorio** para estos tipos e indica el motivo del traslado:
-
-La DGI solo distingue dos valores (`TipoTraslado`): **1 = venta** y **2 = traslados internos**. El SDK
-informa `1` para `TrasladoPorVenta` y `2` para todos los demás.
+Para **documentar el traslado de mercadería**, sin precios. `IndTraslado` es **obligatorio**. La DGI solo distingue
+dos valores (`TipoTraslado`): **1 = venta** y **2 = traslados internos**; el SDK informa `1` para `TrasladoPorVenta`
+y `2` para todos los demás.
 
 | Valor | Descripción |
 |-------|-------------|
@@ -86,8 +99,11 @@ informa `1` para `TrasladoPorVenta` y `2` para todos los demás.
 | `IndTraslado.TrasladoPorExposicion` | Traslado por exposición / feria |
 
 ```csharp
-var remito = client.CrearERemito();
-remito.IndTraslado = IndTraslado.TrasladoPropio;
+var remito = new Cfe(TipoCfe.ERemito)
+{
+    IndTraslado = IndTraslado.TrasladoPropio,
+    Detalle = [new LineaDetalle { NombreItem = "Cajas", Cantidad = 50 }],
+};
 ```
 
 ### e-Resguardo (182)
@@ -95,36 +111,33 @@ Para documentar **retenciones y percepciones** realizadas a proveedores. La lín
 solo de 1 a 5 `Retenciones` (código de la tabla de la DGI, tasa, monto sujeto y valor). El total retenido sale de la suma.
 
 ```csharp
-var resguardo = client.CrearEResguardo();
-resguardo.Receptor = new Receptor { Documento = "214844360018", RazonSocial = "Proveedor S.A." };
-resguardo.Detalle.Add(new LineaDetalle
+var resguardo = new Cfe(TipoCfe.EResguardo)
 {
-    Retenciones = { new RetencionPercepcion { Codigo = "R1", Tasa = 12m, MontoSujeto = 1000m, Valor = 120m } },
-});
+    Receptor = new Receptor { Documento = "214844360018", RazonSocial = "Proveedor S.A." },
+    Detalle  = [new LineaDetalle { Retenciones = [new RetencionPercepcion { Codigo = "R1", Tasa = 12m, MontoSujeto = 1000m, Valor = 120m }] }],
+};
 ```
 
 ### Venta por cuenta ajena (131-133, 141-143)
 Se emite en nombre de un tercero. Hay que informar el mandante:
 
 ```csharp
-var cfe = client.Crear(TipoCfe.EFacturaCuentaAjena);
-cfe.Mandante = new Mandante { Documento = "214844360018", Nombre = "Mandante S.A.", CodigoPais = "UY" };
+var cfe = new Cfe(TipoCfe.EFacturaCuentaAjena)
+{
+    Mandante = new Mandante { Documento = "214844360018", Nombre = "Mandante S.A." },
+    Receptor = new Receptor { Documento = "211234560019", RazonSocial = "Cliente S.A." },
+    Detalle  = [new LineaDetalle { NombreItem = "Producto", Cantidad = 1, PrecioUnitario = 500m }],
+};
 ```
 
 ### Comprobantes de contingencia (2xx)
-Tienen la misma estructura que el CFE que sustituyen (`client.Crear(TipoCfe.EFacturaContingencia)`) y se
-resumen en el reporte diario en su propio bloque.
+Tienen la misma estructura que el CFE que sustituyen (`new Cfe(TipoCfe.EFacturaContingencia)`), se numeran con su propio
+CAE y se resumen en el reporte diario en su propio bloque.
 
 ---
 
-## Restricciones de numeración
+## Numeración
 
-Cada tipo de CFE tiene su propio rango de CAE independiente. Un CAE de e-Ticket **no puede usarse** para e-Facturas.
-
-```csharp
-// ✅ Correcto: CAE específico por tipo
-client.Cae.RegistrarCae(new Cae { TipoCfe = TipoCfe.ETicket, ... });
-client.Cae.RegistrarCae(new Cae { TipoCfe = TipoCfe.EFactura, ... });
-
-// ❌ No se puede usar el mismo CAE para distintos tipos
-```
+Cada tipo de CFE tiene su propio CAE: un CAE de e-Ticket **no puede usarse** para e-Facturas. Registrá uno por tipo
+(y por serie) con `client.RegistrarCaeAsync`, sin rangos superpuestos dentro de una misma serie; `EmitirAsync` toma el
+número del CAE vigente del tipo del comprobante.

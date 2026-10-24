@@ -1,4 +1,4 @@
-namespace UruFactura.Exceptions;
+namespace UruFactura;
 
 /// <summary>
 /// Error relacionado con el CAE (Constancia de Autorización de Emisión).

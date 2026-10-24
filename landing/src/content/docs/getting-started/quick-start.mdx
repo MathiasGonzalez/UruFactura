@@ -5,284 +5,181 @@ sidebar:
   order: 2
 ---
 
-import { Tabs, TabItem, Aside, Steps, Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import { Tabs, TabItem, Aside, LinkCard } from '@astrojs/starlight/components';
 
-En esta guía vas a enviar tu primer e-Ticket a DGI (en ambiente de homologación) paso a paso.
+En esta guía vas a emitir y enviar tu primer e-Ticket a la DGI (en homologación).
 
-## Flujo completo de un CFE
+## El flujo
 
 ```
-Configurar → Registrar CAE → Crear CFE → Generar XML → Firmar → Enviar → PDF
+Configurar → Registrar CAE → Emitir (valida, numera, firma) → Enviar → Consultar resultado → PDF
+                                                         … y al cierre del día: Reporte diario
 ```
 
 ---
 
-## Paso 1: Setup inicial
+## Paso 1: Cliente
 
 ```csharp
 using UruFactura;
-using UruFactura.Models;
-using UruFactura.Enums;
 
 var config = new UruFacturaConfig
 {
-    RutEmisor           = "219999820013",
-    RazonSocialEmisor   = "Mi Empresa S.A.",
-    DomicilioFiscal     = "Av. 18 de Julio 1234",
-    Ciudad              = "Montevideo",
-    Departamento        = "Montevideo",
+    Emisor = new Emisor
+    {
+        Rut             = "219999820013",
+        RazonSocial     = "Mi Empresa S.A.",
+        DomicilioFiscal = "Av. 18 de Julio 1234",
+        Ciudad          = "Montevideo",
+        Departamento    = "Montevideo",
+    },
     Ambiente            = Ambiente.Homologacion,
     RutaCertificado     = "/ruta/al/certificado.p12",
-    PasswordCertificado = Environment.GetEnvironmentVariable("CERT_PASSWORD")!,
+    PasswordCertificado = Environment.GetEnvironmentVariable("CERT_PASSWORD"),
 };
 
-// Constructor de conveniencia (paquete completo — incluye PDF por defecto)
-// using var client = new UruFacturaClient(config);
-
-// Alternativa recomendada con el builder fluido:
-using var client = UruFacturaClientBuilder.WithDefaults(config)
-    .WithDefaultPdf()   // disponible solo en UruFactura (no en Lite)
-    .Build();
+using var client = new UruFacturaClient(config);
 ```
+
+<Aside type="caution">
+  Sin más parámetros, en Homologación el cliente guarda la numeración **en memoria**: sirve para probar, pero si la aplicación se reinicia volvería a usar números. En Producción hay que pasarle un almacenamiento durable (`store:`), como el de `UruFactura.EntityFrameworkCore`: sin él, el cliente no se crea. Ver [Gestión de CAE](../../guides/cae-management/).
+</Aside>
 
 ---
 
 ## Paso 2: Registrar el CAE
 
-El CAE define el rango de numeración autorizado por DGI para cada tipo de CFE.
+El CAE es el rango de números que la DGI autoriza para un tipo de CFE y una serie.
 
 ```csharp
-client.Cae.RegistrarCae(new Cae
+await client.RegistrarCaeAsync(new Cae
 {
-    NroSerie         = "CAE2025001",
     NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
-    Serie            = "A",
-    TipoCfe          = TipoCfe.ETicket,
-    RangoDesde       = 1,
-    RangoHasta       = 1000,
-    FechaVencimiento = new DateOnly(2026, 12, 31),
+    TipoCfe            = TipoCfe.ETicket,
+    Serie              = "A",
+    RangoDesde         = 1,
+    RangoHasta         = 1000,
+    FechaVencimiento   = new DateOnly(2027, 12, 31),
 });
 ```
 
 ---
 
-## Paso 3: Crear el comprobante
+## Paso 3: Emitir
+
+`Cfe` describe el comprobante (es inmutable). `EmitirAsync` lo valida, le asigna el próximo número del CAE, arma el XML, lo firma y lo registra.
 
 <Tabs>
-  <TabItem label="e-Ticket simple">
+  <TabItem label="e-Ticket">
   ```csharp
-  var eticket = client.CrearETicket();
-  client.AsignarCae(eticket);   // toma el próximo número del CAE
-
-  eticket.Detalle.Add(new LineaDetalle
+  var emitido = await client.EmitirAsync(new Cfe(TipoCfe.ETicket)
   {
-      NroLinea       = 1,
-      NombreItem     = "Servicio de consultoría",
-      Cantidad       = 1,
-      PrecioUnitario = 5000m,
-      IndFactIva     = TipoIva.Basico,
+      Detalle =
+      [
+          new LineaDetalle { NombreItem = "Servicio de consultoría", Cantidad = 1, PrecioUnitario = 5000m, IndFactIva = TipoIva.Basico },
+      ],
   });
   ```
   </TabItem>
   <TabItem label="e-Factura con receptor">
   ```csharp
-  var efactura = client.CrearEFactura();
-  client.AsignarCae(efactura);   // toma el próximo número del CAE
-
-  efactura.Receptor = new Receptor
+  var emitido = await client.EmitirAsync(new Cfe(TipoCfe.EFactura)
   {
-      Documento     = "214844360018",
-      TipoDocumento = TipoDocumentoReceptor.Rut,
-      RazonSocial   = "Empresa Compradora S.A.",
-      Direccion     = "Bulevar España 2345",
-      Ciudad        = "Montevideo",
-  };
-
-  efactura.Detalle.Add(new LineaDetalle
-  {
-      NroLinea       = 1,
-      NombreItem     = "Producto A",
-      Cantidad       = 10,
-      PrecioUnitario = 500m,
-      IndFactIva     = TipoIva.Basico,
-  });
-
-  efactura.Detalle.Add(new LineaDetalle
-  {
-      NroLinea       = 2,
-      NombreItem     = "Producto B",
-      Cantidad       = 5,
-      PrecioUnitario = 200m,
-      IndFactIva     = TipoIva.Minimo,
+      Receptor = new Receptor
+      {
+          Documento   = "214844360018",
+          RazonSocial = "Empresa Compradora S.A.",
+          Direccion   = "Bulevar España 2345",
+          Ciudad      = "Montevideo",
+      },
+      Detalle =
+      [
+          new LineaDetalle { NombreItem = "Producto A", Cantidad = 10, PrecioUnitario = 500m, IndFactIva = TipoIva.Basico },
+          new LineaDetalle { NombreItem = "Producto B", Cantidad = 5, PrecioUnitario = 200m, IndFactIva = TipoIva.Minimo },
+      ],
   });
   ```
   </TabItem>
   <TabItem label="Nota de Crédito">
   ```csharp
-  var nc = client.CrearNotaCreditoETicket();
-  client.AsignarCae(nc);   // toma el próximo número del CAE
-
-  // Referenciar el comprobante original
-  nc.Referencias.Add(new RefCfe
+  var emitido = await client.EmitirAsync(new Cfe(TipoCfe.NotaCreditoETicket)
   {
-      TipoCfe  = TipoCfe.ETicket,
-      Serie    = "A",
-      NroCfe   = 42,
-      FechaCfe = new DateTime(2025, 6, 15),
-      Razon    = "Devolución de mercadería",
-  });
-
-  nc.Detalle.Add(new LineaDetalle
-  {
-      NroLinea       = 1,
-      NombreItem     = "Devolución - Producto X",
-      Cantidad       = 2,
-      PrecioUnitario = 300m,
-      IndFactIva     = TipoIva.Basico,
+      Referencias =
+      [
+          new RefCfe
+          {
+              TipoCfe      = TipoCfe.ETicket,
+              Serie        = "A",
+              NroCfe       = 42,
+              FechaCfe     = new DateOnly(2025, 6, 15),
+              MontoCfeRef  = 1220m,                 // total del CFE original (obligatorio desde CFE v25.01)
+              MonedaCfeRef = Moneda.PesoUruguayo,   // moneda del CFE original (obligatoria)
+              Razon        = "Devolución de mercadería",
+          },
+      ],
+      Detalle = [new LineaDetalle { NombreItem = "Devolución - Producto X", Cantidad = 2, PrecioUnitario = 300m }],
   });
   ```
   </TabItem>
 </Tabs>
 
+Si el CFE no es válido, `EmitirAsync` lanza `CfeValidationException` (con la lista en `Errores`: campo y motivo de cada uno) **sin consumir números**. Para revisar sin emitir: `client.Validar(cfe)`.
+
 ---
 
-## Paso 4: Enviar a DGI
+## Paso 4: Enviar y consultar el resultado
 
 ```csharp
-// 1) Envío: la DGI acusa recibo del sobre (AS = recibido, BS/BA = rechazado)
-var respuesta = await client.EnviarCfeAsync(eticket);
-
-if (!respuesta.Exitoso)
+// 1) La DGI acusa recibo del sobre (AS = recibido, BS/BA = rechazado)
+var acuse = await client.EnviarAsync(emitido);
+if (!acuse.Recibido)
 {
-    Console.WriteLine($"❌ Sobre rechazado [{respuesta.Codigo}]: {respuesta.Mensaje}");
+    Console.WriteLine($"❌ {acuse.Mensaje}");   // "Sobre rechazado (BS): motivos"
     return;
 }
 
-// 2) Resultado del comprobante (AE = aceptado, BE = rechazado, CE = observado)
-var estado = await client.ConsultarEstadoEnvioAsync(respuesta, [eticket]);
-Console.WriteLine(estado.Exitoso
+// 2) Resultado del comprobante: EstadoCfe.Aceptado (AE), Rechazado (BE), Observado (CE)
+var estado = await client.ConsultarEnvioAsync(acuse);
+Console.WriteLine(emitido.AceptadoPorDgi
     ? "✅ Aceptado"
-    : $"❌ [{estado.Codigo}]: {estado.Mensaje}");
+    : $"❌ [{emitido.EstadoDgi}]: {emitido.MensajeDgi}");
 ```
 
 <Aside type="tip">
-  Recibir el sobre (`AS`) no significa que el CFE fue aceptado: la DGI procesa el sobre y luego informa el estado de cada comprobante (`AE`, `BE`, `CE`). Consultalo con `ConsultarEstadoEnvioAsync`, pasando la respuesta del envío (puede requerir esperar a `respuesta.ConsultarDesde`).
+  Recibir el sobre (`AS`) no significa que el CFE fue aceptado: la DGI lo procesa y después informa el estado de cada comprobante. Si todavía no terminó, `estado.Procesado` es `false`: volvé a consultar más tarde (la DGI indica desde cuándo en `acuse.ConsultarDesde`).
 </Aside>
 
 ---
 
-## Paso 5: Generar representación impresa (PDF)
+## Paso 5: Representación impresa (PDF)
+
+Con el paquete `UruFactura.Pdf`:
 
 ```csharp
-// PDF A4 (para envío por email o archivo)
-byte[] pdfA4 = client.GenerarPdfA4(eticket);
-await File.WriteAllBytesAsync("eticket_001_a4.pdf", pdfA4);
-
-// PDF Térmico 80mm (para impresión en punto de venta)
-byte[] pdfTermico = client.GenerarPdfTermico(eticket);
-await File.WriteAllBytesAsync("eticket_001_termico.pdf", pdfTermico);
+await File.WriteAllBytesAsync($"eticket_{emitido.Numero:D8}.pdf", CfePdf.GenerarA4(emitido));      // A4
+await File.WriteAllBytesAsync($"eticket_{emitido.Numero:D8}_80mm.pdf", CfePdf.GenerarTermico(emitido)); // ticket
 ```
 
 ---
 
-## Envío del Reporte Diario
+## Reporte diario
 
-DGI exige enviar un reporte diario con todos los CFE emitidos en la jornada.
+La DGI exige enviar cada día un resumen de los CFE emitidos. Sale del almacenamiento del cliente (todo lo que se emitió con `EmitirAsync`):
 
 ```csharp
-var resultado = await client.EnviarReporteDiarioAsync(
-    DateTime.Today,
-    new[] { eticket }
-);
-
-Console.WriteLine($"Reporte diario: {resultado.Respuesta.Mensaje}");
+// Usá la fecha de Uruguay (HoraUruguay), no DateTime.Today: el servidor puede estar en UTC.
+var reporte = await client.EnviarReporteDiarioAsync(HoraUruguay.Hoy().AddDays(-1));
+Console.WriteLine($"Reporte diario: {reporte.Estado} ({reporte.CantidadCfe} CFE)");
 ```
 
 <Aside type="caution">
-  El Reporte Diario es **obligatorio** incluso si solo emitiste un CFE. No enviarlo puede generar infracciones ante DGI.
+  El Reporte Diario es **obligatorio**. Automatizalo con un job nocturno.
 </Aside>
-
----
-
-## Consultar estado de un CFE
-
-```csharp
-var estado = await client.ConsultarEstadoCfeAsync(eticket);
-Console.WriteLine($"Estado DGI: {estado.Mensaje}");
-```
-
----
-
-## Código completo de ejemplo
-
-```csharp
-using UruFactura;
-using UruFactura.Models;
-using UruFactura.Enums;
-
-// Configurar
-var config = new UruFacturaConfig
-{
-    RutEmisor           = "219999820013",
-    RazonSocialEmisor   = "Mi Empresa S.A.",
-    DomicilioFiscal     = "Av. 18 de Julio 1234",
-    Ciudad              = "Montevideo",
-    Departamento        = "Montevideo",
-    Ambiente            = Ambiente.Homologacion,
-    RutaCertificado     = "/ruta/certificado.p12",
-    PasswordCertificado = Environment.GetEnvironmentVariable("CERT_PASSWORD")!,
-};
-
-using var client = new UruFacturaClient(config);
-
-// Registrar CAE
-client.Cae.RegistrarCae(new Cae
-{
-    NroSerie         = "CAE2025001",
-    NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
-    Serie            = "A",
-    TipoCfe          = TipoCfe.ETicket,
-    RangoDesde       = 1,
-    RangoHasta       = 1000,
-    FechaVencimiento = new DateOnly(2026, 12, 31),
-});
-
-// Crear e-Ticket
-var eticket = client.CrearETicket();
-client.AsignarCae(eticket);   // toma el próximo número del CAE
-eticket.Detalle.Add(new LineaDetalle
-{
-    NroLinea       = 1,
-    NombreItem     = "Consultoría técnica",
-    Cantidad       = 3,
-    PrecioUnitario = 2000m,
-    IndFactIva     = TipoIva.Basico,
-});
-
-// Enviar
-var respuesta = await client.EnviarCfeAsync(eticket);
-
-if (respuesta.Exitoso)
-{
-    // Guardar PDF
-    byte[] pdf = client.GenerarPdfA4(eticket);
-    await File.WriteAllBytesAsync($"eticket_{eticket.Numero:D8}.pdf", pdf);
-
-    // Enviar reporte diario
-    await client.EnviarReporteDiarioAsync(DateTime.Today, new[] { eticket });
-
-    Console.WriteLine("✅ Proceso completado exitosamente.");
-}
-else
-{
-    Console.Error.WriteLine($"❌ Error: {respuesta.Mensaje}");
-}
-```
 
 ---
 
 ## Próximos pasos
 
-<LinkCard title="Gestión de CAE" description="Cómo monitorear y renovar CAEs antes de que venzan." href="../../guides/cae-management/" />
+<LinkCard title="Gestión de CAE" description="Monitorear CAEs, persistir la numeración y usar varias instancias." href="../../guides/cae-management/" />
 <LinkCard title="Certificación DGI" description="Proceso de homologación y habilitación en producción." href="../../guides/dgi-certification/" />
 <LinkCard title="Migración desde otro proveedor" description="¿Venís de otra solución? Esta guía es para vos." href="../../migration/from-other-providers/" />

@@ -19,11 +19,11 @@ public static class UruFacturaModelBuilderExtensions
             e.ToTable("UruFacturaCaes");
             e.HasKey(c => c.Id);
             e.Property(c => c.Id).HasValueGenerator((_, _) => new GuidOrdenadoValueGenerator());
-            e.HasIndex(c => c.NroSerie).IsUnique();
-            e.HasIndex(c => c.TipoCfe);
-            e.Property(c => c.NroSerie).HasMaxLength(50).IsRequired();
+            e.HasIndex(c => new { c.TipoCfe, c.Serie, c.RangoDesde }).IsUnique();
             e.Property(c => c.NumeroAutorizacion).HasMaxLength(11).IsRequired();
             e.Property(c => c.Serie).HasMaxLength(2).IsRequired();
+            // La numeración avanza con UPDATE condicionales: solo si nadie la cambió desde que se leyó.
+            e.Property(c => c.UltimoNroUsado).IsConcurrencyToken();
         });
 
         modelBuilder.Entity<CfeEntity>(e =>
@@ -38,13 +38,12 @@ public static class UruFacturaModelBuilderExtensions
             e.Property(c => c.Serie).HasMaxLength(2).IsRequired();
             e.Property(c => c.NroInterno).HasMaxLength(50);
             e.Property(c => c.ReceptorDocumento).HasMaxLength(20);
-            // Montos con 2 decimales, como en el XML; el tipo de cambio lleva 3.
-            foreach (var monto in e.Metadata.GetProperties().Where(p => p.ClrType == typeof(decimal)))
-                e.Property(monto.Name).HasPrecision(18, 2);
-            e.Property(c => c.TipoCambio).HasPrecision(10, 3);
-            e.Property(c => c.CodigoSeguridad).HasMaxLength(100);
+            e.Property(c => c.MontoTotal).HasPrecision(18, 2);
+            e.Property(c => c.CodigoSeguridad).HasMaxLength(100).IsRequired();
+            e.Property(c => c.Xml).IsRequired();
+            e.Property(c => c.Datos).IsRequired();
             e.Property(c => c.IdReceptorDgi).HasMaxLength(20);
-            e.Property(c => c.CodigoRespuestaDgi).HasMaxLength(20);
+            e.Property(c => c.EstadoDgi).HasConversion<string>().HasMaxLength(20);
         });
 
         modelBuilder.Entity<SecuenciaEntity>(e =>

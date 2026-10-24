@@ -1,9 +1,4 @@
-using UruFactura.Cae;
-using UruFactura.Configuration;
-using UruFactura.Enums;
-using UruFactura.Models;
-using UruFactura.Pdf;
-using UruFactura.Persistence;
+using System.Security.Cryptography.X509Certificates;
 using UruFactura.Signature;
 using UruFactura.Soap;
 using UruFactura.Xml;
@@ -11,637 +6,339 @@ using UruFactura.Xml;
 namespace UruFactura;
 
 /// <summary>
-/// Cliente principal de UruFactura.
-/// Orquesta la creación de CFE, generación/firma de XML, comunicación con DGI
-/// y, opcionalmente, la generación de representaciones impresas (PDF).
-/// <para>
-/// Use <see cref="UruFacturaClientBuilder.WithDefaults"/> para construir una instancia
-/// con las implementaciones predeterminadas, o el constructor principal para inyectar
-/// implementaciones personalizadas.
-/// </para>
+/// Cliente de facturación electrónica de la DGI (ver <see cref="IUruFacturaClient"/>).
 /// </summary>
-public partial class UruFacturaClient : IUruFacturaClient
+public sealed class UruFacturaClient : IUruFacturaClient
 {
+    /// <summary>Intentos de numerar un CFE cuando otras emisiones usan el mismo CAE al mismo tiempo.</summary>
+    private const int MaxIntentosEmision = 100;
+
     private readonly UruFacturaConfig _config;
-    private readonly ICfeXmlBuilder _xmlBuilder;
-    private readonly ICfeFirmante _firmante;
-    private readonly ICaeManager _caeManager;
-    private readonly IDgiSoapClient _soapClient;
-    private readonly ICfePdfGenerator? _pdfGenerator;
-    private readonly ICaeRepository? _caeRepository;
-    private readonly ICfeRepository? _cfeRepository;
-    private readonly Lock _idEnvioLock = new();
-    private long _ultimoIdEnvio;
+    private readonly IUruFacturaStore _store;
+    private readonly IDgiClient _dgi;
+    private readonly DgiSoapClient? _dgiPropio;
+    private readonly X509Certificate2 _certificado;
+    private readonly bool _certificadoPropio;
+    private readonly TimeProvider _reloj;
     private bool _disposed;
 
-    /// <summary>Gestión de CAEs del cliente.</summary>
-    public ICaeManager Cae => _caeManager;
-
-    /// <summary>
-    /// Constructor principal con todas las dependencias inyectadas.
-    /// Para el caso de uso estándar prefiera <see cref="UruFacturaClientBuilder.WithDefaults"/>
-    /// o los constructores de conveniencia del paquete correspondiente.
-    /// </summary>
-    /// <param name="caeRepository">
-    /// Persistencia de los CAE. Si implementa <see cref="ICaeRepositoryCompartido"/>, la numeración
-    /// se reserva en el almacenamiento compartido (varias instancias).
+    /// <summary>Crea el cliente. Valida la configuración y carga el certificado.</summary>
+    /// <param name="config">Configuración.</param>
+    /// <param name="store">
+    /// Almacenamiento de CAE, numeración y CFE emitidos, obligatorio en Producción (por ejemplo,
+    /// <c>EfUruFacturaStore</c>). En Homologación, si se omite, se usa un <see cref="InMemoryStore"/>
+    /// (un solo proceso, sin persistencia).
     /// </param>
-    /// <param name="cfeRepository">Registro durable de los CFE emitidos (para el reporte diario entre instancias).</param>
+    /// <param name="httpClient">
+    /// <see cref="HttpClient"/> para la DGI (p. ej. de <c>IHttpClientFactory</c>). Al indicarlo, su handler
+    /// debe tener el certificado de cliente TLS y la validación del servidor configurados.
+    /// </param>
+    /// <param name="dgiClient">Transporte propio hacia la DGI (en lugar del SOAP predeterminado).</param>
+    /// <param name="reloj">Reloj para las fechas fiscales (por defecto, el del sistema).</param>
+    /// <exception cref="UruFacturaException">Si la configuración no es válida o falta el almacenamiento en Producción.</exception>
+    /// <exception cref="FirmaDigitalException">Si no se puede cargar el certificado o no tiene clave privada.</exception>
     public UruFacturaClient(
         UruFacturaConfig config,
-        ICfeXmlBuilder xmlBuilder,
-        ICfeFirmante firmante,
-        ICaeManager caeManager,
-        IDgiSoapClient soapClient,
-        ICfePdfGenerator? pdfGenerator,
-        ICaeRepository? caeRepository = null,
-        ICfeRepository? cfeRepository = null)
+        IUruFacturaStore? store = null,
+        HttpClient? httpClient = null,
+        IDgiClient? dgiClient = null,
+        TimeProvider? reloj = null)
     {
+        ArgumentNullException.ThrowIfNull(config);
+        var errores = config.Validar();
+        if (errores.Count > 0)
+            throw new UruFacturaException($"Configuración inválida: {string.Join("; ", errores)}");
+        if (httpClient is not null && dgiClient is not null)
+            throw new ArgumentException("httpClient solo se usa con el transporte predeterminado, no con un dgiClient propio.", nameof(httpClient));
+        if (store is null && config.Ambiente == Ambiente.Produccion)
+            throw new UruFacturaException(
+                "En Producción hay que indicar el almacenamiento (por ejemplo, EfUruFacturaStore): un InMemoryStore " +
+                "pierde la numeración y los CFE del día al reiniciar la aplicación.");
+
         _config = config;
-        _xmlBuilder = xmlBuilder;
-        _firmante = firmante;
-        _caeManager = caeManager;
-        _soapClient = soapClient;
-        _pdfGenerator = pdfGenerator;
-        _caeRepository = caeRepository;
-        _cfeRepository = cfeRepository;
-    }
+        _reloj = reloj ?? TimeProvider.System;
+        _store = store ?? new InMemoryStore(_reloj);
 
-    /// <summary>
-    /// Inicializa el cliente con las implementaciones predeterminadas y el generador de PDF indicado
-    /// (<c>null</c> para no generar PDF).
-    /// </summary>
-    /// <param name="config">Configuración de UruFactura.</param>
-    /// <param name="pdfGenerator">Implementación de <see cref="ICfePdfGenerator"/> a utilizar.</param>
-    public UruFacturaClient(UruFacturaConfig config, ICfePdfGenerator? pdfGenerator)
-        : this(config,
-               new CfeXmlBuilder(),
-               new CfeFirmante(config.RutaCertificado, config.PasswordCertificado, config.AlgoritmoFirma),
-               new CaeManager(),
-               new DgiSoapClient(config),
-               pdfGenerator)
-    {
+        if (config.Certificado is { } certificado)
+        {
+            CertificadoLoader.ValidarClavePrivada(certificado);
+            _certificado = certificado;
+        }
+        else
+        {
+            _certificado = CertificadoLoader.Cargar(config.RutaCertificado!, config.PasswordCertificado);
+            _certificadoPropio = true;
+        }
+
+        try
+        {
+            _dgi = dgiClient ?? (_dgiPropio = new DgiSoapClient(config, _certificado, httpClient));
+        }
+        catch
+        {
+            if (_certificadoPropio)
+                _certificado.Dispose();
+            throw;
+        }
     }
 
     // -----------------------------------------------------------------------
-    // Generación de CFE
+    // CAE
     // -----------------------------------------------------------------------
 
-    /// <summary>
-    /// Crea un CFE de cualquier tipo soportado (contingencia, cuenta ajena, etc.) pre-configurado con los
-    /// datos del emisor.
-    /// </summary>
-    public virtual Cfe Crear(TipoCfe tipo)
-    {
-        if (!Enum.IsDefined(tipo))
-            throw new ArgumentOutOfRangeException(nameof(tipo), tipo, $"Tipo de CFE no soportado: {tipo}.");
-        return CrearCfe(tipo);
-    }
-
-    /// <summary>Crea un nuevo e-Ticket pre-configurado con los datos del emisor.</summary>
-    public virtual Cfe CrearETicket() => CrearCfe(TipoCfe.ETicket);
-
-    /// <summary>Crea una nueva e-Factura pre-configurada con los datos del emisor.</summary>
-    public virtual Cfe CrearEFactura() => CrearCfe(TipoCfe.EFactura);
-
-    /// <summary>Crea un nuevo e-Remito pre-configurado con los datos del emisor.</summary>
-    public virtual Cfe CrearERemito() => CrearCfe(TipoCfe.ERemito);
-
-    /// <summary>Crea una nota de crédito de e-Ticket.</summary>
-    public virtual Cfe CrearNotaCreditoETicket() => CrearCfe(TipoCfe.NotaCreditoETicket);
-
-    /// <summary>Crea una nota de débito de e-Ticket.</summary>
-    public virtual Cfe CrearNotaDebitoETicket() => CrearCfe(TipoCfe.NotaDebitoETicket);
-
-    /// <summary>Crea una nota de crédito de e-Factura.</summary>
-    public virtual Cfe CrearNotaCreditoEFactura() => CrearCfe(TipoCfe.NotaCreditoEFactura);
-
-    /// <summary>Crea una nota de débito de e-Factura.</summary>
-    public virtual Cfe CrearNotaDebitoEFactura() => CrearCfe(TipoCfe.NotaDebitoEFactura);
-
-    /// <summary>Crea una e-Factura de exportación.</summary>
-    public virtual Cfe CrearEFacturaExportacion() => CrearCfe(TipoCfe.EFacturaExportacion);
-
-    /// <summary>Crea una nota de crédito de e-Factura de exportación.</summary>
-    public virtual Cfe CrearNotaCreditoEFacturaExportacion() => CrearCfe(TipoCfe.NotaCreditoEFacturaExportacion);
-
-    /// <summary>Crea una nota de débito de e-Factura de exportación.</summary>
-    public virtual Cfe CrearNotaDebitoEFacturaExportacion() => CrearCfe(TipoCfe.NotaDebitoEFacturaExportacion);
-
-    /// <summary>Crea un e-Remito de exportación (124).</summary>
-    public virtual Cfe CrearERemitoExportacion() => CrearCfe(TipoCfe.ERemitoExportacion);
-
-    /// <summary>
-    /// Crea un e-Resguardo (182). El modelo actual no incluye retenciones/percepciones, por lo
-    /// que <see cref="Cfe.Validar"/> lo rechaza hasta que se agregue ese soporte.
-    /// </summary>
-    public virtual Cfe CrearEResguardo() => CrearCfe(TipoCfe.EResguardo);
-
-    /// <summary>Crea el CFE base de un tipo con los datos del emisor; sobreescribible para ajustar los valores por defecto.</summary>
-    protected virtual Cfe CrearCfe(TipoCfe tipo) => new()
-    {
-        TelefonosEmisor = [.. _config.TelefonosEmisor],
-        CorreoEmisor = _config.CorreoEmisor,
-        SucursalEmisor = _config.SucursalEmisor,
-        TopeMontoNetoSinReceptor = _config.ValorUnidadIndexada is { } ui ? ui * 5000m : null,
-        Tipo = tipo,
-        RutEmisor = _config.RutEmisor,
-        RazonSocialEmisor = _config.RazonSocialEmisor,
-        NombreComercialEmisor = _config.NombreComercialEmisor,
-        Giro = _config.Giro,
-        DomicilioFiscalEmisor = _config.DomicilioFiscal,
-        CiudadEmisor = _config.Ciudad,
-        DepartamentoEmisor = _config.Departamento,
-        CodigoSucursal = _config.CodigoSucursal,
-        FechaEmision = HoraUruguay.Hoy(),
-    };
-
-    // -----------------------------------------------------------------------
-    // XML y Firma
-    // -----------------------------------------------------------------------
-
-    /// <summary>
-    /// Carga en el gestor todos los CAE guardados en el <see cref="ICaeRepository"/> configurado
-    /// (con su último número usado). Llamarlo al iniciar la aplicación. Es idempotente.
-    /// </summary>
-    /// <returns>Cantidad de CAE cargados (0 si no hay repositorio).</returns>
-    public virtual async Task<int> CargarCaesAsync()
-    {
-        ThrowIfDisposed();
-        if (_caeRepository is null)
-            return 0;
-
-        var caes = (await _caeRepository.CargarTodosAsync()).ToList();
-        _caeManager.RegistrarCaes(caes);
-        return caes.Count;
-    }
-
-    /// <summary>
-    /// Registra un CAE nuevo en el gestor y lo guarda en el <see cref="ICaeRepository"/> configurado (si lo hay).
-    /// </summary>
-    public virtual async Task RegistrarCaeAsync(Models.Cae cae)
+    /// <inheritdoc />
+    public async Task RegistrarCaeAsync(Cae cae, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(cae);
-        _caeManager.RegistrarCae(cae);
-        if (_caeRepository is not null)
-            await _caeRepository.GuardarCaeAsync(cae);
-    }
+        var errores = cae.Validar().ToList();
+        if (errores.Count > 0)
+            throw new CaeException($"CAE inválido: {string.Join("; ", errores)}");
 
-    /// <summary>
-    /// Toma el próximo número del CAE vigente para el tipo del CFE y completa
-    /// <see cref="Cfe.Numero"/>, <see cref="Cfe.Serie"/> y <see cref="Cfe.CaeData"/>.
-    /// No persiste el número usado: si lo necesita, use <see cref="AsignarCaeAsync"/>
-    /// con un <see cref="ICaeRepository"/>.
-    /// </summary>
-    /// <exception cref="Exceptions.CaeException">Si no hay un CAE vigente con números disponibles.</exception>
-    /// <exception cref="InvalidOperationException">
-    /// Si el repositorio de CAE es compartido (<see cref="ICaeRepositoryCompartido"/>): en ese caso
-    /// el número debe reservarse en el almacenamiento con <see cref="AsignarCaeAsync"/>.
-    /// </exception>
-    public virtual void AsignarCae(Cfe cfe)
-    {
-        ThrowIfDisposed();
-        ArgumentNullException.ThrowIfNull(cfe);
-        if (_caeRepository is ICaeRepositoryCompartido)
-            throw new InvalidOperationException(
-                "Con un repositorio de CAE compartido (varias instancias) use AsignarCaeAsync: " +
-                "el número se reserva en el almacenamiento compartido.");
-        AsignarCaeInterno(cfe);
-    }
+        // Dos CAE con números en común emitirían números repetidos.
+        var caes = await _store.ListarCaesAsync(cancellationToken);
+        if (caes.FirstOrDefault(c => !c.EsElMismo(cae) && c.SeSuperponeCon(cae)) is { } otro)
+            throw new CaeException(
+                $"El rango {cae.RangoDesde}-{cae.RangoHasta} se superpone con el del CAE {otro.NumeroAutorizacion} " +
+                $"({otro.TipoCfe}, serie {otro.Serie}, {otro.RangoDesde}-{otro.RangoHasta}).");
 
-    /// <summary>
-    /// Como <see cref="AsignarCae"/>, y además guarda el último número usado en el
-    /// <see cref="ICaeRepository"/> configurado (si lo hay) para que sobreviva a reinicios.
-    /// Si el repositorio es un <see cref="ICaeRepositoryCompartido"/>, el número se reserva
-    /// directamente en el almacenamiento compartido, por lo que es seguro con varias instancias.
-    /// </summary>
-    /// <exception cref="Exceptions.CaeException">Si no hay un CAE vigente con números disponibles.</exception>
-    public virtual async Task AsignarCaeAsync(Cfe cfe, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        ArgumentNullException.ThrowIfNull(cfe);
-
-        if (_caeRepository is ICaeRepositoryCompartido compartido)
-        {
-            var (reservado, numero) = await compartido.ReservarProximoNumeroAsync(cfe.Tipo, HoraUruguay.Hoy(), cancellationToken)
-                ?? throw new Exceptions.CaeException(
-                    $"No hay CAE vigente y con números disponibles para el tipo {cfe.Tipo}.");
-            AplicarNumero(cfe, reservado, numero);
-            // Mantiene el gestor en memoria al día para las advertencias de esta instancia.
-            _caeManager.RegistrarCae(reservado);
-            return;
-        }
-
-        var cae = AsignarCaeInterno(cfe);
-
-        if (_caeRepository is not null)
-            await _caeRepository.ActualizarUltimoNroUsadoAsync(cae.NroSerie, cfe.Numero);
-    }
-
-    private Models.Cae AsignarCaeInterno(Cfe cfe)
-    {
-        var (cae, numero) = _caeManager.ObtenerProximoNumero(cfe.Tipo);
-        AplicarNumero(cfe, cae, numero);
-        return cae;
-    }
-
-    private static void AplicarNumero(Cfe cfe, Models.Cae cae, long numero)
-    {
-        cfe.Numero = numero;
-        cfe.Serie = cae.Serie;
-        cfe.CaeData = CaeData.Desde(cae);
-        // El XML anterior (si existía) ya no corresponde a estos datos.
-        cfe.XmlSinFirmar = null;
-        cfe.XmlFirmado = null;
-    }
-
-    /// <summary>
-    /// Genera el XML sin firmar del CFE.
-    /// </summary>
-    /// <param name="cfe">El CFE a serializar.</param>
-    /// <returns>XML sin firmar.</returns>
-    public virtual string GenerarXml(Cfe cfe)
-    {
-        ThrowIfDisposed();
-        cfe.CalcularTotales();
-        var xml = _xmlBuilder.Generar(cfe);
-        cfe.XmlSinFirmar = xml;
-        return xml;
-    }
-
-    /// <summary>
-    /// Firma digitalmente el CFE (XML Signature enveloped).
-    /// </summary>
-    /// <param name="cfe">El CFE (debe haberse generado el XML previamente).</param>
-    /// <returns>XML firmado.</returns>
-    public virtual string FirmarCfe(Cfe cfe)
-    {
-        ThrowIfDisposed();
-        if (string.IsNullOrWhiteSpace(cfe.XmlSinFirmar))
-            GenerarXml(cfe);
-
-        var xmlFirmado = _firmante.Firmar(cfe.XmlSinFirmar!);
-        cfe.XmlFirmado = xmlFirmado;
-        RegistrarDatosDeFirma(cfe, xmlFirmado);
-        return xmlFirmado;
-    }
-
-    /// <summary>
-    /// Genera y firma el CFE en un solo paso.
-    /// </summary>
-    /// <param name="cfe">El CFE a procesar.</param>
-    /// <returns>XML firmado.</returns>
-    public virtual string GenerarYFirmar(Cfe cfe)
-    {
-        ThrowIfDisposed();
-        GenerarXml(cfe);
-        return FirmarCfe(cfe);
-    }
-
-    // -----------------------------------------------------------------------
-    // Comunicación con DGI
-    // -----------------------------------------------------------------------
-
-    /// <summary>
-    /// Envía el CFE a la DGI dentro de un sobre (<c>EFACRECEPCIONSOBRE</c>).
-    /// Si el CFE aún no está firmado, lo genera y firma primero. Un envío exitoso
-    /// (<see cref="RespuestaDgi.Exitoso"/>) significa que la DGI <b>recibió el sobre</b>; el
-    /// resultado del comprobante se obtiene después con <see cref="ConsultarEstadoEnvioAsync"/>.
-    /// </summary>
-    /// <param name="cfe">El CFE a enviar.</param>
-    /// <param name="cancellationToken">Token de cancelación.</param>
-    /// <returns>Respuesta de la DGI (<c>ACKSobre</c>).</returns>
-    public virtual Task<RespuestaDgi> EnviarCfeAsync(
-        Cfe cfe,
-        CancellationToken cancellationToken = default) =>
-        EnviarCfesAsync([cfe], cancellationToken);
-
-    /// <summary>
-    /// Envía varios CFE (1 a 250) en un único sobre. Con un <see cref="ICfeRepository"/> configurado,
-    /// los CFE se guardan como emitidos antes de enviarlos (así entran en el reporte diario aunque el
-    /// envío falle) y otra vez con la respuesta de la DGI.
-    /// </summary>
-    public virtual async Task<RespuestaDgi> EnviarCfesAsync(
-        IEnumerable<Cfe> cfes,
-        CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        ArgumentNullException.ThrowIfNull(cfes);
-        var lista = cfes.ToList();
-
-        // Antes de firmar y registrar: un sobre inválido no debe dejar CFE guardados como emitidos.
-        if (lista.Count is < 1 or > CfeSobreBuilder.MaxCfePorSobre)
-            throw new Exceptions.UruFacturaException(
-                $"Un sobre debe contener entre 1 y {CfeSobreBuilder.MaxCfePorSobre} CFE (recibidos: {lista.Count}).");
-
-        foreach (var cfe in lista)
-            AsegurarFirmado(cfe);
-
-        if (_cfeRepository is not null)
-            await _cfeRepository.GuardarAsync(lista, cancellationToken);
-
-        var sobre = CfeSobreBuilder.Generar(
-            _config.RutEmisor,
-            await SiguienteIdEnvioAsync(cancellationToken),
-            DateTimeOffset.UtcNow,
-            _firmante.ObtenerCertificadoDer(),
-            lista.Select(c => c.XmlFirmado!).ToList());
-
-        var respuesta = await _soapClient.EnviarSobreAsync(sobre, cancellationToken);
-
-        foreach (var cfe in lista)
-        {
-            cfe.CodigoRespuestaDgi = respuesta.Codigo;
-            cfe.MensajeRespuestaDgi = respuesta.Mensaje;
-            cfe.IdReceptorDgi = respuesta.IdReceptor;
-            cfe.TokenDgi = respuesta.Token;
-            // AceptadoPorDgi solo se actualiza con la consulta de estado.
-        }
-
-        if (_cfeRepository is not null)
-            await _cfeRepository.GuardarAsync(lista, cancellationToken);
-
-        return respuesta;
-    }
-
-    /// <summary>
-    /// Guarda los CFE en el <see cref="ICfeRepository"/> configurado. <see cref="EnviarCfesAsync"/> ya
-    /// lo hace; úselo para los comprobantes que se emiten sin enviarse en el momento, para que entren
-    /// en el reporte diario. Los CFE sin firmar se generan y firman primero.
-    /// </summary>
-    /// <exception cref="InvalidOperationException">Si no hay un <see cref="ICfeRepository"/> configurado.</exception>
-    public virtual async Task RegistrarCfesAsync(
-        IEnumerable<Cfe> cfes,
-        CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        ArgumentNullException.ThrowIfNull(cfes);
-        var repositorio = RequerirCfeRepository();
-
-        var lista = cfes.ToList();
-        foreach (var cfe in lista)
-            AsegurarFirmado(cfe);
-
-        await repositorio.GuardarAsync(lista, cancellationToken);
-    }
-
-    /// <summary>
-    /// Consulta el resultado de un sobre ya enviado (<c>EFACCONSULTARESTADOENVIO</c>) y actualiza
-    /// <see cref="Cfe.AceptadoPorDgi"/> de los CFE indicados según el estado informado.
-    /// </summary>
-    /// <param name="envio">Respuesta devuelta por <see cref="EnviarCfeAsync"/> / <see cref="EnviarCfesAsync"/>.</param>
-    /// <param name="cfes">CFE del sobre cuyo estado se actualiza (opcional).</param>
-    public virtual async Task<RespuestaDgi> ConsultarEstadoEnvioAsync(
-        RespuestaDgi envio,
-        IEnumerable<Cfe>? cfes = null,
-        CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        ArgumentNullException.ThrowIfNull(envio);
-
-        if (string.IsNullOrWhiteSpace(envio.IdReceptor) || string.IsNullOrWhiteSpace(envio.Token))
-            throw new InvalidOperationException(
-                "La respuesta del envío no tiene IdReceptor/Token: el sobre no fue recibido por la DGI.");
-
-        var respuesta = await _soapClient.ConsultarEstadoEnvioAsync(
-            envio.IdReceptor, envio.Token, cancellationToken);
-
-        if (cfes is not null)
-        {
-            var actualizados = new List<Cfe>();
-            foreach (var cfe in cfes)
-            {
-                var estado = respuesta.Comprobantes.FirstOrDefault(c =>
-                    c.TipoCfe == (int)cfe.Tipo && c.Serie == cfe.Serie && c.Numero == cfe.Numero);
-                if (estado is null)
-                    continue;
-
-                cfe.CodigoRespuestaDgi = estado.Estado;
-                cfe.MensajeRespuestaDgi = string.Join(" ", estado.Motivos);
-                cfe.AceptadoPorDgi = estado.Estado == "AE";
-                actualizados.Add(cfe);
-            }
-
-            if (_cfeRepository is not null && actualizados.Count > 0)
-                await _cfeRepository.GuardarAsync(actualizados, cancellationToken);
-        }
-
-        return respuesta;
-    }
-
-    /// <summary>
-    /// Consulta el estado de un CFE por tipo, serie y número (<c>EFACCONSULTARESTADOCFE</c>).
-    /// </summary>
-    public virtual async Task<RespuestaDgi> ConsultarEstadoCfeAsync(
-        Cfe cfe,
-        CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        ArgumentNullException.ThrowIfNull(cfe);
-        if (string.IsNullOrWhiteSpace(cfe.Serie) || cfe.Numero <= 0)
-            throw new InvalidOperationException("El CFE no tiene serie y número asignados.");
-
-        var respuesta = await _soapClient.ConsultarEstadoCfeAsync(
-            (int)cfe.Tipo, cfe.Serie, cfe.Numero, cancellationToken);
-
-        cfe.CodigoRespuestaDgi = respuesta.Codigo;
-        cfe.MensajeRespuestaDgi = respuesta.Mensaje;
-        cfe.AceptadoPorDgi = respuesta.Exitoso;
-
-        if (_cfeRepository is not null)
-            await _cfeRepository.GuardarAsync([cfe], cancellationToken);
-
-        return respuesta;
-    }
-
-    /// <summary>
-    /// Envía el Reporte Diario (<c>EFACRECEPCIONREPORTE</c>): un resumen firmado con montos,
-    /// cantidades y rangos de los CFE emitidos en <paramref name="fecha"/>. Los CFE con otra
-    /// fecha de emisión se ignoran.
-    /// </summary>
-    public virtual Task<RespuestaReporteDiario> EnviarReporteDiarioAsync(
-        DateTime fecha,
-        IEnumerable<Cfe> cfes,
-        CancellationToken cancellationToken = default) =>
-        EnviarReporteDiarioAsync(fecha, cfes, secEnvio: 0, cancellationToken);
-
-    /// <summary>
-    /// Igual que <see cref="EnviarReporteDiarioAsync(DateTime, IEnumerable{Cfe}, CancellationToken)"/>
-    /// indicando la secuencia del envío del día (0 el primero, 1 el siguiente, ...).
-    /// </summary>
-    public virtual async Task<RespuestaReporteDiario> EnviarReporteDiarioAsync(
-        DateTime fecha,
-        IEnumerable<Cfe> cfes,
-        int secEnvio,
-        CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var dia = DateOnly.FromDateTime(fecha);
-        var delDia = cfes.Where(c => c.FechaEmision == dia).ToList();
-
-        // Los CFE reconstruidos desde la base sin detalle conservan los totales guardados;
-        // recalcularlos los dejaría en cero.
-        foreach (var cfe in delDia.Where(c => c.Detalle.Count > 0))
-            cfe.CalcularTotales();
-
-        var reporte = ReporteDiarioBuilder.Generar(
-            _config.RutEmisor, dia, secEnvio, await SiguienteIdEnvioAsync(cancellationToken), DateTimeOffset.UtcNow, delDia);
-        var firmado = _firmante.Firmar(reporte);
-
-        var respuesta = await _soapClient.EnviarReporteDiarioAsync(firmado, cancellationToken);
-
-        return new RespuestaReporteDiario
-        {
-            FechaReporte = fecha,
-            CantidadCfe = delDia.Count,
-            Respuesta = respuesta,
-        };
-    }
-
-    /// <summary>
-    /// Envía el Reporte Diario de <paramref name="fecha"/> con los CFE guardados en el
-    /// <see cref="ICfeRepository"/> configurado, es decir, los emitidos por todas las instancias.
-    /// </summary>
-    /// <param name="fecha">Fecha de emisión a resumir (en general, <c>HoraUruguay.Hoy().AddDays(-1)</c>).</param>
-    /// <param name="secEnvio">Secuencia del envío del día (0 el primero, 1 el siguiente, ...).</param>
-    /// <param name="cancellationToken">Token de cancelación.</param>
-    /// <exception cref="InvalidOperationException">Si no hay un <see cref="ICfeRepository"/> configurado.</exception>
-    public virtual async Task<RespuestaReporteDiario> EnviarReporteDiarioAsync(
-        DateOnly fecha,
-        int secEnvio = 0,
-        CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var cfes = await RequerirCfeRepository().ObtenerPorFechaEmisionAsync(fecha, cancellationToken);
-        return await EnviarReporteDiarioAsync(fecha.ToDateTime(TimeOnly.MinValue), cfes, secEnvio, cancellationToken);
-    }
-
-    /// <summary>
-    /// Número de envío asignado por el emisor (<c>Idemisor</c>, hasta 10 dígitos): estrictamente
-    /// creciente dentro del proceso y basado en la hora para no repetirse entre reinicios.
-    /// Con varias instancias se usa <see cref="SiguienteIdEnvioAsync"/>, que lo reserva en el
-    /// almacenamiento compartido.
-    /// </summary>
-    protected virtual long SiguienteIdEnvio()
-    {
-        lock (_idEnvioLock)
-        {
-            _ultimoIdEnvio = Math.Max(_ultimoIdEnvio + 1, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-            return _ultimoIdEnvio;
-        }
-    }
-
-    /// <summary>
-    /// Número de envío del emisor: lo reserva el <see cref="ICaeRepositoryCompartido"/> si está
-    /// configurado (único entre instancias) y, si no, <see cref="SiguienteIdEnvio"/>.
-    /// </summary>
-    protected virtual async ValueTask<long> SiguienteIdEnvioAsync(CancellationToken cancellationToken)
-    {
-        if (_caeRepository is ICaeRepositoryCompartido compartido)
-            return await compartido.ReservarIdEnvioAsync(cancellationToken);
-        return SiguienteIdEnvio();
-    }
-
-    // -----------------------------------------------------------------------
-    // PDF
-    // -----------------------------------------------------------------------
-
-    /// <summary>
-    /// Genera el PDF A4 del CFE.
-    /// </summary>
-    /// <param name="cfe">El CFE.</param>
-    /// <returns>Bytes del PDF.</returns>
-    /// <exception cref="InvalidOperationException">
-    /// Si el cliente fue construido sin un generador de PDF.
-    /// Use <see cref="UruFacturaClientBuilder.WithPdfGenerator"/> o el constructor con <see cref="ICfePdfGenerator"/>.
-    /// </exception>
-    public virtual byte[] GenerarPdfA4(Cfe cfe)
-    {
-        ThrowIfDisposed();
-        ThrowIfNoPdfGenerator();
-        AsegurarFirmado(cfe);
-        return _pdfGenerator!.GenerarA4(cfe);
-    }
-
-    /// <summary>
-    /// Genera el PDF térmico (ticket 80mm) del CFE.
-    /// </summary>
-    /// <param name="cfe">El CFE.</param>
-    /// <returns>Bytes del PDF.</returns>
-    /// <exception cref="InvalidOperationException">
-    /// Si el cliente fue construido sin un generador de PDF.
-    /// Use <see cref="UruFacturaClientBuilder.WithPdfGenerator"/> o el constructor con <see cref="ICfePdfGenerator"/>.
-    /// </exception>
-    public virtual byte[] GenerarPdfTermico(Cfe cfe)
-    {
-        ThrowIfDisposed();
-        ThrowIfNoPdfGenerator();
-        AsegurarFirmado(cfe);
-        return _pdfGenerator!.GenerarTermico(cfe);
-    }
-
-    // -----------------------------------------------------------------------
-    // Helpers
-    // -----------------------------------------------------------------------
-
-    /// <summary>
-    /// Extrae del XML firmado la fecha de firma (<c>TmstFirma</c>) y el código de seguridad
-    /// (<c>DigestValue</c> de la firma), que se imprimen en el QR de la representación impresa.
-    /// </summary>
-    private static void RegistrarDatosDeFirma(Cfe cfe, string xmlFirmado)
-    {
-        try
-        {
-            var doc = new System.Xml.XmlDocument();
-            doc.LoadXml(xmlFirmado);
-
-            var tmst = doc.SelectSingleNode("//*[local-name()='TmstFirma']")?.InnerText;
-            if (DateTimeOffset.TryParse(tmst, System.Globalization.CultureInfo.InvariantCulture,
-                    System.Globalization.DateTimeStyles.None, out var fecha))
-                cfe.FechaFirma = fecha;
-
-            cfe.CodigoSeguridad = doc.SelectSingleNode(
-                "//*[local-name()='SignedInfo']/*[local-name()='Reference']/*[local-name()='DigestValue']")
-                ?.InnerText.Trim();
-        }
-        catch (System.Xml.XmlException)
-        {
-            // Un firmante personalizado puede devolver XML que no sigue el formato estándar.
-        }
-    }
-
-    /// <summary>Genera y firma el CFE si todavía no lo está (para enviarlo, registrarlo o imprimirlo).</summary>
-    private void AsegurarFirmado(Cfe cfe)
-    {
-        if (string.IsNullOrWhiteSpace(cfe.XmlFirmado))
-            GenerarYFirmar(cfe);
-    }
-
-    private void ThrowIfDisposed() =>
-        ObjectDisposedException.ThrowIf(_disposed, this);
-
-    private ICfeRepository RequerirCfeRepository() =>
-        _cfeRepository ?? throw new InvalidOperationException(
-            "Este cliente no tiene un ICfeRepository configurado. " +
-            "Use UruFacturaClientBuilder.WithCfeRepository(miRepositorio).");
-
-    private void ThrowIfNoPdfGenerator()
-    {
-        if (_pdfGenerator is null)
-            throw new InvalidOperationException(
-                "Este cliente no tiene un generador de PDF configurado. " +
-                "Use UruFacturaClientBuilder.WithDefaults(config).WithDefaultPdf().Build() (paquete completo) " +
-                "o .WithPdfGenerator(miGenerador).Build() para inyectar una implementación personalizada.");
+        await _store.GuardarCaeAsync(cae, cancellationToken);
     }
 
     /// <inheritdoc />
-    public virtual void Dispose()
+    public async Task EliminarCaeAsync(Cae cae, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(cae);
+        if (!await _store.EliminarCaeAsync(cae, cancellationToken))
+            throw new CaeException(
+                $"El CAE {cae.NumeroAutorizacion} ({cae.TipoCfe}, serie {cae.Serie}, desde {cae.RangoDesde}) no está " +
+                "registrado o ya numeró comprobantes: no se puede eliminar.");
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<Cae>> ObtenerCaesAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        return await _store.ListarCaesAsync(cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> ObtenerAdvertenciasCaeAsync(
+        int diasAlertaVencimiento = 7, decimal porcentajeAlertaUso = 80m, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        var hoy = HoraUruguay.Hoy(_reloj);
+        var caes = await _store.ListarCaesAsync(cancellationToken);
+        return [.. caes.Select(c => c.ObtenerAdvertencia(hoy, diasAlertaVencimiento, porcentajeAlertaUso)).OfType<string>()];
+    }
+
+    // -----------------------------------------------------------------------
+    // Emisión
+    // -----------------------------------------------------------------------
+
+    /// <inheritdoc />
+    public IReadOnlyList<ErrorValidacion> Validar(Cfe cfe)
+    {
+        ArgumentNullException.ThrowIfNull(cfe);
+        return Resolver(cfe, HoraUruguay.Hoy(_reloj)).Errores;
+    }
+
+    /// <inheritdoc />
+    public async Task<CfeEmitido> EmitirAsync(Cfe cfe, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(cfe);
+
+        var ahora = HoraUruguay.Ahora(_reloj);
+        ahora = ahora.AddTicks(-(ahora.Ticks % TimeSpan.TicksPerSecond)); // TmstFirma se informa en segundos
+        var hoy = DateOnly.FromDateTime(ahora.DateTime);
+
+        var (documento, errores) = Resolver(cfe, hoy);
+        if (errores.Count > 0)
+            throw new CfeValidationException(errores);
+
+        // El reintento de una emisión que ya se completó no emite otro comprobante.
+        if (!string.IsNullOrWhiteSpace(documento.NroInterno)
+            && (await _store.BuscarCfesAsync(documento.NroInterno, cancellationToken))
+                .FirstOrDefault(c => c.Tipo == documento.Tipo && c.EstadoDgi != EstadoCfe.Rechazado) is { } existente)
+            throw new CfeDuplicadoException(existente);
+
+        var totales = documento.CalcularTotales();
+        for (var intento = 1; ; intento++)
+        {
+            var leido = Cae.Elegir(await _store.ListarCaesAsync(cancellationToken), documento.Tipo, hoy)
+                ?? throw new CaeException(
+                    $"No hay un CAE vigente con números disponibles para {documento.Tipo}. Registre uno con RegistrarCaeAsync.");
+            var numero = leido.ProximoNumero;
+            var cae = leido with { UltimoNroUsado = numero };
+
+            var xml = CfeXml.Generar(documento, cae, numero, totales, ahora);
+            var (firmado, codigoSeguridad) = FirmaDigital.Firmar(xml, _certificado, _config.AlgoritmoFirma);
+            var emitido = new CfeEmitido(documento, cae, numero, totales, ahora, codigoSeguridad, firmado);
+
+            // El número se consume solo junto con el registro del CFE: el registro no se cancela a mitad.
+            cancellationToken.ThrowIfCancellationRequested();
+            if (await _store.RegistrarEmisionAsync(emitido, leido.UltimoNroUsado, CancellationToken.None))
+                return emitido;
+
+            // Otra emisión usó el número: se vuelve a numerar.
+            if (intento == MaxIntentosEmision)
+                throw new UruFacturaException(
+                    $"No se pudo numerar el CFE tras {MaxIntentosEmision} intentos (contención con otras emisiones).");
+            await Task.Delay(Random.Shared.Next(1, Math.Min(50, 5 * intento) + 1), cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// El CFE con la fecha de emisión y el emisor efectivos y copias de sus listas (lo que el llamador
+    /// cambie después no altera lo emitido), y sus errores de validación.
+    /// </summary>
+    private (Cfe Documento, List<ErrorValidacion> Errores) Resolver(Cfe cfe, DateOnly hoy)
+    {
+        var emisor = cfe.Emisor ?? _config.Emisor;
+        var documento = cfe with
+        {
+            FechaEmision = cfe.FechaEmision ?? hoy,
+            Emisor = emisor with { Telefonos = Copia(emisor.Telefonos) },
+            Detalle = Copia(cfe.Detalle) is { Count: > 0 } detalle
+                ? [.. detalle.Select(l => l with { Codigos = Copia(l.Codigos), Retenciones = Copia(l.Retenciones) })]
+                : [],
+            DescuentosRecargos = Copia(cfe.DescuentosRecargos),
+            MediosPago = Copia(cfe.MediosPago),
+            Referencias = Copia(cfe.Referencias),
+        };
+
+        var errores = documento.Validar(hoy, _config.ValorUnidadIndexada is { } ui ? ui * 5000m : null);
+
+        if (cfe.Emisor is { } propio)
+        {
+            errores.AddRange(propio.Validar());
+            if (propio.Rut != _config.Emisor.Rut)
+                errores.Add(new ErrorValidacion("Emisor.Rut", "Debe ser el RUT de la configuración (el del certificado)."));
+        }
+
+        return (documento, errores);
+    }
+
+    private static IReadOnlyList<T> Copia<T>(IReadOnlyList<T>? lista) => lista is null or { Count: 0 } ? [] : [.. lista];
+
+    // -----------------------------------------------------------------------
+    // DGI
+    // -----------------------------------------------------------------------
+
+    /// <inheritdoc />
+    public Task<AcuseSobre> EnviarAsync(CfeEmitido cfe, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(cfe);
+        return EnviarAsync([cfe], cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<AcuseSobre> EnviarAsync(IReadOnlyCollection<CfeEmitido> cfes, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(cfes);
+        if (cfes.Count is < 1 or > CfeSobre.MaxCfePorSobre)
+            throw new UruFacturaException(
+                $"Un sobre debe contener entre 1 y {CfeSobre.MaxCfePorSobre} CFE (recibidos: {cfes.Count}).");
+        if (cfes.Select(c => (c.Tipo, c.Serie, c.Numero)).Distinct().Count() != cfes.Count)
+            throw new UruFacturaException("El sobre incluye el mismo CFE más de una vez.");
+        if (cfes.FirstOrDefault(c => c.Enviado || c.EstadoDgi is not null) is { } enviado)
+            throw new InvalidOperationException(
+                $"El CFE {enviado} ya {(enviado.EstadoDgi is { } estado ? $"tiene resultado de la DGI ({estado})" : "fue recibido por la DGI")}: " +
+                "no se reenvía, porque la DGI lo trataría como duplicado. Su estado se consulta con ConsultarCfeAsync.");
+
+        var comprobantes = cfes.ToList();
+        var sobre = CfeSobre.Generar(
+            _config.Emisor.Rut,
+            await _store.ReservarIdEnvioAsync(cancellationToken),
+            _reloj.GetUtcNow(),
+            _certificado.RawData,
+            [.. comprobantes.Select(c => c.Xml)]);
+
+        var acuse = await _dgi.EnviarSobreAsync(sobre, cancellationToken);
+
+        // El sobre ya llegó a la DGI: el acuse se registra aunque se cancele la operación.
+        foreach (var cfe in comprobantes)
+            cfe.RegistrarEnvio(acuse);
+        await _store.GuardarCfesAsync(comprobantes, CancellationToken.None);
+
+        return acuse with { Comprobantes = comprobantes };
+    }
+
+    /// <inheritdoc />
+    public async Task<EstadoEnvio> ConsultarEnvioAsync(AcuseSobre acuse, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(acuse);
+        if (!acuse.Recibido || string.IsNullOrWhiteSpace(acuse.IdReceptor) || string.IsNullOrWhiteSpace(acuse.Token))
+            throw new InvalidOperationException("El sobre no fue recibido por la DGI: no hay resultado que consultar.");
+
+        var estado = await _dgi.ConsultarEnvioAsync(acuse.IdReceptor, acuse.Token, cancellationToken);
+
+        // Cada resultado se asocia por tipo, serie y número o, si la DGI no los informa, por la posición en el sobre.
+        var actualizados = new List<CfeEmitido>();
+        for (var i = 0; i < acuse.Comprobantes.Count; i++)
+        {
+            var cfe = acuse.Comprobantes[i];
+            var ordinal = i + 1;
+            if (estado.Comprobantes.FirstOrDefault(e => e.Corresponde(cfe, ordinal)) is not { } resultado)
+                continue;
+            cfe.RegistrarEstado(resultado);
+            actualizados.Add(cfe);
+        }
+        if (actualizados.Count > 0)
+            await _store.GuardarCfesAsync(actualizados, CancellationToken.None);
+
+        return estado;
+    }
+
+    /// <inheritdoc />
+    public async Task<EstadoComprobante> ConsultarCfeAsync(CfeEmitido cfe, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(cfe);
+
+        var estado = await _dgi.ConsultarCfeAsync(cfe.Tipo, cfe.Serie, cfe.Numero, cancellationToken);
+        cfe.RegistrarEstado(estado);
+        await _store.GuardarCfesAsync([cfe], CancellationToken.None);
+        return estado;
+    }
+
+    /// <inheritdoc />
+    public async Task<AcuseReporte> EnviarReporteDiarioAsync(DateOnly fecha, int secEnvio = 1, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (fecha > HoraUruguay.Hoy(_reloj))
+            throw new UruFacturaException("No se puede enviar el reporte diario de una fecha futura.");
+        if (secEnvio is < 1 or > 99)
+            throw new UruFacturaException("SecEnvio debe estar entre 1 (el primer envío del día) y 99.");
+
+        // Se resume a medida que se lee: no se cargan en memoria los XML de todo el día.
+        var resumen = new ReporteDiario.Acumulador(fecha);
+        await foreach (var cfe in _store.ListarCfesAsync(fecha, cancellationToken))
+            resumen.Agregar(cfe);
+
+        var reporte = resumen.Generar(
+            _config.Emisor.Rut, secEnvio, await _store.ReservarIdEnvioAsync(cancellationToken), _reloj.GetUtcNow());
+        var (firmado, _) = FirmaDigital.Firmar(reporte, _certificado, _config.AlgoritmoFirma);
+
+        var acuse = await _dgi.EnviarReporteAsync(firmado, cancellationToken);
+        return acuse with { Fecha = fecha, CantidadCfe = resumen.Cantidad };
+    }
+
+    // -----------------------------------------------------------------------
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
+
+    /// <inheritdoc />
+    public void Dispose()
     {
         if (_disposed) return;
-        _soapClient.Dispose();
-        _firmante.Dispose();
         _disposed = true;
-        GC.SuppressFinalize(this);
+        _dgiPropio?.Dispose();
+        if (_certificadoPropio)
+            _certificado.Dispose();
     }
 }

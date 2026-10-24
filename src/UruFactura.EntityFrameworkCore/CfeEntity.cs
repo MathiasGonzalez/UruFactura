@@ -1,11 +1,10 @@
-using UruFactura.Enums;
-using UruFactura.Models;
+using System.Text.Json;
 
 namespace UruFactura.EntityFrameworkCore;
 
 /// <summary>
-/// CFE emitido (tabla <c>UruFacturaCfes</c>): numeración, totales para el reporte diario, XML firmado
-/// y estado ante la DGI. Tipo, serie y número son únicos.
+/// CFE emitido (tabla <c>UruFacturaCfes</c>): el XML firmado, el contenido (en <see cref="Datos"/>,
+/// JSON) y el estado ante la DGI, con columnas para buscar. Tipo, serie y número son únicos.
 /// </summary>
 public class CfeEntity
 {
@@ -25,29 +24,26 @@ public class CfeEntity
     public string? ReceptorDocumento { get; set; }
 
     public Moneda Moneda { get; set; }
-    public decimal? TipoCambio { get; set; }
-
-    public decimal MontoNetoExento { get; set; }
-    public decimal MontoNetoSuspendido { get; set; }
-    public decimal MontoNetoMinimo { get; set; }
-    public decimal MontoNetoBasico { get; set; }
-    public decimal IvaMinimo { get; set; }
-    public decimal IvaBasico { get; set; }
-    public decimal MontoExportacion { get; set; }
     public decimal MontoTotal { get; set; }
-    public decimal MontoRetenido { get; set; }
 
-    public DateTimeOffset? FechaFirma { get; set; }
-    public string? CodigoSeguridad { get; set; }
+    /// <summary>Fecha y hora de la firma, en UTC.</summary>
+    public DateTimeOffset FechaFirma { get; set; }
 
-    /// <summary>XML firmado tal como se envió a la DGI (debe conservarse durante el plazo legal).</summary>
-    public string? XmlFirmado { get; set; }
+    public string CodigoSeguridad { get; set; } = string.Empty;
+
+    /// <summary>XML firmado tal como se envía a la DGI (debe conservarse durante el plazo legal).</summary>
+    public string Xml { get; set; } = string.Empty;
+
+    /// <summary>Contenido emitido, CAE y totales en JSON (para reconstruir el <see cref="CfeEmitido"/>).</summary>
+    public string Datos { get; set; } = string.Empty;
 
     public string? IdReceptorDgi { get; set; }
     public string? TokenDgi { get; set; }
-    public string? CodigoRespuestaDgi { get; set; }
-    public string? MensajeRespuestaDgi { get; set; }
-    public bool AceptadoPorDgi { get; set; }
+
+    /// <summary>Último estado informado por la DGI (se guarda como texto: <c>Aceptado</c>, <c>Rechazado</c>, ...); <c>null</c> sin resultado.</summary>
+    public EstadoCfe? EstadoDgi { get; set; }
+
+    public string? MensajeDgi { get; set; }
 
     /// <summary>Alta del registro (UTC).</summary>
     public DateTimeOffset FechaRegistro { get; set; }
@@ -55,71 +51,54 @@ public class CfeEntity
     /// <summary>Última actualización del registro (UTC).</summary>
     public DateTimeOffset FechaActualizacion { get; set; }
 
-    /// <summary>
-    /// Reconstruye el CFE con lo necesario para el reporte diario, para consultar su estado y para
-    /// reenviarlo (<see cref="Cfe.XmlFirmado"/>). No incluye el detalle ni los datos del receptor.
-    /// </summary>
-    public Cfe ToCfe() => new()
+    /// <summary>Lo que se guarda en <see cref="Datos"/>.</summary>
+    private sealed record DatosCfe(Cfe Documento, Cae Cae, Totales Totales);
+
+    /// <summary>Reconstruye el CFE emitido, con su estado ante la DGI.</summary>
+    public CfeEmitido ToCfeEmitido()
     {
-        Tipo = TipoCfe,
-        Serie = Serie,
-        Numero = Numero,
-        FechaEmision = FechaEmision,
-        CodigoSucursal = CodigoSucursal,
-        NroInterno = NroInterno,
-        Moneda = Moneda,
-        TipoCambio = TipoCambio,
-        MontoNetoExento = MontoNetoExento,
-        MontoNetoSuspendido = MontoNetoSuspendido,
-        MontoNetoMinimo = MontoNetoMinimo,
-        MontoNetoBasico = MontoNetoBasico,
-        IvaMinimo = IvaMinimo,
-        IvaBasico = IvaBasico,
-        MontoExportacion = MontoExportacion,
-        MontoTotal = MontoTotal,
-        MontoRetenido = MontoRetenido,
-        FechaFirma = FechaFirma,
-        CodigoSeguridad = CodigoSeguridad,
-        XmlFirmado = XmlFirmado,
-        IdReceptorDgi = IdReceptorDgi,
-        TokenDgi = TokenDgi,
-        CodigoRespuestaDgi = CodigoRespuestaDgi,
-        MensajeRespuestaDgi = MensajeRespuestaDgi,
-        AceptadoPorDgi = AceptadoPorDgi,
-    };
+        var datos = JsonSerializer.Deserialize<DatosCfe>(Datos)
+            ?? throw new InvalidOperationException($"El CFE {TipoCfe} {Serie}-{Numero} no tiene datos.");
 
-    /// <summary>
-    /// Copia los datos del CFE. Los opcionales que lleguen vacíos (p. ej. el XML de un CFE
-    /// reconstruido sin él) no borran los guardados.
-    /// </summary>
-    internal void CopiarDesde(Cfe cfe, DateTimeOffset ahora)
+        return new CfeEmitido(datos.Documento, datos.Cae, Numero, datos.Totales, FechaFirma, CodigoSeguridad, Xml)
+        {
+            IdReceptorDgi = IdReceptorDgi,
+            TokenDgi = TokenDgi,
+            EstadoDgi = EstadoDgi,
+            MensajeDgi = MensajeDgi,
+        };
+    }
+
+    internal static CfeEntity Desde(CfeEmitido cfe, DateTimeOffset ahora)
     {
-        FechaEmision = cfe.FechaEmision;
-        CodigoSucursal = cfe.CodigoSucursal;
-        NroInterno = cfe.NroInterno ?? NroInterno;
-        ReceptorDocumento = string.IsNullOrWhiteSpace(cfe.Receptor?.Documento) ? ReceptorDocumento : cfe.Receptor.Documento;
-        Moneda = cfe.Moneda;
-        TipoCambio = cfe.TipoCambio;
+        var entidad = new CfeEntity
+        {
+            TipoCfe = cfe.Tipo,
+            Serie = cfe.Serie,
+            Numero = cfe.Numero,
+            FechaEmision = cfe.FechaEmision,
+            CodigoSucursal = cfe.Emisor.CodigoSucursal,
+            NroInterno = cfe.Documento.NroInterno,
+            ReceptorDocumento = cfe.Documento.Receptor?.Documento,
+            Moneda = cfe.Documento.Moneda,
+            MontoTotal = cfe.Totales.MontoTotal,
+            // En UTC: Npgsql solo admite offset 0 en "timestamp with time zone" y TmstFirma viene en −03:00.
+            FechaFirma = cfe.FechaFirma.ToUniversalTime(),
+            CodigoSeguridad = cfe.CodigoSeguridad,
+            Xml = cfe.Xml,
+            Datos = JsonSerializer.Serialize(new DatosCfe(cfe.Documento, cfe.Cae, cfe.Totales)),
+            FechaRegistro = ahora,
+        };
+        entidad.CopiarEstado(cfe, ahora);
+        return entidad;
+    }
 
-        MontoNetoExento = cfe.MontoNetoExento;
-        MontoNetoSuspendido = cfe.MontoNetoSuspendido;
-        MontoNetoMinimo = cfe.MontoNetoMinimo;
-        MontoNetoBasico = cfe.MontoNetoBasico;
-        IvaMinimo = cfe.IvaMinimo;
-        IvaBasico = cfe.IvaBasico;
-        MontoExportacion = cfe.MontoExportacion;
-        MontoTotal = cfe.MontoTotal;
-        MontoRetenido = cfe.MontoRetenido;
-
-        // En UTC: Npgsql solo admite offset 0 en "timestamp with time zone" y TmstFirma viene en −03:00.
-        FechaFirma = cfe.FechaFirma?.ToUniversalTime() ?? FechaFirma;
-        CodigoSeguridad = cfe.CodigoSeguridad ?? CodigoSeguridad;
-        XmlFirmado = string.IsNullOrWhiteSpace(cfe.XmlFirmado) ? XmlFirmado : cfe.XmlFirmado;
-        IdReceptorDgi = cfe.IdReceptorDgi ?? IdReceptorDgi;
-        TokenDgi = cfe.TokenDgi ?? TokenDgi;
-        CodigoRespuestaDgi = cfe.CodigoRespuestaDgi ?? CodigoRespuestaDgi;
-        MensajeRespuestaDgi = cfe.MensajeRespuestaDgi ?? MensajeRespuestaDgi;
-        AceptadoPorDgi = cfe.AceptadoPorDgi;
+    internal void CopiarEstado(CfeEmitido cfe, DateTimeOffset ahora)
+    {
+        IdReceptorDgi = cfe.IdReceptorDgi;
+        TokenDgi = cfe.TokenDgi;
+        EstadoDgi = cfe.EstadoDgi;
+        MensajeDgi = cfe.MensajeDgi;
         FechaActualizacion = ahora;
     }
 }

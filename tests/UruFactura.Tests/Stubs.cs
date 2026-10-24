@@ -1,93 +1,98 @@
-using UruFactura.Models;
-using UruFactura.Pdf;
-using UruFactura.Signature;
-using UruFactura.Soap;
-using UruFactura.Xml;
+using System.Collections.Concurrent;
+using System.Text.RegularExpressions;
 
 namespace UruFactura.Tests;
 
-// Dobles de prueba compartidos por los tests del cliente y del builder (sin red, disco ni firma real).
-
-internal sealed class XmlBuilderStub(string xml = "<CFE/>") : ICfeXmlBuilder
+/// <summary>
+/// DGI simulada (sin red): registra lo que recibe, numera los sobres y responde con los estados
+/// configurados. Es thread-safe.
+/// </summary>
+internal sealed class DgiStub : IDgiClient
 {
-    public bool LlamadoGenerar { get; private set; }
-    public string Generar(Cfe cfe) { LlamadoGenerar = true; return xml; }
-}
+    private int _idReceptor;
 
-internal sealed class FirmanteStub : ICfeFirmante
-{
-    public bool LlamadoFirmar => ContadorFirmar > 0;
-    public int ContadorFirmar { get; set; }
-    public bool Disposed { get; private set; }
+    /// <summary>Estado del acuse de los sobres (recibido por defecto).</summary>
+    public EstadoSobre EstadoSobre { get; set; } = EstadoSobre.Recibido;
 
-    public string Firmar(string xmlSinFirmar)
+    /// <summary>Estado de cada comprobante en la consulta del envío (por número); los no indicados son aceptados.</summary>
+    public ConcurrentDictionary<long, EstadoCfe> EstadoPorNumero { get; } = [];
+
+    /// <summary>Si es <c>true</c>, la consulta del envío responde que el sobre aún no se procesó.</summary>
+    public bool SinProcesar { get; set; }
+
+    /// <summary>
+    /// Si es <c>true</c>, el resultado del envío trae solo <c>Nro_ordinal</c> (tipo, serie y número son
+    /// opcionales en el XSD) y en orden inverso al del sobre.
+    /// </summary>
+    public bool SoloOrdinal { get; set; }
+
+    public ConcurrentQueue<string> Sobres { get; } = [];
+    public ConcurrentQueue<string> Reportes { get; } = [];
+    public ConcurrentBag<long> IdsEnvio { get; } = [];
+    private readonly ConcurrentDictionary<string, IReadOnlyList<(int Tipo, string Serie, long Numero)>> _sobres = [];
+
+    public string? UltimoSobre => Sobres.LastOrDefault();
+    public string? UltimoReporte => Reportes.LastOrDefault();
+
+    private static long Numero(string xml, string elemento) =>
+        long.Parse(Regex.Match(xml, $"<{elemento}>(\\d+)</{elemento}>").Groups[1].Value);
+
+    public Task<AcuseSobre> EnviarSobreAsync(string sobreXml, CancellationToken cancellationToken = default)
     {
-        ContadorFirmar++;
-        return xmlSinFirmar.Replace("<CFE/>", "<CFE><Firmado/></CFE>");
+        Sobres.Enqueue(sobreXml);
+        IdsEnvio.Add(Numero(sobreXml, "Idemisor"));
+        var id = Interlocked.Increment(ref _idReceptor).ToString();
+        _sobres[id] = [.. Regex.Matches(sobreXml, "<TipoCFE>(\\d+)</TipoCFE><Serie>(\\w+)</Serie><Nro>(\\d+)</Nro>")
+            .Select(m => (int.Parse(m.Groups[1].Value), m.Groups[2].Value, long.Parse(m.Groups[3].Value)))];
+
+        var recibido = EstadoSobre == EstadoSobre.Recibido;
+        return Task.FromResult(new AcuseSobre
+        {
+            Estado = EstadoSobre,
+            Mensaje = recibido ? "Recibido" : "Rechazado",
+            IdReceptor = recibido ? id : null,
+            Token = recibido ? "tok" : null,
+        });
     }
 
-    public byte[] ObtenerCertificadoDer() => [1, 2, 3];
-    public void Dispose() { Disposed = true; }
-}
-
-internal sealed class SoapClientStub(
-    string codigo = "AS",
-    string mensaje = "OK",
-    bool exitoso = true) : IDgiSoapClient
-{
-    public bool LlamadoEnviarCfe { get; private set; }
-    public bool LlamadoConsultarEstado { get; private set; }
-    public bool LlamadoEnviarReporte { get; private set; }
-    public bool Disposed { get; private set; }
-    public string? UltimoSobre { get; private set; }
-    public string? UltimoReporte { get; private set; }
-    public string? UltimoIdReceptorConsultado { get; private set; }
-    public List<EstadoComprobante> EstadoEnvio { get; } = [];
-
-    private RespuestaDgi Respuesta() => exitoso
-        ? RespuestaDgi.Exito(codigo, mensaje)
-        : RespuestaDgi.Error(codigo, mensaje);
-
-    public Task<RespuestaDgi> EnviarSobreAsync(string sobreXml, CancellationToken ct = default)
+    public Task<EstadoEnvio> ConsultarEnvioAsync(string idReceptor, string token, CancellationToken cancellationToken = default)
     {
-        LlamadoEnviarCfe = true;
-        UltimoSobre = sobreXml;
-        var r = Respuesta();
-        r.IdReceptor = "555";
-        r.Token = "tok";
-        return Task.FromResult(r);
+        var detalle = _sobres[idReceptor].Select((c, i) =>
+        {
+            var estado = EstadoPorNumero.GetValueOrDefault(c.Numero, EstadoCfe.Aceptado);
+            return new EstadoComprobante
+            {
+                NroOrdinal = i + 1,
+                TipoCfe = SoloOrdinal ? null : c.Tipo,
+                Serie = SoloOrdinal ? null : c.Serie,
+                Numero = SoloOrdinal ? null : c.Numero,
+                Estado = estado,
+                Motivos = estado == EstadoCfe.Aceptado ? [] : ["E01 Fuera de rango"],
+            };
+        }).ToList();
+        if (SoloOrdinal)
+            detalle.Reverse();
+
+        return Task.FromResult(new EstadoEnvio { Comprobantes = SinProcesar ? [] : detalle });
     }
 
-    public Task<RespuestaDgi> ConsultarEstadoEnvioAsync(string idReceptor, string token, CancellationToken ct = default)
+    public Task<EstadoComprobante> ConsultarCfeAsync(TipoCfe tipo, string serie, long numero, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new EstadoComprobante
+        {
+            TipoCfe = (int)tipo, Serie = serie, Numero = numero, Estado = EstadoPorNumero.GetValueOrDefault(numero, EstadoCfe.Aceptado),
+        });
+
+    public Task<AcuseReporte> EnviarReporteAsync(string reporteFirmadoXml, CancellationToken cancellationToken = default)
     {
-        LlamadoConsultarEstado = true;
-        UltimoIdReceptorConsultado = idReceptor;
-        var r = Respuesta();
-        r.Comprobantes = EstadoEnvio;
-        return Task.FromResult(r);
+        Reportes.Enqueue(reporteFirmadoXml);
+        IdsEnvio.Add(Numero(reporteFirmadoXml, "IDEmisor"));
+        return Task.FromResult(new AcuseReporte { Estado = EstadoReporte.Recibido, Mensaje = "Recibido" });
     }
 
-    public Task<RespuestaDgi> ConsultarEstadoCfeAsync(int tipo, string serie, long numero, CancellationToken ct = default)
-    {
-        LlamadoConsultarEstado = true;
-        return Task.FromResult(Respuesta());
-    }
-
-    public Task<RespuestaDgi> EnviarReporteDiarioAsync(string reporteFirmadoXml, CancellationToken ct = default)
-    {
-        LlamadoEnviarReporte = true;
-        UltimoReporte = reporteFirmadoXml;
-        return Task.FromResult(Respuesta());
-    }
-
-    public IDgiSoapClient WithHttpClient(HttpClient httpClient) => this;
-    public void Dispose() { Disposed = true; }
-}
-
-internal sealed class PdfGeneratorStub : ICfePdfGenerator
-{
-    public bool LlamadoGenerarA4 { get; private set; }
-    public bool LlamadoGenerarTermico { get; private set; }
-    public byte[] GenerarA4(Cfe cfe) { LlamadoGenerarA4 = true; return [1, 2, 3]; }
-    public byte[] GenerarTermico(Cfe cfe) { LlamadoGenerarTermico = true; return [4, 5, 6]; }
+    /// <summary>
+    /// Un cliente con esta DGI simulada, el certificado de prueba y el almacenamiento indicado (o uno en
+    /// memoria), con el reloj en <see cref="TestData.Dia"/> salvo que se indique otro.
+    /// </summary>
+    public UruFacturaClient Cliente(IUruFacturaStore? store = null, TimeProvider? reloj = null, UruFacturaConfig? config = null) =>
+        new(config ?? TestData.Config(), store, dgiClient: this, reloj: reloj ?? TestData.Reloj);
 }

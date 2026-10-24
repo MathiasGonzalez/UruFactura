@@ -1,15 +1,16 @@
-namespace UruFactura.Exceptions;
+namespace UruFactura;
 
 /// <summary>
-/// Error de validación del CFE antes de enviarlo a la DGI.
+/// El CFE no es válido: no se emitió ni se consumió ningún número.
 /// </summary>
 public class CfeValidationException : UruFacturaException
 {
-    public IReadOnlyList<string> Errors { get; }
+    /// <summary>Errores de validación, con la propiedad afectada de cada uno.</summary>
+    public IReadOnlyList<ErrorValidacion> Errores { get; }
 
-    public CfeValidationException(IReadOnlyList<string> errors)
-        : base($"El CFE contiene {errors.Count} error(es) de validación: {string.Join("; ", errors)}")
+    public CfeValidationException(IReadOnlyList<ErrorValidacion> errores)
+        : base($"El CFE tiene {errores.Count} error(es) de validación: {string.Join("; ", errores)}")
     {
-        Errors = errors;
+        Errores = errores;
     }
 }

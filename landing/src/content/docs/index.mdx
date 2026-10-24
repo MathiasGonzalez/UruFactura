@@ -17,32 +17,28 @@ hero:
       link: https://www.nuget.org/packages/UruFactura/
       icon: external
       variant: secondary
-    - text: UruFactura.Lite en NuGet
-      link: https://www.nuget.org/packages/UruFactura.Lite/
-      icon: external
-      variant: secondary
     - text: Ver en GitHub
       link: https://github.com/MathiasGonzalez/UruFactura
       icon: external
       variant: minimal
 ---
 
-import { Card, CardGrid, LinkCard, Tabs, TabItem, Badge, Aside } from '@astrojs/starlight/components';
+import { Card, CardGrid, LinkCard, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
 ## ¿Por qué UruFactura?
 
 <CardGrid stagger>
   <Card title="Simplicidad ante todo" icon="pencil">
-    Olvidate de lidiar con SOAP, XML y estructuras complejas. Creá un e-Ticket con pocas líneas de C#.
+    Describís el comprobante; UruFactura lo valida, lo numera, lo firma y lo envía. Un solo namespace y un cliente.
   </Card>
   <Card title="Firma Digital incluida" icon="approve-check-circle">
-    Firma XML y WS-Security integradas con certificados `.p12` / `.pfx`, validadas contra los XSD y WSDL oficiales de la DGI.
+    Firma XML y WS-Security con certificados `.p12` / `.pfx` o de Key Vault/HSM, validadas contra los XSD y WSDL oficiales de la DGI.
   </Card>
   <Card title="Todos los tipos de CFE" icon="document">
-    e-Ticket, e-Factura, e-Remito, Exportación, Notas de Crédito/Débito, e-Resguardo y más.
+    e-Ticket, e-Factura, e-Remito, exportación, notas de crédito/débito, e-Resguardo, cuenta ajena y contingencia.
   </Card>
-  <Card title="PDFs listos para imprimir" icon="laptop">
-    Generá representaciones impresas A4 y térmicas (80mm) con QR y sellos de seguridad DGI.
+  <Card title="Listo para producción" icon="laptop">
+    Numeración atómica entre instancias con EF Core, reporte diario y PDF A4/térmico con QR.
   </Card>
 </CardGrid>
 
@@ -50,31 +46,19 @@ import { Card, CardGrid, LinkCard, Tabs, TabItem, Badge, Aside } from '@astrojs/
 
 ## Instalación en 30 segundos
 
-Ambos paquetes están disponibles en NuGet Gallery:
-
 <Tabs>
-  <TabItem label="Paquete completo (con PDF)">
+  <TabItem label="dotnet CLI">
   ```bash
   dotnet add package UruFactura
-  ```
-  </TabItem>
-  <TabItem label="Lite (sin QuestPDF / SkiaSharp)">
-  ```bash
-  dotnet add package UruFactura.Lite
-  ```
-  </TabItem>
-  <TabItem label="Package Manager">
-  ```powershell
-  Install-Package UruFactura
-  # o Lite:
-  Install-Package UruFactura.Lite
+  dotnet add package UruFactura.Pdf                   # representación impresa (opcional)
+  dotnet add package UruFactura.EntityFrameworkCore   # almacenamiento en base (producción)
   ```
   </TabItem>
   <TabItem label="PackageReference">
   ```xml
-  <PackageReference Include="UruFactura" Version="*" />
-  <!-- o Lite: -->
-  <PackageReference Include="UruFactura.Lite" Version="*" />
+  <PackageReference Include="UruFactura" Version="2.0.0" />
+  <PackageReference Include="UruFactura.Pdf" Version="2.0.0" />
+  <PackageReference Include="UruFactura.EntityFrameworkCore" Version="2.0.0" />
   ```
   </TabItem>
 </Tabs>
@@ -85,55 +69,49 @@ Ambos paquetes están disponibles en NuGet Gallery:
 
 ```csharp
 using UruFactura;
-using UruFactura.Models;
-using UruFactura.Enums;
 
 // 1. Configurar el cliente
 var config = new UruFacturaConfig
 {
-    RutEmisor           = "219999820013",
-    RazonSocialEmisor   = "Mi Empresa S.A.",
-    DomicilioFiscal     = "Av. 18 de Julio 1234",
-    Ciudad              = "Montevideo",
-    Departamento        = "Montevideo",
+    Emisor = new Emisor
+    {
+        Rut             = "219999820013",
+        RazonSocial     = "Mi Empresa S.A.",
+        DomicilioFiscal = "Av. 18 de Julio 1234",
+        Ciudad          = "Montevideo",
+        Departamento    = "Montevideo",
+    },
     Ambiente            = Ambiente.Homologacion,
     RutaCertificado     = "/ruta/al/certificado.p12",
-    PasswordCertificado = Environment.GetEnvironmentVariable("CERT_PASSWORD")!,
+    PasswordCertificado = Environment.GetEnvironmentVariable("CERT_PASSWORD"),
 };
 
 using var client = new UruFacturaClient(config);
 
-// 2. Registrar CAE
-client.Cae.RegistrarCae(new Cae
+// 2. Registrar el CAE que entregó la DGI
+await client.RegistrarCaeAsync(new Cae
 {
-    NroSerie         = "CAE2025001",
-    NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
-    Serie            = "A",
-    TipoCfe          = TipoCfe.ETicket,
-    RangoDesde       = 1,
-    RangoHasta       = 1000,
-    FechaVencimiento = new DateOnly(2026, 12, 31),
+    NumeroAutorizacion = "90110001945",
+    TipoCfe            = TipoCfe.ETicket,
+    Serie              = "A",
+    RangoDesde         = 1,
+    RangoHasta         = 1000,
+    FechaVencimiento   = new DateOnly(2027, 12, 31),
 });
 
-// 3. Crear y enviar e-Ticket
-var eticket = client.CrearETicket();
-client.AsignarCae(eticket);   // toma el próximo número del CAE
-eticket.Detalle.Add(new LineaDetalle
+// 3. Emitir (valida, numera, firma) y enviar
+var emitido = await client.EmitirAsync(new Cfe(TipoCfe.ETicket)
 {
-    NroLinea       = 1,
-    NombreItem     = "Servicio de consultoría",
-    Cantidad       = 1,
-    PrecioUnitario = 5000m,
-    IndFactIva     = TipoIva.Basico,
+    Detalle = [new LineaDetalle { NombreItem = "Servicio de consultoría", Cantidad = 1, PrecioUnitario = 5000m }],
 });
+var acuse = await client.EnviarAsync(emitido);   // AS = sobre recibido
 
-var respuesta = await client.EnviarCfeAsync(eticket);
-
-if (respuesta.Exitoso)
+// 4. Resultado del comprobante (AE = aceptado) y PDF (paquete UruFactura.Pdf)
+if (acuse.Recibido)
 {
-    Console.WriteLine($"✅ CFE aceptado: {respuesta.Mensaje}");
-    byte[] pdf = client.GenerarPdfA4(eticket);
-    await File.WriteAllBytesAsync("eticket_001.pdf", pdf);
+    await client.ConsultarEnvioAsync(acuse);
+    if (emitido.AceptadoPorDgi)
+        await File.WriteAllBytesAsync("eticket.pdf", CfePdf.GenerarA4(emitido));
 }
 ```
 
@@ -145,20 +123,16 @@ if (respuesta.Exitoso)
 
 ## Tipos de CFE soportados
 
-| Código | Tipo | Estado |
-|--------|------|--------|
-| 101 | e-Ticket | ✅ Soportado |
-| 102 | Nota de Crédito e-Ticket | ✅ Soportado |
-| 103 | Nota de Débito e-Ticket | ✅ Soportado |
-| 111 | e-Factura | ✅ Soportado |
-| 112 | Nota de Crédito e-Factura | ✅ Soportado |
-| 113 | Nota de Débito e-Factura | ✅ Soportado |
-| 121 | e-Factura de Exportación | ✅ Soportado |
-| 122 | Nota de Crédito Exportación | ✅ Soportado |
-| 123 | Nota de Débito Exportación | ✅ Soportado |
-| 124 | e-Remito de Exportación | ✅ Soportado |
-| 181 | e-Remito | ✅ Soportado |
-| 182 | e-Resguardo | ⏳ Pendiente (requiere retenciones) |
+| Código | Tipo |
+|--------|------|
+| 101 / 102 / 103 | e-Ticket y sus notas de crédito/débito |
+| 111 / 112 / 113 | e-Factura y sus notas |
+| 121 / 122 / 123 | e-Factura de Exportación y sus notas |
+| 124 | e-Remito de Exportación |
+| 181 | e-Remito |
+| 182 | e-Resguardo |
+| 131-133, 141-143 | Venta por cuenta ajena |
+| 2xx | Comprobantes de contingencia |
 
 ---
 
@@ -187,12 +161,7 @@ if (respuesta.Exitoso)
   />
   <LinkCard
     title="📦 UruFactura en NuGet"
-    description="Paquete completo con PDF. Versiones publicadas, dependencias y descargas."
+    description="Versiones publicadas, dependencias y descargas."
     href="https://www.nuget.org/packages/UruFactura/"
-  />
-  <LinkCard
-    title="📦 UruFactura.Lite en NuGet"
-    description="Paquete sin dependencias de PDF, ideal para microservicios y Azure Functions."
-    href="https://www.nuget.org/packages/UruFactura.Lite/"
   />
 </CardGrid>

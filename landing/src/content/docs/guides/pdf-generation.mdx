@@ -3,101 +3,79 @@ title: Generar PDFs
 description: Cómo generar representaciones impresas de CFEs en A4 y formato térmico
 ---
 
-import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
 
-UruFactura incluye un generador de PDFs que produce representaciones impresas de CFEs según la normativa DGI, incluyendo código QR y sellos de seguridad.
+El paquete **`UruFactura.Pdf`** genera la representación impresa de un `CfeEmitido` según la normativa de la DGI: datos del emisor y del receptor, detalle, totales, código QR y el pie con el código de seguridad, el CAE, el rango y el vencimiento.
+
+```bash
+dotnet add package UruFactura.Pdf
+```
 
 <Aside type="note">
-  La generación de PDF está disponible en el paquete **`UruFactura`** (completo). Si usás **`UruFactura.Lite`**, podés inyectar tu propia implementación de `ICfePdfGenerator` via `UruFacturaClientBuilder.WithDefaults(config).WithPdfGenerator(miGenerador).Build()`. Sin generador configurado, los métodos `GenerarPdfA4` y `GenerarPdfTermico` lanzarán `InvalidOperationException`.
+  El paquete core (`UruFactura`) no tiene dependencias de PDF. Si preferís tu propio diseño, todo lo necesario está en el `CfeEmitido`: `emitido.UrlQr` es el contenido del QR, `emitido.CodigoSeguridad` el código a imprimir (sus primeros 6 caracteres), y `emitido.Cae` el CAE con su rango y vencimiento.
 </Aside>
 
 ---
 
-## Formatos disponibles
+## Formatos
 
 | Formato | Método | Uso recomendado |
 |---------|--------|-----------------|
-| **A4** | `GenerarPdfA4(cfe)` | Email, archivo digital, impresora de oficina |
-| **Térmico 80mm** | `GenerarPdfTermico(cfe)` | Impresora de punto de venta (ticket) |
-
----
-
-## Generar PDF A4
+| **A4** | `CfePdf.GenerarA4(emitido)` | Email, archivo digital, impresora de oficina |
+| **Térmico 80 mm** | `CfePdf.GenerarTermico(emitido)` | Impresora de punto de venta (ticket) |
+| **QR (PNG)** | `CfePdf.GenerarQr(emitido)` | Para insertarlo en un diseño propio |
 
 ```csharp
-var eticket = client.CrearETicket();
-// ... configurar el e-ticket ...
+var emitido = await client.EmitirAsync(cfe);
 
-// Enviar primero (o solo generar y firmar si no querés enviar)
-await client.EnviarCfeAsync(eticket);
+byte[] a4     = CfePdf.GenerarA4(emitido);
+byte[] ticket = CfePdf.GenerarTermico(emitido);
 
-// Generar PDF A4
-byte[] pdfA4 = client.GenerarPdfA4(eticket);
-
-// Guardar en disco
-await File.WriteAllBytesAsync($"eticket_{eticket.Numero:D8}.pdf", pdfA4);
+await File.WriteAllBytesAsync($"facturas/{emitido.Numero:D8}.pdf", a4);
+await File.WriteAllBytesAsync($"tickets/{emitido.Numero:D8}_80mm.pdf", ticket);
 ```
 
----
+Son métodos estáticos y puros: no necesitan el cliente ni configuración, así que se puede reimprimir un CFE recuperado del almacenamiento (por ejemplo, `entidad.ToCfeEmitido()` con EF Core). Si la DGI ya lo aceptó (`emitido.AceptadoPorDgi`), el A4 lo indica.
 
-## Generar PDF Térmico (80mm)
+Las leyendas opcionales del pie salen del emisor: `Emisor.FechaIncorporacion` ("Fecha emisor") y `Emisor.UrlVerificacion` (sitio de verificación de los e-Tickets; por defecto el de la DGI).
 
-```csharp
-byte[] pdfTermico = client.GenerarPdfTermico(eticket);
-await File.WriteAllBytesAsync($"eticket_{eticket.Numero:D8}_termico.pdf", pdfTermico);
-```
+El contenido se adapta al tipo de comprobante:
 
----
+| Tipo | Detalle | Totales |
+|------|---------|---------|
+| e-Ticket, e-Factura y sus notas | Cantidad, descripción, precio, IVA de cada línea y total | Ajustes globales, netos e IVA por tasa, total |
+| Exportación (e-Factura y e-Remito) | Sin columna de IVA | Total en la moneda del comprobante |
+| e-Remito | Cantidad y descripción, sin precios | Sin montos |
+| e-Resguardo | Las retenciones/percepciones (código, tasa, monto sujeto y valor) | Total retenido |
 
-## Generar ambos formatos
-
-```csharp
-var (pdfA4, pdfTermico) = (
-    client.GenerarPdfA4(eticket),
-    client.GenerarPdfTermico(eticket)
-);
-
-await Task.WhenAll(
-    File.WriteAllBytesAsync($"facturas/{eticket.Numero:D8}.pdf", pdfA4),
-    File.WriteAllBytesAsync($"tickets/{eticket.Numero:D8}_80mm.pdf", pdfTermico)
-);
-```
+En moneda extranjera se imprime el código ISO y el tipo de cambio; las notas de crédito y débito muestran a qué comprobante refieren (tipo, serie, número, fecha, monto y razón).
 
 ---
 
-## Enviar PDF por email (ASP.NET Core)
+## Enviar el PDF por email (ASP.NET Core)
 
 ```csharp
-public class FacturaService
+public class FacturaService(IUruFacturaClient client, IEmailService email)
 {
-    private readonly UruFacturaClient _client;
-    private readonly IEmailService _emailService;
-
-    public async Task EmitirYEnviarAsync(string emailCliente, LineaDetalle[] detalle)
+    public async Task EmitirYEnviarAsync(string emailCliente, IReadOnlyList<LineaDetalle> detalle)
     {
-        var eticket = _client.CrearETicket();
-        client.AsignarCae(eticket);   // toma el próximo número del CAE
+        var emitido = await client.EmitirAsync(new Cfe(TipoCfe.ETicket) { Detalle = detalle });
 
-        foreach (var linea in detalle)
-            eticket.Detalle.Add(linea);
+        // Recibido = la DGI recibió el sobre; la aceptación del CFE se consulta después
+        var acuse = await client.EnviarAsync(emitido);
+        if (!acuse.Recibido)
+            throw new InvalidOperationException(acuse.Mensaje);   // "Sobre rechazado (BS): motivos"
 
-        var respuesta = await _client.EnviarCfeAsync(eticket);
-
-        if (!respuesta.Exitoso)
-            throw new InvalidOperationException($"DGI rechazó el CFE: {respuesta.Mensaje}");
-
-        byte[] pdf = _client.GenerarPdfA4(eticket);
-
-        await _emailService.SendAsync(new EmailMessage
+        await email.SendAsync(new EmailMessage
         {
             To         = emailCliente,
-            Subject    = $"Tu e-Ticket #{eticket.Numero}",
+            Subject    = $"Tu e-Ticket {emitido.Serie}-{emitido.Numero}",
             Body       = "Adjuntamos tu comprobante fiscal electrónico.",
             Attachment = new EmailAttachment
             {
-                FileName    = $"eticket_{eticket.Numero:D8}.pdf",
+                FileName    = $"eticket_{emitido.Numero:D8}.pdf",
                 ContentType = "application/pdf",
-                Data        = pdf,
+                Data        = CfePdf.GenerarA4(emitido),
             },
         });
     }
@@ -109,11 +87,10 @@ public class FacturaService
 ## Guardar en Azure Blob Storage
 
 ```csharp
-var blobClient = containerClient.GetBlobClient($"facturas/{eticket.Numero:D8}.pdf");
-using var stream = new MemoryStream(pdfA4);
-await blobClient.UploadAsync(stream, overwrite: true);
+var blob = containerClient.GetBlobClient($"facturas/{emitido.Numero:D8}.pdf");
+await blob.UploadAsync(new BinaryData(CfePdf.GenerarA4(emitido)), overwrite: true);
 ```
 
 <Aside type="tip">
-  Guardá tanto el **PDF** como el **XML firmado** en almacenamiento durable. DGI exige conservar los XML por al menos 5 años.
+  Guardá también el **XML firmado** (`emitido.Xml`): la DGI exige conservarlo por al menos 5 años.
 </Aside>

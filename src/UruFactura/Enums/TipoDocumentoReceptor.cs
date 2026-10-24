@@ -1,4 +1,4 @@
-namespace UruFactura.Enums;
+namespace UruFactura;
 
 /// <summary>
 /// Tipos de documento del receptor según el DocType del XSD de la DGI.
@@ -12,14 +12,11 @@ public enum TipoDocumentoReceptor
     /// <summary>Cédula de Identidad — 3</summary>
     CedulaIdentidad = 3,
 
-    /// <summary>Otro — 4</summary>
+    /// <summary>Otro (por ejemplo, un documento del exterior sin tipo propio) — 4</summary>
     Otro = 4,
 
     /// <summary>Pasaporte — 5</summary>
     Pasaporte = 5,
-
-    /// <summary>Alias de compatibilidad para el valor 4 ("Otro").</summary>
-    DocumentoExterior = 4,
 
     /// <summary>DNI — 6</summary>
     Dni = 6,

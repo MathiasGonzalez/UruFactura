@@ -1,164 +1,94 @@
 ---
 title: Gestión de CAE
-description: Cómo registrar, monitorear y renovar Constancias de Autorización de Emisión
+description: Cómo registrar, monitorear y renovar Constancias de Autorización de Emisión, y numerar con varias instancias
 ---
 
 import { Aside, Steps } from '@astrojs/starlight/components';
 
-El **CAE (Constancia de Autorización de Emisión)** es el rango de numeración que DGI autoriza a cada emisor para cada tipo de CFE. Sin un CAE vigente no podés emitir comprobantes.
+El **CAE (Constancia de Autorización de Emisión)** es el rango de números que la DGI autoriza para un tipo de CFE y una serie. Sin un CAE vigente no se puede emitir.
 
 ---
 
 ## Registrar un CAE
 
 ```csharp
-client.Cae.RegistrarCae(new Cae
+await client.RegistrarCaeAsync(new Cae
 {
-    NroSerie         = "CAE2025001",           // Identificador único del CAE
     NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
-    Serie            = "A",
-    TipoCfe          = TipoCfe.ETicket,        // Tipo de CFE al que aplica
-    RangoDesde       = 1,                      // Primer número autorizado
-    RangoHasta       = 1000,                   // Último número autorizado
-    FechaVencimiento = new DateOnly(2026, 12, 31),
+    TipoCfe            = TipoCfe.ETicket, // tipo de CFE que autoriza
+    Serie              = "A",             // "A", "AB" o "1A"
+    RangoDesde         = 1,               // primer número autorizado
+    RangoHasta         = 1000,            // último número autorizado
+    FechaVencimiento   = new DateOnly(2027, 12, 31),
 });
 ```
 
-Podés registrar múltiples CAEs (para distintos tipos de CFE):
-
-```csharp
-// CAE para e-Tickets
-client.Cae.RegistrarCae(new Cae
-{
-    NroSerie         = "CAE2025-ET",
-    NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
-    Serie            = "A",
-    TipoCfe          = TipoCfe.ETicket,
-    RangoDesde       = 1,
-    RangoHasta       = 5000,
-    FechaVencimiento = new DateOnly(2026, 6, 30),
-});
-
-// CAE para e-Facturas
-client.Cae.RegistrarCae(new Cae
-{
-    NroSerie         = "CAE2025-EF",
-    NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
-    Serie            = "A",
-    TipoCfe          = TipoCfe.EFactura,
-    RangoDesde       = 1,
-    RangoHasta       = 500,
-    FechaVencimiento = new DateOnly(2026, 6, 30),
-});
-```
+- Un CAE se identifica por tipo, serie y comienzo de rango: registrar el mismo otra vez actualiza sus datos sin hacer retroceder su numeración.
+- Los datos se validan al registrar (`CaeException` si algo está mal), así que un CAE incorrecto no llega a un comprobante. Tampoco se admite un CAE con números en común con otro del mismo tipo y serie (por ejemplo, por un error de tipeo en el rango): se emitirían números repetidos.
+- Un CAE registrado por error que todavía no numeró ningún CFE se quita con `client.EliminarCaeAsync(cae)`.
+- Para varios tipos de CFE, un CAE por tipo. Con más de un CAE vigente para un tipo, se numera con el de vencimiento más lejano y, a igual vencimiento, con el que tenga más números libres; cuando uno se agota se pasa al siguiente.
 
 ---
 
-## Monitorear el estado de los CAEs
+## Dónde vive la numeración
 
-### Ver advertencias
+La numeración vive en el **almacenamiento** del cliente (`IUruFacturaStore`), que es la única fuente de verdad. `EmitirAsync` toma el próximo número y lo registra **junto con el CFE**, en una sola operación atómica: si algo falla (la firma, la base de datos, una cancelación), no se consume ningún número, así que no quedan huecos sin comprobante.
 
-UruFactura detecta automáticamente situaciones problemáticas:
-
-```csharp
-var advertencias = client.Cae.ObtenerAdvertencias();
-
-foreach (var advertencia in advertencias)
-{
-    Console.WriteLine(advertencia);
-}
-```
-
-Las advertencias incluyen:
-- CAE próximo a vencer (menos de 7 días por defecto)
-- Rango de numeración casi agotado (más del 80% utilizado por defecto)
-- CAE ya vencido
-
-### Ver resumen general
-
-```csharp
-Console.WriteLine(client.Cae.ResumenEstado());
-```
-
-Ejemplo de salida:
-
-```
-CAE CAE2025-ET (ETicket): rango 1-5000, usado hasta 4450, vence 2026-06-30 → ⚠️ Rango al 89%
-CAE CAE2025-EF (EFactura): rango 1-500, usado hasta 45, vence 2026-06-30 → ✅ OK
-```
-
----
-
-## Buenas prácticas para gestión de CAEs
-
-<Aside type="tip">
-  **Monitoreá los CAEs en cada inicio de aplicación** para detectar problemas antes de que bloqueen la emisión.
-</Aside>
-
-<Aside type="note">
-  `CaeManager` es **thread-safe**: podés usarlo desde múltiples hilos concurrentes (p. ej., en una API ASP.NET Core con requests simultáneos) sin necesidad de sincronización adicional.
-</Aside>
+| Almacenamiento | Para qué |
+|----------------|----------|
+| `InMemoryStore` (por defecto en Homologación) | Pruebas y desarrollo. Se pierde al reiniciar: la aplicación volvería a usar números ya emitidos |
+| `EfUruFacturaStore<TContext>` (`UruFactura.EntityFrameworkCore`) | Producción. Durable y seguro con varias instancias |
 
 <Aside type="caution">
-  `CaeManager` numera **en memoria**: con dos o más instancias de la aplicación (réplicas, blue/green, API + worker) cada una tendría su propio contador y se repetirían números. En ese caso usá un `ICaeRepositoryCompartido` (ver abajo).
+  En Producción el cliente exige que le pases el almacenamiento: con el en memoria, tras un reinicio repetiría números, y con dos instancias de la aplicación cada una numeraría por su cuenta.
 </Aside>
 
-### Varias instancias: numeración en la base de datos
+### Producción y varias instancias: EF Core
 
-El paquete `UruFactura.EntityFrameworkCore` (o `UruFactura.Lite.EntityFrameworkCore`) reserva cada número con un `UPDATE` condicional (compare-and-swap) en la tabla `UruFacturaCaes`, de modo que dos instancias nunca obtienen el mismo número. También registra los CFE emitidos (`UruFacturaCfes`) para que el reporte diario incluya los de todas las instancias.
+`EfUruFacturaStore` avanza el CAE con un `UPDATE` condicional sobre `UruFacturaCaes` (solo si nadie lo cambió desde que se leyó) en la misma transacción que el `INSERT` del CFE en `UruFacturaCfes`. Si otra instancia numeró antes, no se guarda nada y el cliente vuelve a numerar: dos instancias (réplicas, blue/green, API + worker) nunca obtienen el mismo número, y el reporte diario incluye los CFE de todas.
 
 ```csharp
 builder.Services.AddDbContextFactory<UruFacturaDbContext>(o => o.UseSqlServer(connectionString));
 
-builder.Services.AddSingleton(sp =>
-{
-    var db = sp.GetRequiredService<IDbContextFactory<UruFacturaDbContext>>();
-    return UruFacturaClientBuilder.WithDefaults(config)
-        .WithCaeRepository(new EfCaeRepository<UruFacturaDbContext>(db))
-        .WithCfeRepository(new EfCfeRepository<UruFacturaDbContext>(db))
-        .Build();
-});
-
-// Alta de un CAE (una vez, desde cualquier instancia)
-await client.RegistrarCaeAsync(nuevoCae);
-
-// Emisión: el número se reserva en la base
-await client.AsignarCaeAsync(cfe);
-
-// Reporte diario con los CFE de todas las instancias
-await client.EnviarReporteDiarioAsync(HoraUruguay.Hoy().AddDays(-1));
+builder.Services.AddSingleton<IUruFacturaClient>(sp => new UruFacturaClient(
+    config,
+    store: new EfUruFacturaStore<UruFacturaDbContext>(sp.GetRequiredService<IDbContextFactory<UruFacturaDbContext>>())));
 ```
 
-Con un repositorio compartido, `AsignarCae` (sincrónico) lanza `InvalidOperationException`: usá siempre `AsignarCaeAsync`. Si tu app ya tiene un `DbContext`, llamá a `modelBuilder.ApplyUruFacturaModel()` en `OnModelCreating` y generá la migración con tu proveedor.
+Si tu app ya tiene un `DbContext`, llamá a `modelBuilder.ApplyUruFacturaModel()` en `OnModelCreating`, usá `EfUruFacturaStore<TuContexto>` y generá la migración con tu proveedor. Para otro almacenamiento, implementá `IUruFacturaStore`: `RegistrarEmisionAsync` debe avanzar el CAE y guardar el CFE de forma atómica (las dos cosas o ninguna).
 
-### En ASP.NET Core con Hosted Service
+---
+
+## Monitorear
 
 ```csharp
-// CaeMonitorService.cs
-public class CaeMonitorService : BackgroundService
+// Vencidos, agotados, por vencer (7 días por defecto) o con el rango usado al 80 % o más
+foreach (var advertencia in await client.ObtenerAdvertenciasCaeAsync(diasAlertaVencimiento: 15))
+    Console.WriteLine(advertencia);
+
+// Estado de cada CAE
+foreach (var cae in await client.ObtenerCaesAsync())
+    Console.WriteLine($"{cae.TipoCfe} serie {cae.Serie}: {cae.Disponibles} libres ({cae.PorcentajeUso}% usado), vence {cae.FechaVencimiento:dd/MM/yyyy}");
+```
+
+Ejemplo de advertencia:
+
+```
+⚠️ CAE 90110001945 (ETicket, serie A) usó el 89.00% de su rango.
+```
+
+### En ASP.NET Core con un Hosted Service
+
+```csharp
+public class CaeMonitorService(IUruFacturaClient client, ILogger<CaeMonitorService> logger) : BackgroundService
 {
-    private readonly UruFacturaClient _client;
-    private readonly ILogger<CaeMonitorService> _logger;
-
-    public CaeMonitorService(UruFacturaClient client, ILogger<CaeMonitorService> logger)
-    {
-        _client = client;
-        _logger = logger;
-    }
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            var advertencias = _client.Cae.ObtenerAdvertencias();
+            foreach (var advertencia in await client.ObtenerAdvertenciasCaeAsync(cancellationToken: stoppingToken))
+                logger.LogWarning("CAE: {Advertencia}", advertencia);   // o alertar por email/Slack
 
-            foreach (var advertencia in advertencias)
-            {
-                _logger.LogWarning("CAE: {Advertencia}", advertencia);
-                // También podés enviar alerta por email/Slack/etc.
-            }
-
-            // Verificar cada hora
             await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
         }
     }
@@ -170,37 +100,30 @@ builder.Services.AddHostedService<CaeMonitorService>();
 
 ---
 
-## Renovar un CAE vencido
+## Renovar un CAE
 
 <Steps>
 
-1. **Solicitar nuevo CAE en DGI en línea**
+1. **Solicitar el nuevo CAE en DGI en línea** (Gestión CFE → Solicitud de CAE), indicando el tipo de CFE y la cantidad.
 
-   Ingresar a [DGI en línea](https://www.dgi.gub.uy/) → Gestión CFE → Solicitud de CAE. Indicar tipo de CFE y rango deseado.
-
-2. **Registrar el nuevo CAE en el SDK**
+2. **Registrarlo** — puede convivir con el anterior; se usa el que vence más tarde:
 
    ```csharp
-   client.Cae.RegistrarCae(new Cae
+   await client.RegistrarCaeAsync(new Cae
    {
-       NroSerie         = "CAE2026001",       // Nuevo número de serie
-       NumeroAutorizacion = "90110001945",   // CAE_ID entregado por la DGI
-       Serie            = "A",
-       TipoCfe          = TipoCfe.ETicket,
-       RangoDesde       = 1001,               // Continuar desde donde terminó el anterior
-       RangoHasta       = 2000,
-       FechaVencimiento = new DateOnly(2027, 12, 31),
+       NumeroAutorizacion = "90110002001",
+       TipoCfe            = TipoCfe.ETicket,
+       Serie              = "A",
+       RangoDesde         = 1001,             // el rango que autorizó la DGI
+       RangoHasta         = 2000,
+       FechaVencimiento   = new DateOnly(2028, 12, 31),
    });
    ```
 
-3. **Verificar el estado**
-
-   ```csharp
-   Console.WriteLine(client.Cae.ResumenEstado());
-   ```
+3. **Verificar** con `ObtenerCaesAsync()` u `ObtenerAdvertenciasCaeAsync()`.
 
 </Steps>
 
 <Aside type="caution">
-  Solicitá el nuevo CAE **antes** de que venza el actual. DGI puede tardar días hábiles en procesar la solicitud.
+  Solicitá el nuevo CAE **antes** de que venza o se agote el actual: la DGI puede tardar días hábiles.
 </Aside>

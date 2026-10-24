@@ -1,4 +1,4 @@
-namespace UruFactura.Enums;
+namespace UruFactura;
 
 /// <summary>
 /// Algoritmo de firma/digest usado en la firma del CFE y en la firma WS-Security.

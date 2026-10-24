@@ -21,12 +21,13 @@ Sigue el runbook en [`docs/NORMATIVA_DGI_UPDATE.md`](docs/NORMATIVA_DGI_UPDATE.m
 ## Convenciones de este proyecto
 
 - **Idioma del código:** español para nombres de propiedades, modelos y métodos de dominio. Inglés para nombres técnicos estándar (.NET, SOAP, XML).
-- **Modelo CFE:** el modelo principal es `Cfe` en `src/UruFactura/Models/Cfe.cs`. Siempre agregar validaciones en `Cfe.Validar()` cuando un campo se vuelve obligatorio.
-- **XML builder:** `CfeXmlBuilder.cs` usa `XmlWriter` (no interpolación de strings) para evitar vulnerabilidades XSS.
+- **Modelo CFE:** `Cfe` (`src/UruFactura/Models/Cfe.cs`) es un record inmutable con el contenido del documento; `UruFacturaClient.EmitirAsync` lo valida, numera, firma y devuelve un `CfeEmitido`. Toda restricción del XSD o del formato va en `Cfe.Validar()` (las del emisor en `Emisor.Validar()`, las del CAE en `Cae.Validar()`), con el campo afectado en cada `ErrorValidacion`: lo que pasa la validación debe producir un XML válido (`ValidacionContraXsdTests` lo comprueba con CFE aleatorios). Los límites comunes (montos, fechas, textos, series, países) están en `Validacion`.
+- **API pública mínima:** todo lo público va en el namespace `UruFactura`. El XML, la firma, el sobre, el reporte y el cliente SOAP son internos; las costuras públicas son `IUruFacturaClient`, `IUruFacturaStore` e `IDgiClient`. Clases `sealed`, sin métodos `virtual`.
+- **XML builder:** `CfeXml.cs` usa `XmlWriter` (no interpolación de strings) para evitar vulnerabilidades XSS.
 - **Serialización XML:** usar `MemoryStream` + `UTF8Encoding(false)` (sin BOM). No usar `StringBuilder` para la salida XML.
-- **Fechas fiscales:** usar `HoraUruguay.Hoy()` / `HoraUruguay.Ahora()`, nunca `DateTime.Today` ni `DateTime.Now` (los servidores suelen estar en UTC).
-- **Lite:** `UruFactura.Lite` y `UruFactura.Lite.EntityFrameworkCore` compilan las mismas fuentes enlazadas; al agregar una carpeta o un archivo en la raíz de `src/UruFactura`, enlazarlo en `UruFactura.Lite.csproj`.
-- **Tests:** cada nueva funcionalidad debe tener tests en `tests/UruFactura.Tests/`. Usar xUnit.
+- **Fechas fiscales:** usar `HoraUruguay.Hoy()` / `HoraUruguay.Ahora()` (con el `TimeProvider` del cliente), nunca `DateTime.Today` ni `DateTime.Now` (los servidores suelen estar en UTC).
+- **Paquetes:** `UruFactura` (core, sin dependencias de terceros), `UruFactura.Pdf` (FluentReport/SkiaSharp/ZXing) y `UruFactura.EntityFrameworkCore`. El core no debe depender de librerías de PDF.
+- **Tests:** cada nueva funcionalidad debe tener tests en `tests/UruFactura.Tests/`. Usar xUnit; `TestData` y `DgiStub` tienen los datos y la DGI simulada.
 - **Build y tests:** `dotnet test UruFactura.slnx` corre todo.
 
 ---
@@ -35,13 +36,15 @@ Sigue el runbook en [`docs/NORMATIVA_DGI_UPDATE.md`](docs/NORMATIVA_DGI_UPDATE.m
 
 | Archivo | Propósito |
 |---------|-----------|
-| `src/UruFactura/Xml/CfeXmlBuilder.cs` | Generación del XML del CFE |
-| `src/UruFactura/Models/Cfe.cs` | Modelo principal + validaciones |
-| `src/UruFactura/Models/RefCfe.cs` | Modelo de referencias (notas de crédito/débito) |
-| `src/UruFactura/Configuration/UruFacturaConfig.cs` | Config del emisor + validaciones |
-| `src/UruFactura/Enums/TipoCfe.cs` | Tipos de comprobante |
-| `src/UruFactura/Cae/ICaeRepositoryCompartido.cs` | Numeración atómica entre instancias |
-| `src/UruFactura/Persistence/ICfeRepository.cs` | Registro de CFE emitidos (fuente del reporte diario) |
-| `src/UruFactura.EntityFrameworkCore/` | Implementación EF Core (CAS sobre `UruFacturaCaes`, tablas `UruFacturaCfes` y `UruFacturaSecuencias`) |
+| `src/UruFactura/UruFacturaClient.cs` | Flujo: registrar CAE, validar, emitir, enviar, consultar, reporte diario |
+| `src/UruFactura/Xml/CfeXml.cs` | Generación del XML del CFE |
+| `src/UruFactura/Models/Cfe.cs` | Contenido del CFE + totales + validaciones |
+| `src/UruFactura/Models/CfeEmitido.cs` | CFE numerado y firmado (XML, CAE, totales, QR, estado ante la DGI) |
+| `src/UruFactura/Models/RefCfe.cs` | Referencias (notas de crédito/débito) |
+| `src/UruFactura/UruFacturaConfig.cs` / `Emisor.cs` | Configuración y datos del emisor + validaciones |
+| `src/UruFactura/Enums/TipoCfe.cs` / `TipoCfeExtensions.cs` | Tipos de comprobante y su clasificación |
+| `src/UruFactura/Persistence/IUruFacturaStore.cs` | Almacenamiento: CAE, numeración (`RegistrarEmisionAsync`: avanza el CAE y guarda el CFE de forma atómica), número de envío y CFE emitidos |
+| `src/UruFactura.EntityFrameworkCore/` | Implementación EF Core (`UPDATE` condicional sobre `UruFacturaCaes` en la misma transacción que el `INSERT` en `UruFacturaCfes`; `UruFacturaSecuencias`) |
+| `src/UruFactura.Pdf/CfePdf.cs` | Representación impresa (A4, térmico, QR) |
 | `docs/NORMATIVA_DGI_UPDATE.md` | Runbook de actualización normativa |
 | `docs/FACTURACION_URUGUAY.md` | Guía de facturación con ejemplos |

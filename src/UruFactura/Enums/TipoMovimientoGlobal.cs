@@ -1,4 +1,4 @@
-namespace UruFactura.Enums;
+namespace UruFactura;
 
 /// <summary>Tipo de movimiento de un descuento o recargo global (<c>TpoMovDR</c>).</summary>
 public enum TipoMovimientoGlobal

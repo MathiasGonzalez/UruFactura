@@ -4,8 +4,8 @@
 
 | Versión | Soporte de seguridad |
 |---------|----------------------|
-| 1.x (actual) | ✅ |
-| < 1.0 (pre-release) | ❌ |
+| 2.x (actual) | ✅ |
+| < 2.0 | ❌ |
 
 Solo la rama principal (`main`) y el paquete NuGet publicado más reciente reciben actualizaciones de seguridad.
 
@@ -37,8 +37,10 @@ Usá el canal de **[Private Vulnerability Reporting](https://github.com/MathiasG
 ### 🔑 Certificados digitales y claves privadas
 
 - **Nunca hardcodees** `PasswordCertificado` en el código fuente. Usá variables de entorno o un gestor de secretos (Azure Key Vault, AWS Secrets Manager, .NET User Secrets, etc.).
-- UruFactura carga el certificado con `X509KeyStorageFlags.EphemeralKeySet` para evitar persistir la clave privada en el almacén del sistema operativo — recomendado para contenedores y Linux.
-- El objeto `UruFacturaClient` implementa `IDisposable`; asegurate de usar `using` para liberar el certificado de memoria cuando ya no lo necesitás.
+- UruFactura carga el `.p12`/`.pfx` con `X509KeyStorageFlags.EphemeralKeySet` (salvo en macOS, que no lo admite) para no persistir la clave privada en el almacén del sistema operativo.
+- También acepta un `X509Certificate2` ya cargado (`UruFacturaConfig.Certificado`), por ejemplo desde Azure Key Vault o un HSM; en ese caso el cliente no lo libera.
+- `UruFacturaClient` implementa `IDisposable`: liberalo (o registralo como singleton) para liberar el certificado que cargó.
+- `UruFacturaConfig.ToString()` no muestra la contraseña ni el certificado, así que la configuración se puede loguear.
 
 ```csharp
 // ✅ Correcto
@@ -50,24 +52,28 @@ PasswordCertificado = "mi_password_en_texto_plano"
 
 ### 🔒 Validación TLS / SSL
 
-- La propiedad `OmitirValidacionSsl` **jamás debe activarse en Producción**; está pensada únicamente para el ambiente de Homologación cuando la CA del servidor no es de confianza local.
-- En producción UruFactura valida el certificado TLS del servidor DGI por defecto.
+- `OmitirValidacionSsl` es solo para Homologación, cuando la CA del servidor no es de confianza local: en Producción la configuración no es válida y el cliente no se crea.
+- Por defecto UruFactura valida el certificado TLS de los servidores de la DGI.
 
 ### 📄 XML y firma digital
 
 - UruFactura firma los CFE y el reporte diario con **XML Signature enveloped (RSA-SHA256 por defecto; RSA-SHA1 opcional con `AlgoritmoFirma`)**, con el formato de los ejemplos oficiales de la DGI, y cada mensaje SOAP con **WS-Security** (certificado X.509 en `BinarySecurityToken` y firma del `Body`).
 - Los XML firmados contienen el certificado público del emisor embebido en `<KeyInfo>`; no incluyen la clave privada.
 - Los archivos XML firmados deben conservarse según el Código Tributario (mínimo 5 años). Asegurate de que el almacenamiento tenga controles de acceso adecuados.
+- Las respuestas de la DGI y los XML de terceros se cargan sin procesar DTD (sin entidades externas ni expansión de entidades).
+- `FirmaDigital.VerificarFirma(xml)` verifica la firma de un CFE recibido y devuelve el certificado con que se firmó. Una firma válida solo prueba que el documento no cambió desde que lo firmó el titular de ese certificado, que viene en el propio XML: comprobá que pertenece al emisor del CFE (su RUT) y, si corresponde, su cadena de confianza.
 
 ### 🌐 Comunicación con la DGI
 
-- Todas las comunicaciones usan **HTTPS**. En Homologación se usan por defecto los servicios de prueba de la DGI; en Producción `UrlEnvio` y `UrlConsultas` deben configurarse explícitamente con las URL entregadas por la DGI (`UruFacturaConfig.DgiEnvioUrl` / `DgiConsultasUrl`).
-- Si usás un proxy corporativo, configurá el `HttpClient` correspondiente en tu infraestructura; UruFactura no expone configuración de proxy directamente.
+- Todas las comunicaciones usan **HTTPS**. En Homologación se usan por defecto los servicios de prueba de la DGI; en Producción `UrlEnvio` y `UrlConsultas` deben configurarse explícitamente con las URL entregadas por la DGI.
+- Para un proxy corporativo, pasá un `HttpClient` propio (`new UruFacturaClient(config, httpClient: …)`); su handler debe tener el certificado de cliente TLS y la validación del servidor configurados.
+- UruFactura no envía datos a ningún otro servicio: solo se comunica con las URL de la DGI configuradas.
 
-### 🗝️ CAE (Constancia de Autorización de Emisión)
+### 🗝️ Numeración (CAE)
 
-- El CAE es un rango de números de comprobante autorizado por la DGI. No lo compartas públicamente ni lo expongas en logs.
-- `CaeManager` es thread-safe: `ObtenerProximoNumero` elige el CAE y consume el número dentro de un mismo lock, garantizando secuencialidad en entornos concurrentes. Persistí el último número usado (`AsignarCaeAsync` con un `ICaeRepository`) para no repetir números tras un reinicio.
+- El almacenamiento (`IUruFacturaStore`) es la fuente de verdad de la numeración: cada número se asigna en la misma operación atómica que registra el CFE, así que no se repite (tampoco con varias instancias de la aplicación) ni queda consumido sin comprobante.
+- En Producción el cliente exige un almacenamiento durable (por ejemplo, `EfUruFacturaStore`): con uno en memoria, un reinicio volvería a emitir números ya usados. Protegé la base como cualquier registro contable.
+- No se admiten CAE de la misma serie con números en común.
 
 ### 🧪 Ambiente de homologación vs. producción
 
@@ -80,9 +86,9 @@ PasswordCertificado = "mi_password_en_texto_plano"
 
 | Paquete | Uso en UruFactura |
 |---------|--------------|
-| `System.Security.Cryptography.Xml` | Firma XML (XML Signature / WS-Security) |
-| `System.Security.Cryptography.Pkcs` | Manejo de certificados PKCS#12 |
-| `QuestPDF` | Generación de PDFs |
-| `ZXing.Net` | Generación de código QR en el PDF |
+| `System.Security.Cryptography.Xml` | Firma XML (XML Signature / WS-Security), en `UruFactura` |
+| `FluentReport`, `SkiaSharp` | Generación de los PDF, en `UruFactura.Pdf` |
+| `ZXing.Net` | Código QR del PDF, en `UruFactura.Pdf` |
+| `Microsoft.EntityFrameworkCore` | Almacenamiento en base de datos, en `UruFactura.EntityFrameworkCore` |
 
 Mantené estas dependencias actualizadas; UruFactura sigue las actualizaciones de parches de seguridad de .NET 10.

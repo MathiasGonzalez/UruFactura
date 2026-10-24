@@ -1,155 +1,164 @@
 ---
 title: Emitir CFEs
-description: Cómo crear y enviar comprobantes fiscales electrónicos con UruFactura
+description: Cómo describir, emitir y enviar comprobantes fiscales electrónicos con UruFactura
 ---
 
-import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
 
-## Tipos de comprobantes disponibles
+## El modelo: `Cfe` → `CfeEmitido`
 
-UruFactura provee métodos de fábrica en `UruFacturaClient` para crear cada tipo de CFE:
+- **`Cfe`** describe el comprobante: tipo, receptor, detalle, referencias, etc. Es un record inmutable: se arma con un inicializador y se modifica con `with`.
+- **`client.EmitirAsync(cfe)`** lo valida, le asigna el próximo número del CAE vigente, arma el XML, lo firma y lo registra en el almacenamiento (del que sale el reporte diario). No lo envía.
+- **`CfeEmitido`** es el resultado: `Numero`, `Serie`, `Cae`, `Totales`, `Xml` firmado, `CodigoSeguridad`, `UrlQr` y el estado ante la DGI (`EstadoDgi`, `AceptadoPorDgi`).
 
-| Método | CFE generado | Código DGI |
-|--------|-------------|------------|
-| `CrearETicket()` | e-Ticket | 101 |
-| `CrearNotaCreditoETicket()` | Nota de Crédito e-Ticket | 102 |
-| `CrearNotaDebitoETicket()` | Nota de Débito e-Ticket | 103 |
-| `CrearEFactura()` | e-Factura | 111 |
-| `CrearNotaCreditoEFactura()` | Nota de Crédito e-Factura | 112 |
-| `CrearNotaDebitoEFactura()` | Nota de Débito e-Factura | 113 |
-| `CrearEFacturaExportacion()` | e-Factura de Exportación | 121 |
-| `CrearNotaCreditoEFacturaExportacion()` | NC e-Factura de Exportación | 122 |
-| `CrearNotaDebitoEFacturaExportacion()` | ND e-Factura de Exportación | 123 |
-| `CrearERemitoExportacion()` | e-Remito de Exportación | 124 |
-| `CrearEResguardo()` | e-Resguardo (aún no emitible) | 182 |
-| `CrearERemito()` | e-Remito | 181 |
+Todos los tipos se crean igual: `new Cfe(TipoCfe.X) { … }`. Ver [Tipos de CFE](../../reference/cfe-types/).
 
 ---
 
-## e-Ticket (CFE 101)
+## e-Ticket (101)
 
-El e-Ticket es el comprobante más común para ventas al consumidor final (sin identificación del receptor).
+Para ventas al consumidor final (sin identificar al receptor):
 
 ```csharp
-var eticket = client.CrearETicket();
-client.AsignarCae(eticket);   // toma el próximo número del CAE
-eticket.FechaEmision = DateOnly.FromDateTime(DateTime.Today); // Opcional, por defecto hoy
-
-// Agregar líneas de detalle
-eticket.Detalle.Add(new LineaDetalle
+var eticket = await client.EmitirAsync(new Cfe(TipoCfe.ETicket)
 {
-    NroLinea       = 1,
-    NombreItem     = "Servicio de consultoría",
-    Cantidad       = 2,
-    PrecioUnitario = 3500m,
-    IndFactIva     = TipoIva.Basico,           // 22%
+    Detalle =
+    [
+        new LineaDetalle { NombreItem = "Servicio de consultoría", Cantidad = 2, PrecioUnitario = 3500m, IndFactIva = TipoIva.Basico }, // 22 %
+        new LineaDetalle { NombreItem = "Viáticos", Cantidad = 1, PrecioUnitario = 1000m, IndFactIva = TipoIva.Exento },
+    ],
 });
-
-eticket.Detalle.Add(new LineaDetalle
-{
-    NroLinea       = 2,
-    NombreItem     = "Viáticos",
-    Cantidad       = 1,
-    PrecioUnitario = 1000m,
-    IndFactIva     = TipoIva.Exento,          // Sin IVA
-});
-
-var respuesta = await client.EnviarCfeAsync(eticket);
 ```
 
+`FechaEmision` es opcional: si se omite, es la fecha de Uruguay al emitir (no la del servidor).
+
 ---
 
-## e-Factura (CFE 111)
+## e-Factura (111)
 
-La e-Factura requiere identificar al receptor (empresa o persona).
+Requiere identificar al receptor con su RUT:
 
 ```csharp
-var efactura = client.CrearEFactura();
-client.AsignarCae(efactura);   // toma el próximo número del CAE
-
-// Datos del receptor (obligatorio para e-Factura)
-efactura.Receptor = new Receptor
+var efactura = await client.EmitirAsync(new Cfe(TipoCfe.EFactura)
 {
-    Documento     = "214844360018",
-    TipoDocumento = TipoDocumentoReceptor.Rut,
-    RazonSocial   = "Empresa Compradora S.A.",
-    Direccion     = "Bulevar España 2345",
-    Ciudad        = "Montevideo",
-};
-
-efactura.Detalle.Add(new LineaDetalle
-{
-    NroLinea       = 1,
-    NombreItem     = "Licencia de software anual",
-    Cantidad       = 1,
-    PrecioUnitario = 50000m,
-    IndFactIva     = TipoIva.Basico,
+    Receptor = new Receptor
+    {
+        Documento   = "214844360018",
+        RazonSocial = "Empresa Compradora S.A.",
+        Direccion   = "Bulevar España 2345",
+        Ciudad      = "Montevideo",
+    },
+    Detalle = [new LineaDetalle { NombreItem = "Licencia de software anual", Cantidad = 1, PrecioUnitario = 50000m }],
 });
-
-var respuesta = await client.EnviarCfeAsync(efactura);
 ```
 
 ---
 
 ## Notas de Crédito y Débito
 
-Las notas de corrección deben referenciar el CFE original.
+Deben referenciar el CFE original, con su monto y moneda (obligatorios desde el formato CFE v25.01):
 
 ```csharp
-var notaCredito = client.CrearNotaCreditoETicket();
-client.AsignarCae(notaCredito);   // toma el próximo número del CAE
-
-// Referenciar el comprobante que se está corrigiendo
-notaCredito.Referencias.Add(new RefCfe
+var notaCredito = await client.EmitirAsync(new Cfe(TipoCfe.NotaCreditoETicket)
 {
-    TipoCfe  = TipoCfe.ETicket,
-    Serie    = "A",
-    NroCfe   = 42,                            // Número del CFE original
-    FechaCfe = new DateTime(2025, 6, 15),
-    Razon    = "Devolución parcial de mercadería",
+    Referencias =
+    [
+        new RefCfe
+        {
+            TipoCfe      = TipoCfe.ETicket,
+            Serie        = "A",
+            NroCfe       = 42,                        // número del CFE original
+            FechaCfe     = new DateOnly(2025, 6, 15),
+            MontoCfeRef  = 1220m,                     // total del CFE original
+            MonedaCfeRef = Moneda.PesoUruguayo,       // moneda del CFE original
+            Razon        = "Devolución parcial de mercadería",
+        },
+    ],
+    Detalle = [new LineaDetalle { NombreItem = "Devolución - Producto X", Cantidad = 2, PrecioUnitario = 500m }],
 });
-
-notaCredito.Detalle.Add(new LineaDetalle
-{
-    NroLinea       = 1,
-    NombreItem     = "Devolución - Producto X",
-    Cantidad       = 2,
-    PrecioUnitario = 500m,
-    IndFactIva     = TipoIva.Basico,
-});
-
-var respuesta = await client.EnviarCfeAsync(notaCredito);
 ```
 
 ---
 
-## Tipos de IVA disponibles
+## Validar antes de emitir
 
-El enum `TipoIva` define cómo se calcula el IVA de cada línea:
+`EmitirAsync` valida antes de numerar: un CFE inválido lanza `CfeValidationException` (con la lista en `Errores`) sin consumir números. La validación aplica las restricciones de los XSD de la DGI (largos, montos, fechas, series, caracteres de control) y las reglas del formato, así que lo que la pasa produce un XML válido. Para revisar sin emitir (por ejemplo, en el validador de un endpoint):
+
+```csharp
+IReadOnlyList<ErrorValidacion> errores = client.Validar(cfe);
+foreach (var error in errores)
+    Console.WriteLine($"{error.Campo}: {error.Mensaje}");   // p. ej. "Detalle[0].PrecioUnitario: No puede ser negativo."
+```
+
+`Campo` es la ruta de la propiedad dentro del `Cfe`, para mostrar el error junto al dato en un formulario.
+
+---
+
+## Emitir una sola vez
+
+Si el comprobante corresponde a algo de tu sistema (un pedido, un pago), informá su id en `NroInterno`. Un reintento —por ejemplo, porque el request expiró aunque la emisión se completó— no factura dos veces: `EmitirAsync` lanza `CfeDuplicadoException` con el CFE ya emitido.
+
+```csharp
+CfeEmitido emitido;
+try
+{
+    emitido = await client.EmitirAsync(cfe with { NroInterno = pedido.Id });
+}
+catch (CfeDuplicadoException ex)
+{
+    emitido = ex.Existente;   // ya estaba emitido
+}
+```
+
+La regla es por tipo de comprobante (una nota de crédito puede llevar el mismo `NroInterno` que su factura) y no cuenta los CFE que la DGI rechazó: para corregir uno rechazado se emite otro.
+
+---
+
+## Tipos de IVA
 
 | Valor | Tasa | Uso común |
 |-------|------|-----------|
-| `TipoIva.Basico` | 22% | Servicios y bienes generales |
-| `TipoIva.Minimo` | 10% | Alimentos de primera necesidad |
+| `TipoIva.Basico` | 22% | Servicios y bienes generales (default) |
+| `TipoIva.Minimo` | 10% | Alimentos de primera necesidad, medicamentos |
 | `TipoIva.Exento` | 0% | Bienes y servicios exonerados |
-| `TipoIva.Suspendido` | — | IVA suspendido por disposición legal (sin cálculo, genera `MntSuspenso` en el XML) |
+| `TipoIva.Suspendido` | — | IVA en suspenso (se informa en `MntIVaenSusp`) |
+
+Los precios son **sin IVA**: el SDK calcula el impuesto y los totales con la misma precisión que el XML.
 
 ---
 
-## Generar XML manualmente (sin enviar)
-
-Si necesitás el XML firmado para archivarlo o procesarlo por separado:
+## Enviar a la DGI
 
 ```csharp
-string xmlFirmado = client.GenerarYFirmar(eticket);
+// 1) Sobre: la DGI responde AS (recibido) o BS/BA (rechazado)
+var acuse = await client.EnviarAsync(eticket);        // o EnviarAsync([cfe1, cfe2, …]) con hasta 250
+if (!acuse.Recibido)
+{
+    Console.WriteLine($"❌ Sobre rechazado [{acuse.Estado}]: {acuse.Mensaje}");
+    return;
+}
 
-// Guardar el XML
-await File.WriteAllTextAsync($"eticket_{eticket.Numero:D8}.xml", xmlFirmado);
+// 2) Resultado de cada comprobante: Aceptado (AE), Rechazado (BE), Observado (CE)
+var estado = await client.ConsultarEnvioAsync(acuse);
+foreach (var cfe in acuse.Comprobantes)
+    Console.WriteLine($"{cfe}: {cfe.EstadoDgi} {cfe.MensajeDgi}");
 ```
 
-<Aside type="note">
-  El método `EnviarCfeAsync` internamente llama a `GenerarYFirmar` antes de enviar el CFE dentro de un sobre `EnvioCFE`. No es necesario llamarlo por separado salvo que lo necesites explícitamente.
-</Aside>
+Tras un reinicio (cuando ya no tenés el acuse), `client.ConsultarCfeAsync(emitido)` consulta un comprobante suelto. Las consultas actualizan el estado en el almacenamiento.
+
+Un CFE que la DGI ya recibió o procesó no se reenvía: `EnviarAsync` lanza `InvalidOperationException`, porque la DGI lo trataría como duplicado (y el estado aceptado quedaría tapado por el rechazo del duplicado). Si el **sobre** fue rechazado (`BS`), sí se reenvía el mismo `CfeEmitido`.
+
+---
+
+## El XML firmado
+
+`emitido.Xml` es el CFE firmado tal como se envía. La DGI exige conservarlo durante el plazo legal:
+
+```csharp
+await File.WriteAllTextAsync($"cfe/{emitido.Tipo}_{emitido.Serie}{emitido.Numero:D7}.xml", emitido.Xml);
+```
+
+Con `UruFactura.EntityFrameworkCore` ya queda guardado en la tabla `UruFacturaCfes`.
 
 ---
 
@@ -158,28 +167,25 @@ await File.WriteAllTextAsync($"eticket_{eticket.Numero:D8}.xml", xmlFirmado);
 ```csharp
 try
 {
-    // 1) Sobre: la DGI responde AS (recibido) o BS/BA (rechazado)
-    var respuesta = await client.EnviarCfeAsync(eticket);
-    if (!respuesta.Exitoso)
-    {
-        Console.WriteLine($"❌ Sobre rechazado [{respuesta.Codigo}]: {respuesta.Mensaje}");
-        return;
-    }
-
-    // 2) Resultado del comprobante: AE aceptado, BE rechazado, CE observado
-    var estado = await client.ConsultarEstadoEnvioAsync(respuesta, [eticket]);
-    Console.WriteLine(estado.Exitoso
-        ? "✅ Aceptado"
-        : $"❌ [{estado.Codigo}]: {estado.Mensaje}");
+    var emitido = await client.EmitirAsync(cfe);
+    var acuse = await client.EnviarAsync(emitido);
 }
-catch (DgiCommunicationException ex)
+catch (CfeValidationException ex)        // el CFE no es válido (no se consumió número)
 {
-    Console.Error.WriteLine($"Error de comunicación con DGI: {ex.Message}");
+    Console.Error.WriteLine(string.Join(Environment.NewLine, ex.Errores));
 }
-catch (UruFacturaException ex)
+catch (CaeException ex)                  // no hay CAE vigente con números para el tipo
 {
-    Console.Error.WriteLine($"Error de UruFactura: {ex.Message}");
+    Console.Error.WriteLine(ex.Message);
+}
+catch (DgiCommunicationException ex)     // red, timeout, SOAP Fault o HTTP sin acuse
+{
+    Console.Error.WriteLine($"Error de comunicación con la DGI [{ex.CodigoRespuesta}]: {ex.Message}");
 }
 ```
 
-Ver [Códigos de respuesta DGI](../reference/dgi-codes/) para la lista completa de códigos.
+<Aside type="note">
+  Si el envío falla por comunicación, el CFE ya está emitido y registrado: no lo vuelvas a emitir (consumiría otro número). Tampoco se sabe si la DGI llegó a recibirlo (un timeout puede ocurrir después de que lo recibió): consultalo con `ConsultarCfeAsync(emitido)` y, si la DGI no lo tiene, reenviá el mismo `CfeEmitido` (o recuperándolo del almacenamiento).
+</Aside>
+
+Ver [Códigos de respuesta DGI](../../reference/dgi-codes/) para la lista completa de estados.

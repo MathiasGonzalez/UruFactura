@@ -2,7 +2,7 @@ name: Publish NuGet
 
 on:
   push:
-    branches: [ "main" ]
+    tags: [ "v*" ]
   workflow_dispatch:
 
 jobs:
@@ -26,9 +26,18 @@ jobs:
         id: version
         run: |
           VERSION=$(grep -oP '(?<=<Version>)[^<]+' src/UruFactura/UruFactura.csproj)
-          VERSION_LITE=$(grep -oP '(?<=<Version>)[^<]+' src/UruFactura.Lite/UruFactura.Lite.csproj)
+          for csproj in src/UruFactura.Pdf/UruFactura.Pdf.csproj src/UruFactura.EntityFrameworkCore/UruFactura.EntityFrameworkCore.csproj; do
+            OTHER=$(grep -oP '(?<=<Version>)[^<]+' "$csproj")
+            if [ "$OTHER" != "$VERSION" ]; then
+              echo "::error::$csproj tiene la versión $OTHER y UruFactura.csproj $VERSION"
+              exit 1
+            fi
+          done
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+            echo "::error::El tag $GITHUB_REF_NAME no coincide con la versión v$VERSION de los csproj"
+            exit 1
+          fi
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "VERSION_LITE=$VERSION_LITE" >> "$GITHUB_OUTPUT"
 
       - name: Restore dependencies
         run: dotnet restore UruFactura.slnx
@@ -46,9 +55,9 @@ jobs:
           --configuration Release
           --output ./nupkg
 
-      - name: Pack UruFactura.Lite
+      - name: Pack UruFactura.Pdf
         run: >
-          dotnet pack src/UruFactura.Lite/UruFactura.Lite.csproj
+          dotnet pack src/UruFactura.Pdf/UruFactura.Pdf.csproj
           --no-build
           --configuration Release
           --output ./nupkg
@@ -56,13 +65,6 @@ jobs:
       - name: Pack UruFactura.EntityFrameworkCore
         run: >
           dotnet pack src/UruFactura.EntityFrameworkCore/UruFactura.EntityFrameworkCore.csproj
-          --no-build
-          --configuration Release
-          --output ./nupkg
-
-      - name: Pack UruFactura.Lite.EntityFrameworkCore
-        run: >
-          dotnet pack src/UruFactura.Lite.EntityFrameworkCore/UruFactura.Lite.EntityFrameworkCore.csproj
           --no-build
           --configuration Release
           --output ./nupkg
