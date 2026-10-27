@@ -499,6 +499,8 @@ TLS y la validación del servidor configurados. Para tests o un transporte propi
 | `MntBruto` 3 en ventas por cuenta ajena de un mandante IVA mínimo | Sin `MntBruto` (la DGI rechaza el 3 por cuenta ajena, K-C1) |
 | Códigos de retención de texto libre | Numéricos de hasta 8 dígitos (los de la DGI) |
 | `IDgiClient` con 4 operaciones | Además `ConsultarEmisoresAsync` y `EnviarIntercambioAsync` |
+| La firma incluía solo el certificado en `KeyInfo` | Además `X509IssuerSerial` (emisor y número de serie, zona I del formato) |
+| `FirmaDigital.VerificarFirma(xml)` exigía el certificado en la firma | `VerificarFirma(xml, certificadoDelSobre)`: una firma con solo `X509IssuerSerial` se verifica con el certificado de la carátula, y los sobres recibidos por intercambio lo usan |
 | EF Core: tablas de 2.0.0 | Columnas nuevas `UruFacturaCfes.FechaReporte` (con índice, en lugar del de `FechaEmision`) y `UruFacturaCaes.Especial`/`CausalEspecial`: generá una migración |
 
 ## 🔄 Cambios respecto de 1.x
@@ -547,6 +549,15 @@ dotnet test UruFactura.slnx
 ```
 
 Los tests validan el XML generado contra los XSD y WSDL oficiales de la DGI (`tests/UruFactura.Tests/Schemas/dgi`).
+
+Las pruebas de `SimuladorDgiTests.cs` emiten, envían y consultan cada tipo de CFE, notas con referencia y el reporte diario contra [dgi-simulador](https://github.com/MathiasGonzalez/dgi-simulador), que responde como los servicios de la DGI. Fallan si un CFE no es aceptado o si el simulador deja una advertencia. Sin la variable `DGI_SIMULADOR_URL` se saltean:
+
+```bash
+docker run -d -p 8080:8080 ghcr.io/mathiasgonzalez/dgi-simulador
+DGI_SIMULADOR_URL=http://localhost:8080 dotnet test tests/UruFactura.Tests --filter Categoria=SimuladorDgi
+```
+
+En CI las corre [simulador-dgi.yml](.github/workflows/simulador-dgi.yml), que deja en el resumen del job lo que recibió el simulador. No es un check obligatorio: usa la última versión del simulador, que puede sumar controles.
 
 ## 📝 Licencia
 

@@ -1,0 +1,69 @@
+name: Simulador DGI
+
+# Emite, envía y consulta CFE de cada tipo y el reporte diario contra dgi-simulador
+# (https://github.com/MathiasGonzalez/dgi-simulador), que responde como los servicios de la DGI.
+# Usa la imagen `latest`: un control nuevo del simulador puede hacer fallar este workflow sin
+# cambios en UruFactura. Por eso no es un check obligatorio, y corre también los lunes y a mano.
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    - cron: '0 13 * * 1' # lunes, después de la revisión semanal de normativa del simulador
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simulador:
+    name: CFE contra dgi-simulador
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      dgi:
+        image: ghcr.io/mathiasgonzalez/dgi-simulador:latest
+        ports: [ "8080:8080" ]
+        env:
+          Simulador__DemoraConsultaSegundos: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Esperar al simulador
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8080/openapi/v1.json > /dev/null && exit 0
+            sleep 1
+          done
+          echo "::error::El simulador no respondió en 60 segundos."
+          exit 1
+
+      - name: Pruebas contra el simulador
+        env:
+          DGI_SIMULADOR_URL: http://localhost:8080
+        run: dotnet test tests/UruFactura.Tests --filter "Categoria=SimuladorDgi" --logger "console;verbosity=normal"
+
+      - name: Lo que recibió el simulador
+        if: always()
+        run: |
+          {
+            echo "## dgi-simulador"
+            echo
+            echo "| CFE | Estado | Motivos | Advertencias |"
+            echo "|---|---|---|---|"
+            curl -sf http://localhost:8080/admin/cfes | jq -r '.[] | "| \(.tipo) \(.serie)\(.nro) | \(.estado) | \([.motivos[] | .codigo] | join(", ")) | \(.advertencias | join("; ")) |"'
+            echo
+            echo "| Reporte | Estado | Motivos | Advertencias |"
+            echo "|---|---|---|---|"
+            curl -sf http://localhost:8080/admin/reportes | jq -r '.[] | "| \(.fechaResumen) #\(.secuencia) | \(.estado) | \([.motivos[] | .codigo] | join(", ")) | \(.advertencias | join("; ")) |"'
+          } >> "$GITHUB_STEP_SUMMARY"
