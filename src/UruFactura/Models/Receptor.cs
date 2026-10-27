@@ -1,17 +1,23 @@
 namespace UruFactura;
 
-/// <summary>Receptor del CFE.</summary>
+/// <summary>Receptor del CFE (en la e-Boleta de entrada, el vendedor).</summary>
 public sealed record Receptor
 {
-    /// <summary>RUT o documento del receptor (opcional en el e-Ticket al consumidor final).</summary>
+    /// <summary>
+    /// RUT o documento del receptor (opcional en el e-Ticket al consumidor final). El RUT y la C.I. se validan con
+    /// su dígito verificador.
+    /// </summary>
     public string? Documento { get; init; }
 
-    /// <summary>Tipo de documento del receptor.</summary>
+    /// <summary>
+    /// Tipo de documento del receptor. Los uruguayos (NIE, RUT y C.I.) se informan en <c>DocRecep</c>; los demás,
+    /// en <c>DocRecepExt</c>.
+    /// </summary>
     public TipoDocumentoReceptor TipoDocumento { get; init; } = TipoDocumentoReceptor.Rut;
 
     /// <summary>
-    /// País del documento (ISO 3166 alfa-2). Por defecto "UY"; si es otro, el documento se informa
-    /// como documento extranjero.
+    /// País del documento (ISO 3166 alfa-2, por defecto "UY"): "UY" para NIE, RUT y C.I., "AR", "BR", "CL" o "PY"
+    /// para el DNI, y el del documento (o "99" si no está en la tabla de la DGI) para los demás.
     /// </summary>
     public string CodigoPais { get; init; } = "UY";
 

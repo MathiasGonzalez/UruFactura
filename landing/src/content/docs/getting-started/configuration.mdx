@@ -58,7 +58,7 @@ Se requiere uno de los dos. Un archivo inexistente, una contraseña incorrecta o
 | `AlgoritmoFirma` | `AlgoritmoFirma` | `Sha256` | Firma del CFE y de WS-Security (`Sha1` si la DGI rechaza SHA-256) |
 | `Timeout` | `TimeSpan` | 30 s | Timeout de las llamadas a la DGI |
 | `OmitirValidacionSsl` | `bool` | `false` | Deshabilita la validación TLS del servidor. Solo en Homologación con una CA no reconocida: en Producción la configuración no es válida |
-| `ValorUnidadIndexada` | `decimal?` | — | Si se informa, los e-Tickets con neto mayor a 5.000 UI deben identificar al receptor |
+| `UnidadIndexada` | `IReadOnlyDictionary<int, decimal>` | vacío | UI al 31/12 de cada año (`{ [2025] = 6.3m }`; se agrega una por año). La del año anterior a cada comprobante fija el tope de 5.000 UI de los e-Tickets: por encima hay que identificar al receptor y enviarlos a la DGI, y el reporte diario informa cuántos lo superaron. **Obligatoria en Producción** (si falta el año, la emisión falla) |
 
 | Ambiente | Servicios |
 |----------|-----------|

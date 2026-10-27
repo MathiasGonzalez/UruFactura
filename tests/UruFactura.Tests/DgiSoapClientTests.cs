@@ -430,6 +430,99 @@ public class DgiSoapClientTests
         Assert.Equal("https://dgi.example/envio", handler.Url);
     }
 
+    // ------------------------------------------------------------------ intercambio y padrón
+
+    [Theory]
+    [InlineData(OperacionIntercambio.Sobre, "SOBRE")]
+    [InlineData(OperacionIntercambio.RespuestaSobre, "RESPUESTASOBRE")]
+    [InlineData(OperacionIntercambio.RespuestaCfes, "RESPUESTACFES")]
+    [InlineData(OperacionIntercambio.NotificacionAnulacion, "NOTIFICACIONANULACIONCFE")]
+    public async Task EnviarIntercambio_ArmaElMensajeSegunElWsdlDeIntercambio_YLeeLaRespuesta(OperacionIntercambio operacion, string nombre)
+    {
+        // Los ejemplos de la DGI escriben codigo/descripcion/detalle en minúscula (el esquema, con mayúscula).
+        var respuestas = """<Respuestas xmlns="http://cfe.dgi.gub.uy"><Respuesta><codigo>1000</codigo><descripcion>Sobre Recibido.</descripcion><detalle/></Respuesta></Respuestas>""";
+        var handler = new CapturingHandler { Respuesta = Soap(respuestas, "WS_eFactura_Intercambio." + nombre) };
+        using var soap = Cliente(handler);
+
+        var r = await soap.EnviarIntercambioAsync("https://receptor.example/ws_efactura_intercambio", operacion, "<EnvioCFE_entreEmpresas/>");
+
+        Assert.Equal("https://receptor.example/ws_efactura_intercambio", handler.Url);
+        Assert.Equal($"\"http://dgi.gub.uyaction/AWS_EFACTURA_INTERCAMBIO.{nombre}\"", handler.Headers["SOAPAction"]);
+        var doc = new XmlDocument();
+        doc.LoadXml(handler.Cuerpo!);
+        var xmlData = doc.SelectSingleNode($"/soapenv:Envelope/soapenv:Body/dgi:WS_eFactura_Intercambio.{nombre}/dgi:Datain/dgi:xmlData", Nsm(doc));
+        Assert.Equal("<EnvioCFE_entreEmpresas/>", xmlData!.InnerText);
+        Assert.NotNull(doc.SelectSingleNode("//wsse:Security/ds:Signature", Nsm(doc)));
+
+        Assert.Equal(new RespuestaIntercambio(1000, "Sobre Recibido.", null), r);
+        Assert.True(r.Recibido);
+    }
+
+    [Fact]
+    public async Task EnviarIntercambio_ErrorDelReceptor_IndicaReintentar()
+    {
+        var respuestas = """<Respuestas><Respuesta><Codigo>1002</Codigo><Descripcion>Error al recibir el Sobre. Intente luego.</Descripcion><Detalle>mantenimiento</Detalle></Respuesta></Respuestas>""";
+        var handler = new CapturingHandler { Respuesta = Soap(respuestas, "WS_eFactura_Intercambio.SOBRE") };
+        using var soap = Cliente(handler);
+
+        var r = await soap.EnviarIntercambioAsync("https://receptor.example/ws", OperacionIntercambio.Sobre, "<x/>");
+
+        Assert.False(r.Recibido);
+        Assert.True(r.Reintentar);
+        Assert.Equal("mantenimiento", r.Detalle);
+    }
+
+    /// <summary>El padrón llega comprimido con gzip y en base64, como en el ejemplo del documento de servicios de consultas.</summary>
+    private static string PadronComprimido(string xml)
+    {
+        using var ms = new MemoryStream();
+        using (var gzip = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+            gzip.Write(Encoding.UTF8.GetBytes(xml));
+        return Convert.ToBase64String(ms.ToArray());
+    }
+
+    [Fact]
+    public async Task ConsultarEmisores_UsaElPadronComprimidoConUrlDeServicio_YLoDescomprime()
+    {
+        var padron = """
+            <RucEmisoresTransicionMailProv xmlns="http://dgi.gub.uy">
+              <RucEmisoresTransicionMailProv.RucEmisoresTransicionMailProvItem>
+                <RUC>219999830019</RUC><DENOMINACION>DGI RUC PRUEBA CEDE</DENOMINACION><FECHA_INICIO>2014-01-01</FECHA_INICIO>
+                <FECHA_FIN_TRANSICION>2014-04-30</FECHA_FIN_TRANSICION><FECHA_FIN>0000-00-00</FECHA_FIN><MAIL>prueba@dgi.gub.uy</MAIL>
+                <URL_WEBSERVICE>https://intercambio.example/ws_efactura_intercambio</URL_WEBSERVICE><MAIL_CONTACTO_TECNICO/>
+              </RucEmisoresTransicionMailProv.RucEmisoresTransicionMailProvItem>
+            </RucEmisoresTransicionMailProv>
+            """;
+        var respuesta = $"""
+            <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body>
+            <WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROVResponse xmlns="http://dgi.gub.uy">
+            <Rucemisorestransicionmailcomprimidoprov>{PadronComprimido(padron)}</Rucemisorestransicionmailcomprimidoprov>
+            </WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROVResponse></soapenv:Body></soapenv:Envelope>
+            """;
+        var handler = new CapturingHandler { Respuesta = respuesta };
+        using var soap = Cliente(handler);
+
+        var emisores = await soap.ConsultarEmisoresAsync("219999830019");
+
+        Assert.Equal("https://efactura.dgi.gub.uy:6460/ePrueba/ws_consultasPrueba", handler.Url);
+        Assert.Equal("\"http://dgi.gub.uyaction/AWS_EFACTURA_CONSULTAS.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROV\"", handler.Headers["SOAPAction"]);
+        var doc = new XmlDocument();
+        doc.LoadXml(handler.Cuerpo!);
+        var consulta = "/soapenv:Envelope/soapenv:Body/dgi:WS_eFactura_Consultas.EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROV/dgi:Consultarucemisores";
+        Assert.Equal("219999830019", doc.SelectSingleNode(consulta + "/dgi:Filtro_eFacDocNro", Nsm(doc))!.InnerText);
+        Assert.NotNull(doc.SelectSingleNode(consulta + "/dgi:Filtro_eFacRUCEmisorAudFchHora", Nsm(doc)));
+
+        var emisor = Assert.Single(emisores);
+        Assert.Equal("219999830019", emisor.Rut);
+        Assert.Equal("DGI RUC PRUEBA CEDE", emisor.Denominacion);
+        Assert.Equal(new DateOnly(2014, 1, 1), emisor.FechaInicio);
+        Assert.Null(emisor.FechaFin); // 0000-00-00
+        Assert.Equal("prueba@dgi.gub.uy", emisor.Correo);
+        Assert.Equal("https://intercambio.example/ws_efactura_intercambio", emisor.UrlServicioWeb);
+        Assert.Null(emisor.CorreoContactoTecnico);
+        Assert.True(emisor.EsEmisorEn(TestData.Dia));
+    }
+
     // ------------------------------------------------------------------ handlers
 
     private sealed class CapturingHandler : HttpMessageHandler

@@ -24,6 +24,19 @@ public sealed record Cae
     /// <summary>Fecha de vencimiento.</summary>
     public DateOnly FechaVencimiento { get; init; }
 
+    /// <summary>
+    /// Tipo de CAE especial, si la DGI lo entregó como tal (contribuyentes exonerados, IVA mínimo,
+    /// Monotributo o Monotributo Social MIDES); <c>null</c> para un CAE común. Se informa en cada CFE
+    /// (<c>CAEEspecial</c>) y determina las leyendas de la representación impresa.
+    /// </summary>
+    public CaeEspecial? Especial { get; init; }
+
+    /// <summary>
+    /// Causal del CAE especial (<c>CausalCAEEsp</c>, hasta 3 dígitos), según la tabla de la DGI.
+    /// Obligatoria en el CAE exonerado; no corresponde en los demás.
+    /// </summary>
+    public int? CausalEspecial { get; init; }
+
     /// <summary>Último número usado (0 si todavía no se usó). Lo actualiza el almacenamiento al numerar.</summary>
     public long UltimoNroUsado { get; init; }
 
@@ -79,7 +92,18 @@ public sealed record Cae
             yield return "FechaVencimiento es obligatoria.";
         if (UltimoNroUsado < 0 || UltimoNroUsado > RangoHasta)
             yield return "UltimoNroUsado debe estar entre 0 y RangoHasta.";
+        if (Especial is { } especial && !Enum.IsDefined(especial))
+            yield return "Especial no es un tipo de CAE especial válido.";
+        if (Especial == CaeEspecial.Exonerado && CausalEspecial is not (>= 0 and <= 999))
+            yield return "El CAE exonerado requiere la causal (CausalEspecial, hasta 3 dígitos).";
+        else if (Especial != CaeEspecial.Exonerado && CausalEspecial is not null)
+            yield return "CausalEspecial solo corresponde al CAE exonerado.";
+        if (EsIvaMinimoOMonotributo && Enum.IsDefined(TipoCfe) && TipoCfe.EsCuentaAjena())
+            yield return "Los CAE de IVA mínimo y Monotributo no admiten ventas por cuenta ajena.";
     }
+
+    /// <summary>CAE de IVA mínimo, Monotributo o Monotributo Social MIDES: sus CFE informan <c>MntBruto</c> 3 y no discriminan IVA.</summary>
+    internal bool EsIvaMinimoOMonotributo => Especial is CaeEspecial.IvaMinimo or CaeEspecial.Monotributo or CaeEspecial.MonotributoSocialMides;
 
     internal string? ObtenerAdvertencia(DateOnly hoy, int diasAlertaVencimiento, decimal porcentajeAlertaUso)
     {

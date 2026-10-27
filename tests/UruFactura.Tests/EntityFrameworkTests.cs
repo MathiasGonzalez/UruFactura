@@ -221,6 +221,7 @@ public sealed class EntityFrameworkTests : IDisposable
     [InlineData(TipoCfe.EFacturaExportacion)]
     [InlineData(TipoCfe.EResguardo)]
     [InlineData(TipoCfe.NotaCreditoEFacturaCuentaAjena)]
+    [InlineData(TipoCfe.EBoleta)]
     public async Task GuardarCfe_YListar_ReconstruyeElCfeEmitidoCompleto(TipoCfe tipo)
     {
         var cfe = TestData.Emitido(TestData.CfeValido(tipo), 7, firma: new DateTimeOffset(2026, 6, 15, 21, 30, 0, HoraUruguay.Offset));
@@ -238,6 +239,30 @@ public sealed class EntityFrameworkTests : IDisposable
         Assert.Equal(cfe.UrlQr, leido.UrlQr);
         Assert.Equal(cfe.Documento.Detalle.Count, leido.Documento.Detalle.Count);
         Assert.Equal(cfe.Documento.Receptor, leido.Documento.Receptor);
+        Assert.Equal(cfe.Documento.Moneda, leido.Documento.Moneda);
+    }
+
+    [Fact]
+    public async Task ListarCfes_PorFechaDeReporte_LaDeLaFirmaEnUruguay()
+    {
+        var store = Store();
+        // Firmado el 15 a las 22:30 de Uruguay (16 en UTC) con fecha de comprobante del 14.
+        var firma = new DateTimeOffset(2026, 6, 16, 1, 30, 0, TimeSpan.Zero);
+        await store.GuardarCfesAsync([TestData.Emitido(TestData.CfeValido() with { FechaEmision = Hoy.AddDays(-1) }, 1, NuevoCae(), firma)]);
+
+        Assert.Single(await store.ListarCfesAsync(Hoy).ToListAsync());
+        Assert.Empty(await store.ListarCfesAsync(Hoy.AddDays(-1)).ToListAsync());
+        Assert.Empty(await store.ListarCfesAsync(Hoy.AddDays(1)).ToListAsync());
+    }
+
+    [Fact]
+    public async Task GuardarCae_ConservaElCaeEspecial()
+    {
+        var store = Store();
+        await store.GuardarCaeAsync(NuevoCae() with { Especial = CaeEspecial.Exonerado, CausalEspecial = 7 });
+
+        var cae = Assert.Single(await Store().ListarCaesAsync());
+        Assert.Equal((CaeEspecial.Exonerado, 7), (cae.Especial!.Value, cae.CausalEspecial!.Value));
     }
 
     [Fact]

@@ -3,8 +3,9 @@ namespace UruFactura;
 /// <summary>
 /// Cliente de facturación electrónica de la DGI. El flujo es:
 /// <see cref="RegistrarCaeAsync"/> (una vez por CAE) → <see cref="EmitirAsync"/> → <see cref="EnviarAsync(CfeEmitido, CancellationToken)"/>
-/// → <see cref="ConsultarEnvioAsync"/>, y al cierre del día <see cref="EnviarReporteDiarioAsync"/>.
-/// Es thread-safe: regístrelo como singleton.
+/// → <see cref="ConsultarEnvioAsync"/>, y al cierre del día <see cref="EnviarReporteDiarioAsync"/>. Con los receptores
+/// electrónicos, además, <see cref="GenerarSobreReceptorAsync"/> y sus respuestas; y con los proveedores,
+/// <see cref="RecibirSobreAsync"/> → <see cref="ResponderCfesAsync"/>. Es thread-safe: regístrelo como singleton.
 /// </summary>
 public interface IUruFacturaClient : IDisposable
 {
@@ -84,4 +85,77 @@ public interface IUruFacturaClient : IDisposable
     /// <param name="cancellationToken">Token de cancelación.</param>
     /// <exception cref="UruFacturaException">Si la fecha es futura o el almacenamiento no tiene completos los CFE de esa fecha.</exception>
     Task<AcuseReporte> EnviarReporteDiarioAsync(DateOnly fecha, int secEnvio = 1, CancellationToken cancellationToken = default);
+
+    // --- Intercambio con otros emisores electrónicos ---
+
+    /// <summary>
+    /// Consulta en el padrón de la DGI si un RUT es emisor electrónico (y por lo tanto receptor electrónico, al
+    /// que se le envían los CFE), con su correo y su servicio web de intercambio. <c>null</c> si no figura.
+    /// </summary>
+    /// <exception cref="ArgumentException">Si el RUT no es válido.</exception>
+    Task<EmisorElectronico?> ConsultarEmisorElectronicoAsync(string rut, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Arma el sobre para un receptor electrónico (<c>EnvioCFE_entreEmpresas</c>) con los CFE firmados y su
+    /// adenda. Los CFE deben ser de un mismo receptor identificado con su RUT, no de contingencia (el CFC no se
+    /// envía al receptor) y, salvo los e-Tickets, haberse enviado antes a la DGI.
+    /// </summary>
+    /// <exception cref="UruFacturaException">Si los CFE no se pueden enviar juntos a un receptor.</exception>
+    /// <exception cref="InvalidOperationException">Si alguno todavía no se envió a la DGI.</exception>
+    Task<SobreReceptor> GenerarSobreReceptorAsync(IReadOnlyCollection<CfeEmitido> cfes, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Lee el acuse de recibo (<c>ACKSobre</c>) que un receptor electrónico envió por un sobre de este emisor;
+    /// <see cref="AcuseSobre.IdEmisor"/> identifica el sobre.
+    /// </summary>
+    /// <exception cref="UruFacturaException">Si la firma no es válida o el acuse no es de un sobre de este emisor.</exception>
+    AcuseSobre LeerAcuseReceptor(string xml);
+
+    /// <summary>
+    /// Lee la respuesta a los comprobantes (<c>ACKCFE</c>) que un receptor electrónico envió: la aceptación o el
+    /// rechazo comercial de cada CFE del sobre (<see cref="EstadoEnvio.IdEmisor"/>). No cambia el estado ante la
+    /// DGI: un CFE que la DGI recibió es válido y, si corresponde, se corrige con una nota.
+    /// </summary>
+    /// <exception cref="UruFacturaException">Si la firma no es válida o la respuesta no es de un sobre de este emisor.</exception>
+    EstadoEnvio LeerRespuestaReceptor(string xml);
+
+    /// <summary>
+    /// Arma la comunicación firmada al receptor electrónico de los CFE que se le enviaron y la DGI rechazó, que
+    /// quedan anulados (<see cref="CfeEmitido.AnuladoPorRechazo"/>).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Si alguno no está anulado por un rechazo de la DGI.</exception>
+    Task<NotificacionAnulacion> GenerarNotificacionAnulacionAsync(IReadOnlyCollection<CfeEmitido> cfes, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Recibe un sobre de un proveedor (<c>EnvioCFE_entreEmpresas</c>): lo controla (carátula, RUT, certificado,
+    /// cantidad, tamaño) y controla cada CFE (firma, formato, CAE), y devuelve sus CFE con el acuse de recibo
+    /// firmado (<c>ACKSobre</c>) para devolverle. Los sobres repetidos (mismo RUT emisor y número) los detecta
+    /// la aplicación, que es la que los conserva.
+    /// </summary>
+    /// <param name="xml">XML del sobre.</param>
+    /// <param name="nombreArchivo">Nombre del archivo recibido por correo (<c>null</c> si llegó por servicio web).</param>
+    /// <param name="cancellationToken">Token de cancelación.</param>
+    /// <exception cref="UruFacturaException">Si no es XML o no tiene el RUT del emisor y el número de envío (no se puede responder).</exception>
+    Task<SobreRecibido> RecibirSobreAsync(string xml, string? nombreArchivo = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Arma la respuesta firmada (<c>ACKCFE</c>) a los comprobantes de un sobre recibido: rechaza los que no
+    /// pasaron los controles y los que indique <paramref name="rechazos"/> (motivos comerciales, por
+    /// <see cref="CfeRecibido.NroOrdinal"/>), y acepta el resto.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Si el sobre fue rechazado.</exception>
+    /// <exception cref="ArgumentException">Si un rechazo no corresponde a un CFE del sobre o su código no es de los que usa un receptor.</exception>
+    Task<RespuestaCfes> ResponderCfesAsync(
+        SobreRecibido sobre, IReadOnlyDictionary<int, IReadOnlyList<MotivoRechazo>>? rechazos = null, CancellationToken cancellationToken = default);
+
+    /// <summary>Lee la comunicación de CFE anulados por rechazo de la DGI que envió un proveedor.</summary>
+    /// <exception cref="UruFacturaException">Si la firma no es válida o no está dirigida a este receptor.</exception>
+    IReadOnlyList<CfeAnulado> LeerNotificacionAnulacion(string xml);
+
+    /// <summary>
+    /// Envía un mensaje del intercambio (sobre, acuse, respuesta o comunicación de anulación) al servicio web de
+    /// otro emisor (<see cref="EmisorElectronico.UrlServicioWeb"/>), con WS-Security.
+    /// </summary>
+    Task<RespuestaIntercambio> EnviarIntercambioAsync(
+        string url, OperacionIntercambio operacion, string xml, CancellationToken cancellationToken = default);
 }

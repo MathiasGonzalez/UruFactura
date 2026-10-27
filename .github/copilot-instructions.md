@@ -21,7 +21,10 @@ Sigue el runbook en [`docs/NORMATIVA_DGI_UPDATE.md`](docs/NORMATIVA_DGI_UPDATE.m
 ## Convenciones de este proyecto
 
 - **Idioma del código:** español para nombres de propiedades, modelos y métodos de dominio. Inglés para nombres técnicos estándar (.NET, SOAP, XML).
-- **Modelo CFE:** `Cfe` (`src/UruFactura/Models/Cfe.cs`) es un record inmutable con el contenido del documento; `UruFacturaClient.EmitirAsync` lo valida, numera, firma y devuelve un `CfeEmitido`. Toda restricción del XSD o del formato va en `Cfe.Validar()` (las del emisor en `Emisor.Validar()`, las del CAE en `Cae.Validar()`), con el campo afectado en cada `ErrorValidacion`: lo que pasa la validación debe producir un XML válido (`ValidacionContraXsdTests` lo comprueba con CFE aleatorios). Los límites comunes (montos, fechas, textos, series, países) están en `Validacion`.
+- **Modelo CFE:** `Cfe` (`src/UruFactura/Models/Cfe.cs`) es un record inmutable con el contenido del documento; `UruFacturaClient.EmitirAsync` lo valida, numera, firma y devuelve un `CfeEmitido`. Toda restricción del XSD o del formato va en `Cfe.Validar()` (las del emisor en `Emisor.Validar()`, las del CAE en `Cae.Validar()`, y las que dependen del CAE con que se numera —CAE especial— en `Cfe.ValidarConCae()`), con el campo afectado en cada `ErrorValidacion`: lo que pasa la validación debe producir un XML válido (`ValidacionContraXsdTests` lo comprueba con CFE aleatorios, que deben cubrir todos los tipos, indicadores de facturación y CAE especiales). Los límites comunes (montos, fechas, textos, series, países) están en `Validacion`.
+- **Indicadores de facturación:** `IndicadorFacturacion` (el valor es el código de la DGI) decide en qué total va cada línea y cada descuento/recargo (`Cfe.CalcularTotales`, `Cfe.IndicadorInformado`). El total a pagar (`MntPagar`) suma el monto no facturable y es el monto del QR.
+- **Reporte diario:** resume los CFE por fecha de firma en Uruguay (`CfeEmitido.FechaReporte`), en pesos, con los rechazados por la DGI como anulados (`CfeEmitido.AnuladoPorRechazo`). Formatos: reporte v13.2, mensajes de respuesta v19, sobre v05.
+- **Intercambio entre emisores:** `Xml/Intercambio.cs` (controles y acuses del receptor, anulación) y `Xml/CfeSobre.cs` (sobres); la adenda nunca va a la DGI.
 - **API pública mínima:** todo lo público va en el namespace `UruFactura`. El XML, la firma, el sobre, el reporte y el cliente SOAP son internos; las costuras públicas son `IUruFacturaClient`, `IUruFacturaStore` e `IDgiClient`. Clases `sealed`, sin métodos `virtual`.
 - **XML builder:** `CfeXml.cs` usa `XmlWriter` (no interpolación de strings) para evitar vulnerabilidades XSS.
 - **Serialización XML:** usar `MemoryStream` + `UTF8Encoding(false)` (sin BOM). No usar `StringBuilder` para la salida XML.
@@ -40,7 +43,10 @@ Sigue el runbook en [`docs/NORMATIVA_DGI_UPDATE.md`](docs/NORMATIVA_DGI_UPDATE.m
 | `src/UruFactura/Xml/CfeXml.cs` | Generación del XML del CFE |
 | `src/UruFactura/Models/Cfe.cs` | Contenido del CFE + totales + validaciones |
 | `src/UruFactura/Models/CfeEmitido.cs` | CFE numerado y firmado (XML, CAE, totales, QR, estado ante la DGI) |
-| `src/UruFactura/Models/RefCfe.cs` | Referencias (notas de crédito/débito) |
+| `src/UruFactura/Models/RefCfe.cs` | Referencias (notas de crédito/débito; referencia global) |
+| `src/UruFactura/Enums/IndicadorFacturacion.cs` / `CaeEspecial.cs` | Indicadores de facturación y tipos de CAE especial |
+| `src/UruFactura/Xml/ReporteDiario.cs` | Reporte diario (formato v13.2) |
+| `src/UruFactura/Xml/Intercambio.cs` / `Models/Intercambio.cs` | Intercambio con otros emisores electrónicos |
 | `src/UruFactura/UruFacturaConfig.cs` / `Emisor.cs` | Configuración y datos del emisor + validaciones |
 | `src/UruFactura/Enums/TipoCfe.cs` / `TipoCfeExtensions.cs` | Tipos de comprobante y su clasificación |
 | `src/UruFactura/Persistence/IUruFacturaStore.cs` | Almacenamiento: CAE, numeración (`RegistrarEmisionAsync`: avanza el CAE y guarda el CFE de forma atómica), número de envío y CFE emitidos |

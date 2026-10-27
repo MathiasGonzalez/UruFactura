@@ -35,6 +35,25 @@ public class CaeTests
         Assert.Contains((TestData.Cae() with { NumeroAutorizacion = "123456789012" }).Validar(), e => e.Contains("NumeroAutorizacion"));
 
     [Fact]
+    public void Exonerado_ExigeLaCausal_YLaCausalSoloCorrespondeAlExonerado()
+    {
+        Assert.NotEmpty((TestData.Cae() with { Especial = CaeEspecial.Exonerado }).Validar());
+        Assert.Empty((TestData.Cae() with { Especial = CaeEspecial.Exonerado, CausalEspecial = 3 }).Validar());
+        Assert.NotEmpty((TestData.Cae() with { Especial = CaeEspecial.IvaMinimo, CausalEspecial = 3 }).Validar());
+        Assert.NotEmpty((TestData.Cae() with { Especial = (CaeEspecial)9 }).Validar());
+    }
+
+    [Theory]
+    [InlineData(CaeEspecial.IvaMinimo)]
+    [InlineData(CaeEspecial.Monotributo)]
+    [InlineData(CaeEspecial.MonotributoSocialMides)]
+    public void IvaMinimoYMonotributo_NoAdmitenVentasPorCuentaAjena(CaeEspecial especial)
+    {
+        Assert.NotEmpty((TestData.Cae(TipoCfe.ETicketCuentaAjena) with { Especial = especial }).Validar());
+        Assert.Empty((TestData.Cae() with { Especial = especial }).Validar());
+    }
+
+    [Fact]
     public void SinFechaDeVencimiento_TieneError() =>
         Assert.Contains((TestData.Cae() with { FechaVencimiento = default }).Validar(), e => e.Contains("FechaVencimiento"));
 

@@ -55,6 +55,19 @@ public sealed record Emisor
     /// </summary>
     public string? UrlVerificacion { get; init; }
 
+    /// <summary>
+    /// Indica si el emisor tiene la constancia de estar al día con el IVA (por defecto, sí). Si no la
+    /// tiene, los CFE lo informan (<c>IVAalDia</c>) y la representación impresa no imprime la constancia.
+    /// No corresponde a los contribuyentes Monotributo.
+    /// </summary>
+    public bool IvaAlDia { get; init; } = true;
+
+    /// <summary>
+    /// Norma que otorga la exoneración, que se imprime junto a la leyenda "Contribuyente Exonerado" en los
+    /// CFE numerados con un CAE exonerado (por ejemplo, "Ley 16.906"). Hasta 100 caracteres, opcional.
+    /// </summary>
+    public string? NormaExoneracion { get; init; }
+
     internal List<ErrorValidacion> Validar()
     {
         var v = new Validacion();
@@ -75,6 +88,7 @@ public sealed record Emisor
             v.Texto($"Emisor.Telefonos[{i}]", Telefonos[i], 20, obligatorio: true);
         v.Texto("Emisor.Correo", Correo, 80);
         v.Texto("Emisor.InfoAdicional", InfoAdicional, 150);
+        v.Texto("Emisor.NormaExoneracion", NormaExoneracion, 100);
         return v.Errores;
     }
 }

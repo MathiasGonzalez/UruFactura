@@ -19,7 +19,13 @@ public sealed record AcuseSobre
     /// <summary>Motivos de rechazo (código y glosa).</summary>
     public IReadOnlyList<string> Motivos { get; init; } = [];
 
-    /// <summary>Número asignado por la DGI al sobre (para consultar el resultado).</summary>
+    /// <summary>RUT de quien acusa recibo: la DGI o el receptor electrónico.</summary>
+    public string? RutReceptor { get; init; }
+
+    /// <summary>Número que el emisor asignó al sobre que se acusa (<c>Idemisor</c> del sobre).</summary>
+    public long? IdEmisor { get; init; }
+
+    /// <summary>Número asignado al sobre por quien lo recibió (para consultar el resultado).</summary>
     public string? IdReceptor { get; init; }
 
     /// <summary>Token para consultar el resultado.</summary>
@@ -46,6 +52,12 @@ public sealed record EstadoEnvio
 
     /// <summary>Indica si la DGI aceptó todos los comprobantes del sobre.</summary>
     public bool TodosAceptados => Procesado && Comprobantes.All(c => c.Aceptado);
+
+    /// <summary>RUT de quien responde: la DGI o el receptor electrónico.</summary>
+    public string? RutReceptor { get; init; }
+
+    /// <summary>Número que el emisor asignó al sobre que se responde (<c>Idemisor</c> del sobre).</summary>
+    public long? IdEmisor { get; init; }
 
     /// <summary>Resumen del resultado.</summary>
     public string Mensaje { get; init; } = string.Empty;

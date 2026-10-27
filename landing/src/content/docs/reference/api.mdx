@@ -38,7 +38,15 @@ Valida la configuración (`UruFacturaException`, también si falta el almacenami
 | `Task<AcuseSobre> EnviarAsync(IReadOnlyCollection<CfeEmitido> cfes, CancellationToken ct = default)` | De 1 a 250 CFE en un sobre |
 | `Task<EstadoEnvio> ConsultarEnvioAsync(AcuseSobre acuse, CancellationToken ct = default)` | Resultado de cada comprobante del sobre (por tipo, serie y número o, si la DGI no los informa, por `Nro_ordinal`); actualiza su `EstadoDgi` y lo guarda. `InvalidOperationException` si el sobre no fue recibido |
 | `Task<EstadoComprobante> ConsultarCfeAsync(CfeEmitido cfe, CancellationToken ct = default)` | Estado de un CFE (servicio `ws_consultas`); actualiza su `EstadoDgi` y lo guarda |
-| `Task<AcuseReporte> EnviarReporteDiarioAsync(DateOnly fecha, int secEnvio = 1, CancellationToken ct = default)` | Reporte diario firmado con los CFE emitidos en la fecha, tomados del almacenamiento. `secEnvio` 1 el primero; para corregir uno ya recibido, la secuencia anterior + 1 |
+| `Task<AcuseReporte> EnviarReporteDiarioAsync(DateOnly fecha, int secEnvio = 1, CancellationToken ct = default)` | Reporte diario firmado (formato v13.2) con los CFE **firmados** en la fecha, tomados del almacenamiento: montos en pesos por fecha de comprobante y sucursal, rechazados por la DGI como anulados y, con `UnidadIndexada`, los e-Tickets sobre el tope. `secEnvio` 1 el primero; para corregir uno ya recibido, la secuencia anterior + 1 |
+| `Task<EmisorElectronico?> ConsultarEmisorElectronicoAsync(string rut, CancellationToken ct = default)` | Padrón de emisores electrónicos de la DGI: si el RUT es receptor electrónico, su correo y servicio web de intercambio |
+| `Task<SobreReceptor> GenerarSobreReceptorAsync(IReadOnlyCollection<CfeEmitido> cfes, CancellationToken ct = default)` | Sobre `EnvioCFE_entreEmpresas` para un receptor electrónico, con la adenda de cada CFE. Mismo receptor (RUT), sin CFC y, salvo e-Tickets, ya enviados a la DGI |
+| `AcuseSobre LeerAcuseReceptor(string xml)` / `EstadoEnvio LeerRespuestaReceptor(string xml)` | Lee el `ACKSobre` y el `ACKCFE` de un receptor (firma verificada, dirigidos a este RUT) |
+| `Task<NotificacionAnulacion> GenerarNotificacionAnulacionAsync(IReadOnlyCollection<CfeEmitido> cfes, CancellationToken ct = default)` | Comunicación firmada al receptor de los CFE que la DGI rechazó (`CfeEmitido.AnuladoPorRechazo`) |
+| `Task<SobreRecibido> RecibirSobreAsync(string xml, string? nombreArchivo = null, CancellationToken ct = default)` | Recibe un sobre de un proveedor: controles S01-S07 y de cada CFE (firma E04, formato E05, CAE E03/E07, repetidos E02) y el `ACKSobre` firmado para devolver |
+| `Task<RespuestaCfes> ResponderCfesAsync(SobreRecibido sobre, IReadOnlyDictionary<int, IReadOnlyList<MotivoRechazo>>? rechazos = null, CancellationToken ct = default)` | `ACKCFE` firmado: AE/BE por CFE con los rechazos de los controles y los comerciales (E20-E60) por `NroOrdinal` |
+| `IReadOnlyList<CfeAnulado> LeerNotificacionAnulacion(string xml)` | Lee la comunicación de anulación de un proveedor |
+| `Task<RespuestaIntercambio> EnviarIntercambioAsync(string url, OperacionIntercambio operacion, string xml, CancellationToken ct = default)` | Envía un mensaje al servicio web de intercambio de otro emisor (`ws_efactura_intercambio`, WS-Security) |
 
 ---
 
@@ -57,7 +65,7 @@ public sealed record UruFacturaConfig
     public string? UrlConsultas { get; init; }              // obligatoria en Producción
     public TimeSpan Timeout { get; init; }                  // default: 30 s
     public bool OmitirValidacionSsl { get; init; }          // default: false; en Producción no es válida
-    public decimal? ValorUnidadIndexada { get; init; }      // activa el tope de 5.000 UI de los e-Tickets
+    public IReadOnlyDictionary<int, decimal> UnidadIndexada { get; init; }   // UI al 31/12 de cada año: la del año anterior a cada CFE fija el tope de 5.000 UI; obligatoria en Producción
 
     public IReadOnlyList<string> Validar();                 // errores (vacía si es válida)
 }
@@ -78,6 +86,8 @@ public sealed record UruFacturaConfig
 | `Telefonos` | `IReadOnlyList<string>` | Hasta 2 |
 | `Correo`, `InfoAdicional` | `string?` | Hasta 80 / 150 |
 | `FechaIncorporacion`, `UrlVerificacion` | `string?` | Leyendas de la representación impresa |
+| `IvaAlDia` | `bool` | Constancia de IVA al día (default `true`; si es `false`, el CFE lo informa en `IVAalDia`) |
+| `NormaExoneracion` | `string?` | Norma que se imprime junto a "Contribuyente Exonerado" con un CAE exonerado |
 
 ---
 
@@ -94,23 +104,34 @@ public sealed record Cfe(TipoCfe Tipo)
 | Propiedad | Tipo | Descripción |
 |-----------|------|-------------|
 | `Tipo` | `TipoCfe` | Tipo de comprobante |
-| `FechaEmision` | `DateOnly?` | Si se omite, la fecha de Uruguay al emitir |
+| `FechaEmision` | `DateOnly?` | Si se omite, la fecha de Uruguay al emitir; hasta 60 días posterior a hoy |
 | `Emisor` | `Emisor?` | Reemplaza al de la configuración (mismo RUT), p. ej. otra sucursal |
-| `Receptor` | `Receptor?` | Obligatorio en e-Factura, exportación y e-Resguardo |
-| `Mandante` | `Mandante?` | Obligatorio en venta por cuenta ajena |
+| `Receptor` | `Receptor?` | Obligatorio (salvo con secreto profesional) en e-Factura, exportación, e-Remito, e-Resguardo y e-Boleta (el vendedor); en el e-Ticket, sobre el tope o con retenciones |
+| `Mandante` | `Mandante?` | Obligatorio en venta por cuenta ajena (salvo con secreto profesional) y en la compra de moneda extranjera por cuenta ajena |
 | `IndTraslado` | `IndTraslado?` | Obligatorio en e-Remito |
-| `ClausulaVenta`, `ModalidadVenta`, `ViaTransporte` | `string?`, `int?`, `int?` | Datos de exportación |
+| `Propietario` | `Propietario?` | e-Remitos de bienes de terceros (`TipoDocumento`, `CodigoPais`, `Documento`, `Nombre`) |
+| `ClausulaVenta`, `ModalidadVenta`, `ViaTransporte` | `string?`, `int?`, `int?` | Datos de exportación; `ModalidadVenta` 90 también en e-Facturas y e-Tickets, y 80 (Tax Free) en e-Tickets |
 | `FormaPago` | `FormaPago` | `Contado` (default) o `Credito` |
-| `Moneda` / `TipoCambio` | `Moneda` / `decimal?` | `TipoCambio` es obligatorio si la moneda no es el peso |
+| `Moneda` / `TipoCambio` | `Moneda` / `decimal?` | Cualquier código de la tabla de la DGI; `TipoCambio` es obligatorio si la moneda no es el peso |
+| `MontosBrutos` | `MontosBrutos?` | `IvaIncluido` (e-Ticket y e-Factura: los netos se obtienen dividiendo por 1 + tasa) o `ImebaYAdicionalesIncluidos` (e-Boleta) |
+| `SecretoProfesional` | `bool` | Operación amparada: el receptor (y en cuenta ajena el mandante) no es obligatorio; si se omite el receptor, va en la adenda |
+| `PagoCuentaTerceros` | `bool` | Reintegro de gastos (e-Ticket, e-Factura y exportación) |
+| `CobranzaPropia` | `bool` | e-Ticket o e-Factura de cobranza: líneas no facturables, sin descuentos globales, con referencias |
+| `CompraMonedaExtranjera` | `CompraMonedaExtranjera?` | e-Boleta: compra de moneda extranjera para reventa (`Reventa`, `ReventaPorCuentaAjena`) |
+| `PeriodoDesde`, `PeriodoHasta` | `DateOnly?` | Período facturado |
+| `FechaValor` | `DateOnly?` | e-Resguardo de organismos del Estado |
 | `NroInterno` | `string?` | Hasta 50 caracteres. Identifica el comprobante en tu sistema: no se emiten dos del mismo tipo con el mismo valor (`CfeDuplicadoException`) |
 | `InfoAdicional` | `string?` | Hasta 150 caracteres |
-| `FechaVencimiento` | `DateOnly?` | Vencimiento del pago |
-| `Detalle` | `IReadOnlyList<LineaDetalle>` | Al menos una línea |
+| `FechaVencimiento` | `DateOnly?` | Vencimiento del pago (no en remitos ni resguardos) |
+| `Detalle` | `IReadOnlyList<LineaDetalle>` | Al menos una línea; hasta 700 en los e-Tickets y 200 en los demás |
+| `SubtotalesInformativos` | `IReadOnlyList<SubtotalInformativo>` | Hasta 20 (`Glosa`, `Valor`, `Orden`); no cambian los totales |
 | `DescuentosRecargos` | `IReadOnlyList<DescuentoRecargoGlobal>` | Hasta 20; cambian la base del IVA |
 | `MediosPago` | `IReadOnlyList<MedioPago>` | Hasta 40 |
-| `Referencias` | `IReadOnlyList<RefCfe>` | Obligatorias en las notas (hasta 40) |
+| `Referencias` | `IReadOnlyList<RefCfe>` | Obligatorias en las notas, las cobranzas propias y las rebajas o anulaciones (hasta 40) |
+| `IvaOtraTasa` | `decimal?` | IVA de las líneas `OtraTasa` (otra tasa/IVA sobre fictos): obligatorio con ellas |
+| `Adenda` | `string?` | Información comercial para el receptor: no se firma ni se envía a la DGI; va en el sobre al receptor y en el PDF |
 
-`Totales CalcularTotales()` calcula los totales (IVA a `Totales.TasaIvaMinima` y `Totales.TasaIvaBasica`: 10 % y 22 %) con la precisión del XML.
+`Totales CalcularTotales()` calcula los totales (IVA a `Totales.TasaIvaMinima` y `Totales.TasaIvaBasica`: 10 % y 22 %) con la precisión del XML. `IndicadorInformado(indicador)`, `MontoInformado(descuentoRecargo)` y `RetencionesPorCodigo()` dan el indicador y el monto con que se informa cada línea y cada descuento/recargo, y las retenciones acumuladas por código (para una representación impresa propia).
 
 ### `ErrorValidacion`
 
@@ -125,14 +146,17 @@ public sealed record ErrorValidacion(string Campo, string Mensaje);   // ToStrin
 | Propiedad | Tipo | Descripción |
 |-----------|------|-------------|
 | `NombreItem` | `string` | Hasta 80 caracteres (obligatorio salvo en e-Resguardo) |
-| `Cantidad` | `decimal` | Mayor a cero (3 decimales en el XML; hasta 14 enteros) |
-| `PrecioUnitario` | `decimal` | Sin IVA (6 decimales; hasta 11 enteros). Los remitos no llevan precio |
-| `IndFactIva` | `TipoIva` | Default `Basico`; en exportación se informa `IndFact` 10 |
+| `Cantidad` | `decimal` | Distinta de cero (3 decimales en el XML; hasta 14 enteros); negativa para eliminar un ítem del propio comprobante, sin descuentos ni recargos |
+| `PrecioUnitario` | `decimal` | Sin IVA salvo `MontosBrutos` (6 decimales; hasta 11 enteros), mayor a cero salvo en las entregas gratuitas y las rebajas. Los e-Remitos no llevan precio |
+| `IndFact` | `IndicadorFacturacion` | Default `TasaBasica`; en exportación, `ExportacionYAsimiladas` salvo entrega gratuita y no facturables. En remitos y resguardos solo se informan `RebajaRemito`, `AnulacionResguardo` y, en el e-Remito de exportación, `EntregaGratuita` (valor cero). La e-Boleta usa los suyos (12 a 17) |
+| `AgenteResponsable` | `AgenteResponsable?` | `Producto` (R) o `ConceptoAsociado` (A): obligatorio en las líneas con retenciones fuera del e-Resguardo |
 | `UnidadMedida` | `string?` | Hasta 4 caracteres; si se omite, `N/A` |
 | `Descripcion` | `string?` | Hasta 1000 caracteres |
-| `DescuentoMonto`, `DescuentoPorcentaje`, `RecargoMonto` | `decimal`, `decimal?`, `decimal` | No negativos; el descuento no supera Cantidad × Precio y el monto tiene prioridad sobre el porcentaje. No aplican a remitos |
-| `Codigos` | `IReadOnlyList<CodigoItem>` | Hasta 5 (`Tipo`, `Codigo`) |
-| `Retenciones` | `IReadOnlyList<RetencionPercepcion>` | Solo e-Resguardo, de 1 a 5 (`Codigo`, `Tasa`, `MontoSujeto`, `Valor`, `InfoAdicional`) |
+| `Ncm` | `string?` | Posición arancelaria, solo en exportación (hasta 20) |
+| `DescuentoMonto`, `DescuentoPorcentaje`, `RecargoMonto`, `RecargoPorcentaje` | `decimal`, `decimal?`, `decimal`, `decimal?` | No negativos; el descuento no supera Cantidad × Precio y el monto tiene prioridad sobre el porcentaje. No aplican a remitos |
+| `Subdescuentos`, `Subrecargos` | `IReadOnlyList<DistribucionAjuste>` | Hasta 5: distribución informativa (`Tipo`: `Monto` o `Porcentaje`, `Valor`) |
+| `Codigos` | `IReadOnlyList<CodigoItem>` | Hasta 5 (`Tipo`, `Codigo`); los `GTIN8`/`12`/`13`/`14` con su dígito verificador |
+| `Retenciones` | `IReadOnlyList<RetencionPercepcion>` | De 1 a 5 en el e-Resguardo; hasta 5 en e-Tickets, e-Facturas y e-Boletas (`Codigo` numérico de la DGI, `Tasa`, `MontoSujeto`, `Valor` mayor a cero, `InfoAdicional`) |
 | `MontoTotal` | `decimal` | *(calculado)* Cantidad × Precio − Descuento + Recargo |
 
 Las líneas se numeran por su posición.
@@ -141,21 +165,22 @@ Las líneas se numeran por su posición.
 
 | Propiedad | Tipo | Descripción |
 |-----------|------|-------------|
-| `Documento` | `string?` | En e-Factura, un RUT uruguayo válido |
-| `TipoDocumento` | `TipoDocumentoReceptor` | Default `Rut` |
-| `CodigoPais` | `string` | ISO alfa-2 de la lista de la DGI (default `UY`); si no es `UY`, se informa como documento extranjero |
-| `RazonSocial`, `Direccion`, `Ciudad`, `Departamento`, `Pais` | `string?` | En e-Remito, razón social, dirección y ciudad son obligatorias |
+| `Documento` | `string?` | En e-Factura, un RUT uruguayo válido; RUT y C.I. con dígito verificador |
+| `TipoDocumento` | `TipoDocumentoReceptor` | Default `Rut`. NIE, RUT y C.I. van en `DocRecep`; el resto en `DocRecepExt` |
+| `CodigoPais` | `string` | ISO alfa-2 de la lista de la DGI (default `UY`): `UY` para NIE, RUT y C.I.; `AR`, `BR`, `CL` o `PY` para el DNI; `99` si el país no está en la tabla |
+| `RazonSocial`, `Direccion`, `Ciudad`, `Departamento`, `Pais` | `string?` | Según el tipo: nombre, dirección y ciudad en e-Factura, e-Remito y e-Boleta; nombre en el e-Resguardo; además departamento y país en exportación |
 | `CodigoPostal`, `InfoAdicional`, `CompraId`, `LugarDestinoEntrega` | `string?` | Opcionales |
 
 ### Otros
 
 | Modelo | Propiedades |
 |--------|-------------|
-| `RefCfe` | `TipoCfe`, `Serie`, `NroCfe` (1-9999999), `FechaCfe` (`DateOnly`, no posterior a la emisión), `MontoCfeRef` y `MonedaCfeRef` (obligatorios en notas), `TipoCambioCfeRef`, `Razon` (hasta 90) |
-| `Mandante` | `TipoDocumento`, `CodigoPais` (default `UY`), `Documento`, `Nombre` |
-| `DescuentoRecargoGlobal` | `Tipo` (`Descuento`/`Recargo`), `Glosa`, `Monto` (sin IVA), `IndFact` (base de IVA), `Codigo` |
+| `RefCfe` | `Global` (referencia global: solo `Razon`), `TipoCfe`, `Serie`, `NroCfe` (1-9999999), `FechaCfe` (`DateOnly?`, opcional, hasta 60 días posterior a hoy), `MontoCfeRef` y `MonedaCfeRef` (obligatorios en notas; no en el e-Remito), `TipoCambioCfeRef` (obligatorio si la moneda no es el peso), `Razon` (hasta 90). Sin dos referencias al mismo comprobante |
+| `Mandante` | `TipoDocumento`, `CodigoPais` (default `UY`), `Documento` (distinto del emisor, con las reglas del receptor), `Nombre`, `IvaAlDia` |
+| `DescuentoRecargoGlobal` | `Tipo` (`Descuento`/`Recargo`), `Glosa`, `Monto` (sin IVA) o `Porcentaje` (de la suma de las líneas con su indicador; se informa como monto), `IndFact` (base), `Codigo` |
 | `MedioPago` | `Glosa`, `Valor`, `Codigo`, `Orden` |
-| `Totales` | `MontoNetoExento`, `MontoNetoSuspendido`, `MontoNetoMinimo`, `MontoNetoBasico`, `IvaMinimo`, `IvaBasico`, `MontoExportacion`, `MontoTotal`, `MontoRetenido`, `MontoNeto`; constantes `TasaIvaMinima` (10) y `TasaIvaBasica` (22) |
+| `Totales` | `MontoNoGravado`, `MontoExportacion`, `MontoImpuestoPercibido`, `MontoNetoSuspendido`, `MontoNetoMinimo`, `MontoNetoBasico`, `MontoNetoOtraTasa`, `IvaMinimo`, `IvaBasico`, `IvaOtraTasa`, `MontoTotal`, `MontoRetenido`, `MontoCreditoFiscal` (códigos 2181xxx), `MontoNoFacturable`, `MontoPagar` (total + retenido + no facturable), `MontoNeto`; constantes `TasaIvaMinima` (10) y `TasaIvaBasica` (22) |
+| `TotalRetencion` | `Codigo`, `Valor`, `EsCreditoFiscal` (lo que devuelve `Cfe.RetencionesPorCodigo()`) |
 
 ---
 
@@ -172,11 +197,13 @@ El resultado de `EmitirAsync`. Los datos fiscales son inmutables; el estado ante
 | `Xml` | `string` | XML firmado (conservarlo durante el plazo legal) |
 | `FechaFirma` | `DateTimeOffset` | `TmstFirma` |
 | `CodigoSeguridad` | `string` | `DigestValue` de la firma; los primeros 6 caracteres se imprimen |
-| `UrlQr` | `string` | Contenido del código QR |
+| `UrlQr` | `string` | Contenido del código QR (monto: el total a pagar; el retenido en el e-Resguardo) |
+| `FechaReporte` | `DateOnly` | Fecha del reporte diario que lo informa: la de Uruguay de la firma |
 | `IdReceptorDgi`, `TokenDgi` | `string?` | Sobre en que se envió |
 | `EstadoDgi` | `EstadoCfe?` | `Aceptado` (`AE`), `Rechazado` (`BE`), `Observado` (`CE`) o `Reliquidado` (`FE`); `null` sin resultado |
 | `MensajeDgi` | `string?` | Motivos del estado, o el mensaje del rechazo del sobre |
 | `AceptadoPorDgi`, `Enviado` | `bool` | `EstadoDgi == EstadoCfe.Aceptado` / se envió en un sobre recibido |
+| `AnuladoPorRechazo` | `bool` | La DGI lo rechazó y su número quedó anulado (salvo rechazos E02 y E09) |
 
 ## `Cae`
 
@@ -187,6 +214,7 @@ El resultado de `EmitirAsync`. Los datos fiscales son inmutables; el estado ante
 | `RangoDesde`, `RangoHasta` | `long` | Rango autorizado (1-9999999) |
 | `FechaVencimiento` | `DateOnly` | |
 | `UltimoNroUsado` | `long` | Lo actualiza el almacenamiento al numerar |
+| `Especial`, `CausalEspecial` | `CaeEspecial?`, `int?` | CAE especial (exonerado con su causal, IVA mínimo, Monotributo, Monotributo Social MIDES) |
 | `Disponibles`, `PorcentajeUso` | | *(calculados)* |
 | `EsVigenteEn(DateOnly fecha)` | `bool` | Si sigue vigente en la fecha (en general, `HoraUruguay.Hoy()`) |
 
@@ -196,12 +224,26 @@ El resultado de `EmitirAsync`. Los datos fiscales son inmutables; el estado ante
 
 | Tipo | Propiedades |
 |------|-------------|
-| `AcuseSobre` | `Estado` (`EstadoSobre`: `Recibido` `AS`, `Rechazado` `BS`, `ArchivoRechazado` `BA`), `Recibido`, `Mensaje`, `Motivos`, `IdReceptor`, `Token`, `ConsultarDesde`, `Comprobantes` (los `CfeEmitido` del sobre, en orden), `XmlRespuesta` |
-| `EstadoEnvio` | `Comprobantes` (`EstadoComprobante`), `Procesado`, `TodosAceptados`, `Mensaje`, `XmlRespuesta` |
+| `AcuseSobre` | `Estado` (`EstadoSobre`: `Recibido` `AS`, `Rechazado` `BS`, `ArchivoRechazado` `BA`), `Recibido`, `Mensaje`, `Motivos`, `RutReceptor`, `IdEmisor`, `IdReceptor`, `Token`, `ConsultarDesde`, `Comprobantes` (los `CfeEmitido` del sobre, en orden), `XmlRespuesta` |
+| `EstadoEnvio` | `Comprobantes` (`EstadoComprobante`), `Procesado`, `TodosAceptados`, `RutReceptor`, `IdEmisor`, `Mensaje`, `XmlRespuesta` |
 | `EstadoComprobante` | `NroOrdinal` (posición en el sobre), `TipoCfe`, `Serie`, `Numero` (opcionales en el acuse), `Estado` (`EstadoCfe`), `Aceptado`, `Motivos` |
 | `AcuseReporte` | `Estado` (`EstadoReporte`: `Recibido` `AR`, `Rechazado` `BR`, `ArchivoRechazado` `BA`), `Recibido`, `Mensaje`, `Motivos`, `IdReceptor`, `Fecha`, `CantidadCfe` |
 
 Ver [Códigos DGI](../dgi-codes/).
+
+## Intercambio con otros emisores
+
+| Tipo | Propiedades |
+|------|-------------|
+| `SobreReceptor` | `RutReceptor`, `IdEmisor`, `Fecha`, `Xml`, `NombreArchivo` (`Sob_RUC_AAAAMMDD_Id.xml`), `Comprobantes` |
+| `SobreRecibido` | `RutEmisor`, `IdEmisor`, `IdReceptor`, `FechaSobre`, `FechaRecepcion`, `NombreArchivo`, `Estado`/`Recibido`, `Motivos`, `Comprobantes` (`CfeRecibido`), `XmlAcuse`, `NombreArchivoAcuse` (`M_…`) |
+| `CfeRecibido` | `NroOrdinal`, `Xml` (firmado), `Adenda`, `RutEmisor`, `Tipo`, `Serie`, `Numero`, `FechaEmision`, `FechaFirma`, `Moneda`, `Monto`, `Estado`, `Motivos` |
+| `MotivoRechazo` | `Codigo`, `Glosa`, `Detalle`; los comerciales `E20`-`E26` como `MotivoRechazo.DiferenciaDePrecios(...)`, etc. |
+| `RespuestaCfes` | `Xml` (firmado), `NombreArchivo` (`ME_…`), `Comprobantes` (`EstadoComprobante`) |
+| `NotificacionAnulacion` | `RutReceptor`, `IdComunicacion`, `Xml` (firmado), `NombreArchivo` (`Rech_RUC_Id.xml`), `Comprobantes` |
+| `CfeAnulado` | `RutEmisor`, `Tipo`, `Serie`, `Numero`, `Fecha` |
+| `RespuestaIntercambio` | `Codigo` (1000/2000/3000/4000 recibido, x001 rechazado, x002 reintentar), `Descripcion`, `Detalle`, `Recibido`, `Reintentar` |
+| `EmisorElectronico` | `Rut`, `Denominacion`, `FechaInicio`, `FechaFinTransicion`, `FechaFin`, `Correo`, `UrlServicioWeb`, `CorreoContactoTecnico`, `EsEmisorEn(fecha)` |
 
 ---
 
@@ -211,7 +253,7 @@ Ver [Códigos DGI](../dgi-codes/).
 |----------|------------------|----------|
 | `IUruFacturaClient` | `UruFacturaClient` | Inyección y mocks en tu aplicación |
 | `IUruFacturaStore` | `InMemoryStore` (default en Homologación), `EfUruFacturaStore<TContext>` | CAE, numeración atómica, número de envío y CFE emitidos |
-| `IDgiClient` | SOAP con WS-Security (interno) | Transporte hacia la DGI (tests, proxy) |
+| `IDgiClient` | SOAP con WS-Security (interno) | Transporte hacia la DGI y hacia los servicios de intercambio de otros emisores (tests, proxy) |
 
 <Aside type="note">
   El XML, la firma, el sobre, el reporte y el cliente SOAP son internos: se reemplaza el comportamiento a través de estas tres interfaces, no heredando. Para firmar con Key Vault o un HSM, pasá el certificado en `UruFacturaConfig.Certificado`.
@@ -227,7 +269,7 @@ ValueTask<bool> RegistrarEmisionAsync(CfeEmitido emitido, long ultimoNroUsadoLei
 ValueTask<long> ReservarIdEnvioAsync(CancellationToken ct = default);           // creciente y único entre instancias
 ValueTask GuardarCfesAsync(IReadOnlyCollection<CfeEmitido> cfes, CancellationToken ct = default);   // estado ante la DGI
 ValueTask<IReadOnlyList<CfeEmitido>> BuscarCfesAsync(string nroInterno, CancellationToken ct = default);
-IAsyncEnumerable<CfeEmitido> ListarCfesAsync(DateOnly fechaEmision, CancellationToken ct = default);  // de a uno
+IAsyncEnumerable<CfeEmitido> ListarCfesAsync(DateOnly fechaReporte, CancellationToken ct = default);  // de a uno, por CfeEmitido.FechaReporte
 ```
 
 `RegistrarEmisionAsync` es la numeración: avanza el CAE del CFE a su número **y** guarda el CFE en una sola operación atómica, siempre que el CAE siga con el `UltimoNroUsado` leído; si otra emisión lo usó antes, devuelve `false` sin guardar nada y el cliente vuelve a numerar. `ListarCfesAsync` lanza `UruFacturaException` si el almacenamiento no tiene completos los CFE de la fecha (para no enviar un reporte diario incompleto).
@@ -242,8 +284,9 @@ IAsyncEnumerable<CfeEmitido> ListarCfesAsync(DateOnly fechaEmision, Cancellation
 |---------|-------------|
 | `CfePdf.GenerarA4(emitido)`, `GenerarTermico(emitido)`, `GenerarQr(emitido)` | Representación impresa (paquete `UruFactura.Pdf`) |
 | `FirmaDigital.VerificarFirma(string xml)` | Verifica la firma de un CFE (por ejemplo, de un proveedor) y devuelve el certificado firmante, o `null` si no es válida. Comprobá que el certificado sea del emisor: la firma sola no lo prueba |
-| `moneda.CodigoIso()` | Código ISO 4217 de la moneda (`UYU`, `USD`, `EUR`) |
+| `moneda.Codigo`, `moneda.EsValida` | Código ISO 4217 de la moneda y si está en la tabla de la DGI |
 | `Rut.EsValido(string? rut)` | 12 dígitos y dígito verificador (módulo 11) correcto |
+| `Ci.EsValida(string? ci)` | Cédula de 6 a 8 dígitos con dígito verificador (módulo 10) correcto |
 | `HoraUruguay.Hoy()` / `Ahora()` | Fecha y hora de Uruguay (UTC−03:00): usalas en lugar de `DateTime.Today` / `Now` |
 
 ---
@@ -252,10 +295,16 @@ IAsyncEnumerable<CfeEmitido> ListarCfesAsync(DateOnly fechaEmision, Cancellation
 
 | Enum | Valores |
 |------|---------|
-| `TipoCfe` | 101-103, 111-113, 121-124, 131-133, 141-143, 181, 182 y las contingencias 2xx (ver [Tipos de CFE](../cfe-types/)) |
-| `TipoIva` | `Exento` (1), `Minimo` (2, 10 %), `Basico` (3, 22 %), `Suspendido` (4) |
-| `TipoDocumentoReceptor` | `Rut` (2), `CedulaIdentidad` (3), `Otro` (4), `Pasaporte` (5), `Dni` (6), `Nife` (7) |
-| `Moneda` | `PesoUruguayo`, `DolarAmericano`, `Euro` |
+| `TipoCfe` | 101-103, 111-113, 121-124, 131-133, 141-143, 151-153, 181, 182 y las contingencias 2xx (ver [Tipos de CFE](../cfe-types/)) |
+| `IndicadorFacturacion` | `Exento` (1), `TasaMinima` (2, 10 %), `TasaBasica` (3, 22 %), `OtraTasa` (4), `EntregaGratuita` (5), `NoFacturable` (6), `NoFacturableNegativo` (7), `RebajaRemito` (8), `AnulacionResguardo` (9), `ExportacionYAsimiladas` (10), `ImpuestoPercibido` (11), `IvaEnSuspenso` (12), `VendedorNoContribuyente` (13), `VendedorIvaMinimo` (14), `VendedorImeba` (15), `IvaMinimoMonotributo` (16), `CompraMonedaExtranjera` (17) |
+| `MontosBrutos` | `IvaIncluido` (1), `ImebaYAdicionalesIncluidos` (2) |
+| `CompraMonedaExtranjera` | `Reventa` (1), `ReventaPorCuentaAjena` (2) |
+| `AgenteResponsable` | `Producto` (`R`), `ConceptoAsociado` (`A`) |
+| `TipoValor` | `Monto` (1), `Porcentaje` (2) |
+| `CaeEspecial` | `Exonerado` (1), `IvaMinimo` (2), `Monotributo` (3), `MonotributoSocialMides` (4) |
+| `OperacionIntercambio` | `Sobre`, `RespuestaSobre`, `RespuestaCfes`, `NotificacionAnulacion` |
+| `TipoDocumentoReceptor` | `Nie` (1), `Rut` (2), `CedulaIdentidad` (3), `Otro` (4), `Pasaporte` (5), `Dni` (6), `Nife` (7) |
+| `Moneda` (struct) | Cualquier código de la tabla de la DGI: `new Moneda("CLP")`; propiedades `PesoUruguayo`, `DolarAmericano`, `Euro`, `PesoArgentino`, `RealBrasileno`, `UnidadIndexada`, `UnidadReajustable` |
 | `EstadoCfe` | `Aceptado` (`AE`), `Rechazado` (`BE`), `Observado` (`CE`), `Reliquidado` (`FE`) |
 | `EstadoSobre` | `Recibido` (`AS`), `Rechazado` (`BS`), `ArchivoRechazado` (`BA`) |
 | `EstadoReporte` | `Recibido` (`AR`), `Rechazado` (`BR`), `ArchivoRechazado` (`BA`) |
@@ -271,7 +320,7 @@ IAsyncEnumerable<CfeEmitido> ListarCfesAsync(DateOnly fechaEmision, Cancellation
 
 | Excepción | Cuándo |
 |-----------|--------|
-| `UruFacturaException` | Base; configuración inválida, Producción sin almacenamiento, sobre fuera de 1-250 CFE, reporte de una fecha futura o incompleta |
+| `UruFacturaException` | Base; configuración inválida, Producción sin almacenamiento, sobre fuera de 1-250 CFE o de más de 2 MB, reporte de una fecha futura o incompleta, intercambio inválido (CFE de distintos receptores, mensaje con firma inválida o para otro RUT) |
 | `CfeValidationException` | El CFE no es válido (`Errores`, de tipo `ErrorValidacion`); no se consumió ningún número |
 | `CfeDuplicadoException` | Ya se emitió un CFE del mismo tipo con el mismo `NroInterno` que la DGI no rechazó (`Existente`) |
 | `CaeException` | CAE inválido o superpuesto al registrarlo, CAE que no se puede eliminar, o no hay CAE vigente con números |

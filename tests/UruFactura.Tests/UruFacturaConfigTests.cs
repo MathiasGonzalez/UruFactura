@@ -75,8 +75,16 @@ public class UruFacturaConfigTests
             e => e.Contains("Emisor.RazonSocial"));
 
     [Fact]
-    public void Produccion_ConUrls_EsValida() =>
-        Assert.Empty((TestData.Config() with { Ambiente = Ambiente.Produccion, UrlEnvio = "https://e", UrlConsultas = "https://c" }).Validar());
+    public void Produccion_ConUrlsYUnidadIndexada_EsValida() =>
+        Assert.Empty((TestData.Config() with
+        {
+            Ambiente = Ambiente.Produccion, UrlEnvio = "https://e", UrlConsultas = "https://c", UnidadIndexada = new Dictionary<int, decimal> { [2025] = 6.4m },
+        }).Validar());
+
+    [Fact]
+    public void Produccion_SinUnidadIndexada_TieneError() =>
+        Assert.Contains((TestData.Config() with { Ambiente = Ambiente.Produccion, UrlEnvio = "https://e", UrlConsultas = "https://c" }).Validar(),
+            e => e.Contains("UnidadIndexada"));
 
     [Fact]
     public void Homologacion_SinUrls_UsaLosServiciosDePruebaDeLaDgi()
@@ -118,6 +126,6 @@ public class UruFacturaConfigTests
     }
 
     [Fact]
-    public void ValorUnidadIndexadaNoPositivo_TieneError() =>
-        Assert.Contains((TestData.Config() with { ValorUnidadIndexada = 0 }).Validar(), e => e.Contains("ValorUnidadIndexada"));
+    public void UnidadIndexadaNoPositiva_TieneError() =>
+        Assert.Contains((TestData.Config() with { UnidadIndexada = new Dictionary<int, decimal> { [2025] = 0 } }).Validar(), e => e.Contains("UnidadIndexada"));
 }

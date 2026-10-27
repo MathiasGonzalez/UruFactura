@@ -153,16 +153,16 @@ public sealed class InMemoryStore : IUruFacturaStore
     /// <exception cref="UruFacturaException">
     /// Si la fecha es anterior a la creación del almacenamiento o a los días que conserva.
     /// </exception>
-    public IAsyncEnumerable<CfeEmitido> ListarCfesAsync(DateOnly fechaEmision, CancellationToken cancellationToken = default)
+    public IAsyncEnumerable<CfeEmitido> ListarCfesAsync(DateOnly fechaReporte, CancellationToken cancellationToken = default)
     {
         lock (_lock)
         {
-            if (fechaEmision < CompletoDesde)
+            if (fechaReporte < CompletoDesde)
                 throw new UruFacturaException(
-                    $"InMemoryStore no tiene todos los CFE del {fechaEmision:dd/MM/yyyy}: solo los emitidos desde el " +
+                    $"InMemoryStore no tiene todos los CFE del {fechaReporte:dd/MM/yyyy}: solo los firmados desde el " +
                     $"{CompletoDesde:dd/MM/yyyy} (se creó ese día o descartó los anteriores por DiasRetencionCfe).");
 
-            return _cfes.Values.Where(c => c.FechaEmision == fechaEmision)
+            return _cfes.Values.Where(c => c.FechaReporte == fechaReporte)
                 .OrderBy(c => c.Tipo).ThenBy(c => c.Serie, StringComparer.Ordinal).ThenBy(c => c.Numero)
                 .ToList()
                 .ToAsyncEnumerable();
@@ -173,7 +173,7 @@ public sealed class InMemoryStore : IUruFacturaStore
     private void Descartar()
     {
         var desde = HoraUruguay.Hoy(_reloj).AddDays(1 - DiasRetencionCfe);
-        foreach (var viejo in _cfes.Where(c => c.Value.FechaEmision < desde).Select(c => c.Key).ToList())
+        foreach (var viejo in _cfes.Where(c => c.Value.FechaReporte < desde).Select(c => c.Key).ToList())
             _cfes.Remove(viejo);
     }
 }

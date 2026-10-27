@@ -1,26 +1,30 @@
 namespace UruFactura;
 
 /// <summary>
-/// Tipos de documento del receptor según el DocType del XSD de la DGI.
-/// Valores oficiales: 2 RUC, 3 CI, 4 Otro, 5 Pasaporte, 6 DNI, 7 NIFE.
+/// Tipo de documento del receptor, del mandante o del propietario de la mercadería (<c>DocType</c>). El valor es
+/// el código de la DGI. Los documentos uruguayos (NIE, RUT y C.I.) son del país <c>UY</c>; el DNI, de Argentina,
+/// Brasil, Chile o Paraguay.
 /// </summary>
 public enum TipoDocumentoReceptor
 {
+    /// <summary>NIE, número de identificación de extranjero (Uruguay) — 1</summary>
+    Nie = 1,
+
     /// <summary>RUT (Registro Único Tributario) — 2</summary>
     Rut = 2,
 
-    /// <summary>Cédula de Identidad — 3</summary>
+    /// <summary>Cédula de Identidad (Uruguay) — 3</summary>
     CedulaIdentidad = 3,
 
     /// <summary>Otro (por ejemplo, un documento del exterior sin tipo propio) — 4</summary>
     Otro = 4,
 
-    /// <summary>Pasaporte — 5</summary>
+    /// <summary>Pasaporte (de cualquier país) — 5</summary>
     Pasaporte = 5,
 
-    /// <summary>DNI — 6</summary>
+    /// <summary>DNI (Argentina, Brasil, Chile o Paraguay) — 6</summary>
     Dni = 6,
 
-    /// <summary>NIFE — 7</summary>
+    /// <summary>NIFE, número de identificación fiscal extranjero (de cualquier país) — 7</summary>
     Nife = 7,
 }

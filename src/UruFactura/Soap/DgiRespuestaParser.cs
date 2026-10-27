@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.IO.Compression;
+using System.Text;
 using System.Xml;
 using UruFactura.Xml;
 
@@ -87,8 +89,11 @@ internal static class DgiRespuestaParser
     };
 
     internal static AcuseSobre ProcesarSobre(string soapXml) => Procesar(soapXml, "EFACRECEPCIONSOBRE", soap =>
+        AcuseSobreDe(Ack(soap), soapXml, "Sobre recibido por la DGI. El resultado de cada comprobante se consulta con ConsultarEnvioAsync."));
+
+    /// <summary>Interpreta un <c>ACKSobre</c> (de la DGI o de un receptor electrónico).</summary>
+    internal static AcuseSobre AcuseSobreDe(XmlNode ack, string xmlRespuesta, string mensajeRecibido)
     {
-        var ack = Ack(soap);
         var codigo = Texto(ack, "Estado");
         var estado = EstadoSobreDe(codigo);
         var motivos = Motivos(ack, "MotivosRechazo");
@@ -96,15 +101,15 @@ internal static class DgiRespuestaParser
         {
             Estado = estado,
             Motivos = motivos,
+            RutReceptor = Texto(ack, "RUCReceptor"),
+            IdEmisor = Entero(Texto(ack, "IDEmisor")),
             IdReceptor = Texto(ack, "IDReceptor"),
             Token = Texto(ack, "Token"),
             ConsultarDesde = FechaHora(Texto(ack, "Fechahora")),
-            Mensaje = estado == EstadoSobre.Recibido
-                ? "Sobre recibido por la DGI. El resultado de cada comprobante se consulta con ConsultarEnvioAsync."
-                : Rechazo("Sobre", codigo, motivos),
-            XmlRespuesta = soapXml,
+            Mensaje = estado == EstadoSobre.Recibido ? mensajeRecibido : Rechazo("Sobre", codigo, motivos),
+            XmlRespuesta = xmlRespuesta,
         };
-    });
+    }
 
     internal static AcuseReporte ProcesarReporte(string soapXml) => Procesar(soapXml, "EFACRECEPCIONREPORTE", soap =>
     {
@@ -123,8 +128,11 @@ internal static class DgiRespuestaParser
     });
 
     internal static EstadoEnvio ProcesarEstadoEnvio(string soapXml) => Procesar(soapXml, "EFACCONSULTARESTADOENVIO", soap =>
+        EstadoEnvioDe(Ack(soap), soapXml));
+
+    /// <summary>Interpreta un <c>ACKCFE</c> (de la DGI o de un receptor electrónico).</summary>
+    internal static EstadoEnvio EstadoEnvioDe(XmlNode ack, string xmlRespuesta)
     {
-        var ack = Ack(soap);
         var comprobantes = ack.SelectNodes("//*[local-name()='ACKCFE_Det']")!.Cast<XmlNode>()
             .Select(det => new EstadoComprobante
             {
@@ -142,15 +150,17 @@ internal static class DgiRespuestaParser
         return new EstadoEnvio
         {
             Comprobantes = comprobantes,
+            RutReceptor = Texto(ack, "RUCReceptor"),
+            IdEmisor = Entero(Texto(ack, "IDEmisor")),
             // Si la DGI todavía no procesó el sobre, la respuesta puede no traer detalle.
             Mensaje = comprobantes.Count == 0
                 ? "La DGI todavía no informó el estado de los comprobantes (el sobre se está procesando)."
                 : comprobantes.All(c => c.Aceptado)
                     ? "Todos los comprobantes fueron aceptados (AE)."
                     : $"Comprobantes: {resumen}. " + string.Join(" ", comprobantes.SelectMany(c => c.Motivos)),
-            XmlRespuesta = soapXml,
+            XmlRespuesta = xmlRespuesta,
         };
-    });
+    }
 
     internal static EstadoComprobante ProcesarEstadoCfe(string soapXml) => Procesar(soapXml, "EFACCONSULTARESTADOCFE", soap =>
         new EstadoComprobante
@@ -159,6 +169,64 @@ internal static class DgiRespuestaParser
             Motivos = Motivos(soap, "MotivosRechazoCF"),
             XmlRespuesta = soapXml,
         });
+
+    /// <summary>
+    /// Respuesta del padrón de emisores: un XML comprimido con gzip y en base64 con los emisores (RUT,
+    /// denominación, fechas, correo y servicio web de intercambio).
+    /// </summary>
+    internal static IReadOnlyList<EmisorElectronico> ProcesarEmisores(string soapXml) =>
+        Procesar<IReadOnlyList<EmisorElectronico>>(soapXml, "EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROV", soap =>
+        {
+            var comprimido = soap.SelectSingleNode("//*[starts-with(local-name(), 'Rucemisores')]")
+                ?? throw new DgiCommunicationException("La respuesta no contiene el padrón de emisores.");
+            var base64 = string.Concat(comprimido.InnerText.Where(c => !char.IsWhiteSpace(c)));
+            if (base64.Length == 0)
+                return [];
+
+            var padron = XmlSeguro.Cargar(Descomprimir(base64));
+            return
+            [
+                .. padron.SelectNodes("//*[*[local-name()='RUC']]")!.Cast<XmlNode>().Select(item =>
+                {
+                    string? Campo(string nombre) => Texto(item, nombre) is { Length: > 0 } valor ? valor : null;
+                    return new EmisorElectronico
+                    {
+                        Rut = Campo("RUC") ?? "",
+                        Denominacion = Campo("DENOMINACION"),
+                        FechaInicio = FechaPadron(Campo("FECHA_INICIO")),
+                        FechaFinTransicion = FechaPadron(Campo("FECHA_FIN_TRANSICION")),
+                        FechaFin = FechaPadron(Campo("FECHA_FIN")),
+                        Correo = Campo("MAIL"),
+                        UrlServicioWeb = Campo("URL_WEBSERVICE"),
+                        CorreoContactoTecnico = Campo("MAIL_CONTACTO_TECNICO"),
+                    };
+                }),
+            ];
+        });
+
+    /// <summary>Descomprime (gzip) un texto en base64.</summary>
+    internal static string Descomprimir(string base64)
+    {
+        using var gzip = new GZipStream(new MemoryStream(Convert.FromBase64String(base64)), CompressionMode.Decompress);
+        using var lector = new StreamReader(gzip, Encoding.UTF8);
+        return lector.ReadToEnd();
+    }
+
+    /// <summary>Fecha del padrón (<c>AAAA-MM-DD</c>); <c>0000-00-00</c> es sin fecha.</summary>
+    private static DateOnly? FechaPadron(string? texto) =>
+        DateOnly.TryParseExact(texto, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var fecha) ? fecha : null;
+
+    /// <summary>Respuesta del servicio de intercambio de otro emisor: <c>Respuestas/Respuesta</c> con código, descripción y detalle.</summary>
+    internal static RespuestaIntercambio ProcesarIntercambio(string soapXml, string operacion) => Procesar(soapXml, operacion, soap =>
+    {
+        var respuesta = Nodo(Ack(soap), "Respuesta") ?? throw new DgiCommunicationException("La respuesta no contiene Respuesta.");
+        // El esquema escribe Codigo/Descripcion/Detalle y los ejemplos de la DGI en minúscula.
+        string? Campo(string nombre) => respuesta.SelectSingleNode(
+            $".//*[translate(local-name(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')='{nombre}']")?.InnerText.Trim();
+        if (Entero(Campo("codigo")) is not { } codigo)
+            throw new DgiCommunicationException("La respuesta del servicio de intercambio no tiene código.");
+        return new RespuestaIntercambio((int)codigo, Campo("descripcion") ?? "", string.IsNullOrEmpty(Campo("detalle")) ? null : Campo("detalle"));
+    });
 
     private static long? Entero(string? texto) =>
         long.TryParse(texto, NumberStyles.Integer, CultureInfo.InvariantCulture, out var valor) ? valor : null;

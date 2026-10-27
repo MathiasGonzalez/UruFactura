@@ -62,11 +62,11 @@ public class FuncionalidadesTests
     {
         var cfe = TestData.CfeValido(TipoCfe.EFactura) with
         {
-            Detalle = [TestData.Linea(), new LineaDetalle { NombreItem = "Libro", Cantidad = 1, PrecioUnitario = 100m, IndFactIva = TipoIva.Exento }],
+            Detalle = [TestData.Linea(), new LineaDetalle { NombreItem = "Libro", Cantidad = 1, PrecioUnitario = 100m, IndFact = IndicadorFacturacion.Exento }],
             DescuentosRecargos =
             [
                 new DescuentoRecargoGlobal { Tipo = TipoMovimientoGlobal.Recargo, Glosa = "Flete", Monto = 100m, Codigo = 7 },
-                new DescuentoRecargoGlobal { Tipo = TipoMovimientoGlobal.Descuento, Glosa = "Exento", Monto = 10m, IndFact = TipoIva.Exento },
+                new DescuentoRecargoGlobal { Tipo = TipoMovimientoGlobal.Descuento, Glosa = "Exento", Monto = 10m, IndFact = IndicadorFacturacion.Exento },
             ],
         };
 
@@ -144,15 +144,15 @@ public class FuncionalidadesTests
         var cfe = TestData.CfeValido(TipoCfe.EResguardo);
         cfe = cfe with
         {
-            Detalle = [.. cfe.Detalle, new LineaDetalle { Retenciones = [new RetencionPercepcion { Codigo = "R1", MontoSujeto = 100m, Valor = 10m }] }],
+            Detalle = [.. cfe.Detalle, new LineaDetalle { Retenciones = [new RetencionPercepcion { Codigo = "1146171", MontoSujeto = 100m, Valor = 10m }] }],
         };
 
         var doc = XmlDe(cfe);
 
         Assert.Equal("155.00", Texto(doc, "//c:Totales/c:MntTotRetenido"));
         Assert.Equal("2", Texto(doc, "//c:Totales/c:CantLinDet"));
-        Assert.Equal("130.00", Texto(doc, "//c:Totales/c:RetencPercep[c:CodRet='R1']/c:ValRetPerc"));
-        Assert.Equal("25.00", Texto(doc, "//c:Totales/c:RetencPercep[c:CodRet='R2']/c:ValRetPerc"));
+        Assert.Equal("130.00", Texto(doc, "//c:Totales/c:RetencPercep[c:CodRet='1146171']/c:ValRetPerc"));
+        Assert.Equal("25.00", Texto(doc, "//c:Totales/c:RetencPercep[c:CodRet='2183212']/c:ValRetPerc"));
         Assert.Equal("12.000", Texto(doc, "//c:Item[1]/c:RetencPercep[1]/c:Tasa"));
         Assert.Equal(155m, cfe.CalcularTotales().MontoRetenido);
         EsValidoContraXsd(cfe);
@@ -165,18 +165,20 @@ public class FuncionalidadesTests
     [Fact]
     public void EResguardo_ConMasDeCincoRetencionesPorLinea_Falla()
     {
-        var retenciones = Enumerable.Range(0, 6).Select(i => new RetencionPercepcion { Codigo = $"X{i}", Valor = 1m }).ToList();
+        var retenciones = Enumerable.Range(0, 6).Select(i => new RetencionPercepcion { Codigo = $"218321{i}", MontoSujeto = 10m, Valor = 1m }).ToList();
 
         Assert.Contains(TestData.Validar(TestData.CfeValido(TipoCfe.EResguardo) with { Detalle = [new LineaDetalle { Retenciones = retenciones }] }),
             e => e.Mensaje.Contains("1 a 5"));
     }
 
     [Fact]
-    public void Retenciones_EnOtrosTipos_NoSeAdmiten() =>
-        Assert.Contains("Detalle[0].Retenciones", TestData.Campos(TestData.CfeValido() with
-        {
-            Detalle = [TestData.Linea() with { Retenciones = [new RetencionPercepcion { Codigo = "R1", Valor = 1m }] }],
-        }));
+    public void Retenciones_EnRemitosYExportacion_NoSeAdmiten()
+    {
+        var linea = TestData.Linea() with { Retenciones = [new RetencionPercepcion { Codigo = "2183211", Valor = 1m }], AgenteResponsable = AgenteResponsable.Producto };
+
+        Assert.Contains("Detalle[0].Retenciones", TestData.Campos(TestData.CfeValido(TipoCfe.ERemito) with { Detalle = [linea with { PrecioUnitario = 0 }] }));
+        Assert.Contains("Detalle[0].Retenciones", TestData.Campos(TestData.CfeValido(TipoCfe.EFacturaExportacion) with { Detalle = [linea] }));
+    }
 
     // ------------------------------------------------------------ cuenta ajena
 
