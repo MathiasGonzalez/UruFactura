@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Security.Cryptography.X509Certificates;
+using System.Security.Cryptography.Xml;
 using System.Text;
 using System.Xml;
 using UruFactura.Formatting;
@@ -117,9 +118,10 @@ internal static class Intercambio
             Motivo("S04", $"Un sobre trae de 1 a {CfeSobre.MaxCfePorSobre} CFE.");
 
         var certificado = string.Concat((Texto(caratula, "X509Certificate") ?? "").Where(c => !char.IsWhiteSpace(c)));
+        X509Certificate2? cert = null;
         try
         {
-            using var cert = X509CertificateLoader.LoadCertificate(Convert.FromBase64String(certificado));
+            cert = X509CertificateLoader.LoadCertificate(Convert.FromBase64String(certificado));
             if (fecha is { } f && (f < cert.NotBefore || f > cert.NotAfter))
                 Motivo("S03", $"El certificado no estaba vigente el {f.ToOffset(HoraUruguay.Offset):dd/MM/yyyy}.");
         }
@@ -127,6 +129,7 @@ internal static class Intercambio
         {
             Motivo("S03", "El certificado de la carátula no se puede leer.");
         }
+        using var certificadoCaratula = cert;
 
         var cfes = new List<(XmlElement Cfe, XmlElement? Adenda)>();
         for (var i = 0; i < items.Count; i++)
@@ -142,7 +145,8 @@ internal static class Intercambio
                 Motivo("S02", $"El CFE {i + 1} es del RUT {rucCfe}.");
             if (Texto(Hijo(cfe, "Receptor", profundo: true), "DocRecep") is { } documento && documento != rutPropio)
                 Motivo("S02", $"El CFE {i + 1} está dirigido al documento {documento}.");
-            if (CfeSobre.CertificadoDeLaFirma(cfe) is { } certificadoCfe && certificadoCfe != certificado)
+            if (CfeSobre.CertificadoDeLaFirma(cfe) is { } certificadoCfe ? certificadoCfe != certificado
+                : certificadoCaratula is not null && SerialDeLaFirma(cfe) is { } serial && !FirmaDigital.MismoSerial(serial, certificadoCaratula))
                 Motivo("S06", $"El CFE {i + 1} está firmado con otro certificado.");
         }
 
@@ -155,14 +159,20 @@ internal static class Intercambio
 
         var vistos = new HashSet<(string?, string?, long?)>();
         return new SobreLeido(rutEmisor!, idEmisor, fecha, items.Count, motivos,
-            [.. cfes.Select((c, i) => LeerCfe(c.Cfe, c.Adenda, i + 1, vistos))]);
+            [.. cfes.Select((c, i) => LeerCfe(c.Cfe, c.Adenda, i + 1, vistos, certificadoCaratula))]);
     }
+
+    /// <summary>El número de serie (decimal) de <c>X509IssuerSerial</c> en la firma del CFE, o <c>null</c> si no lo indica.</summary>
+    private static string? SerialDeLaFirma(XmlNode cfe) =>
+        cfe.SelectSingleNode($".//*[local-name()='X509SerialNumber' and namespace-uri()='{SignedXml.XmlDsigNamespaceUrl}']")?.InnerText.Trim();
 
     /// <summary>
     /// Lee un CFE del sobre y lo controla: firma (E04), formato básico (E05), número dentro del CAE (E03),
-    /// firma dentro de la vigencia del CAE (E07) y repetidos en el sobre (E02).
+    /// firma dentro de la vigencia del CAE (E07) y repetidos en el sobre (E02). Una firma que no incluye el
+    /// certificado se verifica con el de la carátula.
     /// </summary>
-    private static CfeRecibido LeerCfe(XmlElement cfe, XmlElement? adenda, int ordinal, HashSet<(string?, string?, long?)> vistos)
+    private static CfeRecibido LeerCfe(
+        XmlElement cfe, XmlElement? adenda, int ordinal, HashSet<(string?, string?, long?)> vistos, X509Certificate2? certificadoCaratula)
     {
         // El CFE como documento propio, tal como se firmó.
         var propio = new XmlDocument { PreserveWhitespace = true };
@@ -181,7 +191,7 @@ internal static class Intercambio
         var motivos = new List<MotivoRechazo>();
         void Motivo(string codigo, string? detalle = null) => motivos.Add(new MotivoRechazo(codigo, MotivosCfe[codigo], detalle));
 
-        var firmante = FirmaDigital.VerificarFirma(xml);
+        var firmante = FirmaDigital.VerificarFirma(xml, certificadoCaratula);
         if (firmante is null)
             Motivo("E04");
         firmante?.Dispose();

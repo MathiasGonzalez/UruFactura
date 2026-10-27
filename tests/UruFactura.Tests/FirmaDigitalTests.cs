@@ -69,6 +69,38 @@ public class FirmaDigitalTests
         Assert.Equal(digest, doc.SelectSingleNode("//ds:Reference/ds:DigestValue", nsm)!.InnerText);
     }
 
+    [Fact]
+    public void Firmar_IncluyeElEmisorYElNumeroDeSerieDelCertificado()
+    {
+        // Zona I del formato del CFE: X509IssuerSerial, con el número de serie en decimal.
+        var doc = Cargar(Firmar(XmlSinFirmar()));
+        var nsm = new XmlNamespaceManager(doc.NameTable);
+        nsm.AddNamespace("ds", SignedXml.XmlDsigNamespaceUrl);
+
+        var serial = doc.SelectSingleNode("//ds:X509IssuerSerial/ds:X509SerialNumber", nsm)!.InnerText;
+        Assert.Matches("^[0-9]+$", serial);
+        Assert.True(FirmaDigital.MismoSerial(serial, Cert));
+        Assert.Equal(Cert.Issuer, doc.SelectSingleNode("//ds:X509IssuerSerial/ds:X509IssuerName", nsm)!.InnerText);
+    }
+
+    [Fact]
+    public void Verificar_FirmaSinCertificado_SeVerificaConElDelSobreSiEsElQueIndica()
+    {
+        // Como los CFE del sobre de ejemplo de la DGI: KeyInfo con X509IssuerSerial y sin el certificado.
+        var doc = Cargar(Firmar(XmlSinFirmar()));
+        var nsm = new XmlNamespaceManager(doc.NameTable);
+        nsm.AddNamespace("ds", SignedXml.XmlDsigNamespaceUrl);
+        var certificado = doc.SelectSingleNode("//ds:X509Certificate", nsm)!;
+        certificado.ParentNode!.RemoveChild(certificado);
+        var xml = doc.OuterXml;
+
+        Assert.Null(FirmaDigital.VerificarFirma(xml));
+        using var firmante = FirmaDigital.VerificarFirma(xml, Cert);
+        Assert.Equal(Cert.Thumbprint, firmante?.Thumbprint);
+        using var otro = TestData.CertificadoAutofirmado();
+        Assert.Null(FirmaDigital.VerificarFirma(xml, otro));
+    }
+
     [Theory]
     [InlineData(AlgoritmoFirma.Sha256, "xmldsig-more#rsa-sha256", "xmlenc#sha256")]
     [InlineData(AlgoritmoFirma.Sha1, "xmldsig#rsa-sha1", "xmldsig#sha1")]
