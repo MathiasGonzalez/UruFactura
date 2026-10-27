@@ -170,6 +170,9 @@ public sealed class UruFacturaClient : IUruFacturaClient
             var leido = Cae.Elegir(await _store.ListarCaesAsync(cancellationToken), documento.Tipo, hoy)
                 ?? throw new CaeException(
                     $"No hay un CAE vigente con números disponibles para {documento.Tipo}. Registre uno con RegistrarCaeAsync.");
+            // Las reglas del CAE especial (exonerado, IVA mínimo, Monotributo), antes de numerar.
+            if (documento.ValidarConCae(leido) is { Count: > 0 } erroresCae)
+                throw new CfeValidationException(erroresCae);
             var numero = leido.ProximoNumero;
             var cae = leido with { UltimoNroUsado = numero };
 
@@ -209,7 +212,7 @@ public sealed class UruFacturaClient : IUruFacturaClient
             Referencias = Copia(cfe.Referencias),
         };
 
-        var errores = documento.Validar(hoy, _config.ValorUnidadIndexada is { } ui ? ui * 5000m : null);
+        var errores = documento.Validar(hoy, _config.TopeMontoNeto(documento.FechaEmision!.Value));
 
         if (cfe.Emisor is { } propio)
         {
@@ -316,7 +319,8 @@ public sealed class UruFacturaClient : IUruFacturaClient
             throw new UruFacturaException("SecEnvio debe estar entre 1 (el primer envío del día) y 99.");
 
         // Se resume a medida que se lee: no se cargan en memoria los XML de todo el día.
-        var resumen = new ReporteDiario.Acumulador(fecha);
+        // Sin UI configurada (Homologación) no se informa cuántos e-Tickets superaron el tope.
+        var resumen = new ReporteDiario.Acumulador(fecha, _config.UnidadIndexada.Count > 0 ? _config.TopeMontoNeto : null);
         await foreach (var cfe in _store.ListarCfesAsync(fecha, cancellationToken))
             resumen.Agregar(cfe);
 
@@ -326,6 +330,212 @@ public sealed class UruFacturaClient : IUruFacturaClient
 
         var acuse = await _dgi.EnviarReporteAsync(firmado, cancellationToken);
         return acuse with { Fecha = fecha, CantidadCfe = resumen.Cantidad };
+    }
+
+    // -----------------------------------------------------------------------
+    // Intercambio con otros emisores electrónicos
+    // -----------------------------------------------------------------------
+
+    /// <inheritdoc />
+    public async Task<EmisorElectronico?> ConsultarEmisorElectronicoAsync(string rut, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (!Rut.EsValido(rut))
+            throw new ArgumentException("El RUT debe tener 12 dígitos y un dígito verificador válido.", nameof(rut));
+
+        // El filtro de la DGI devuelve los RUT que lo contienen: se queda con el exacto.
+        return (await _dgi.ConsultarEmisoresAsync(rut, cancellationToken)).FirstOrDefault(e => e.Rut == rut);
+    }
+
+    /// <inheritdoc />
+    public async Task<SobreReceptor> GenerarSobreReceptorAsync(IReadOnlyCollection<CfeEmitido> cfes, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(cfes);
+        if (cfes.Count is < 1 or > CfeSobre.MaxCfePorSobre)
+            throw new UruFacturaException(
+                $"Un sobre debe contener entre 1 y {CfeSobre.MaxCfePorSobre} CFE (recibidos: {cfes.Count}).");
+        if (cfes.Select(c => (c.Tipo, c.Serie, c.Numero)).Distinct().Count() != cfes.Count)
+            throw new UruFacturaException("El sobre incluye el mismo CFE más de una vez.");
+
+        var rut = RutReceptor(cfes);
+        foreach (var cfe in cfes)
+        {
+            if (cfe.Tipo.EsContingencia())
+                throw new UruFacturaException(
+                    $"El {cfe} es de contingencia: los CFC se envían a la DGI y no al receptor (el comprobante válido es el de papel).");
+            // El vendedor de una e-Boleta de entrada no es emisor electrónico, salvo en la compra de moneda extranjera.
+            if (cfe.Tipo.Familia() == FamiliaCfe.Boleta && cfe.Documento.CompraMonedaExtranjera is null)
+                throw new UruFacturaException(
+                    $"El {cfe} es una e-Boleta de entrada: la emite el comprador y no se envía al vendedor, que no es emisor electrónico.");
+            if (cfe.AnuladoPorRechazo)
+                throw new UruFacturaException(
+                    $"La DGI rechazó el {cfe}: está anulado y no se envía al receptor (si ya se le envió, comuníquelo con GenerarNotificacionAnulacionAsync).");
+            if (!cfe.Enviado && cfe.Tipo.Familia() != FamiliaCfe.Ticket)
+                throw new InvalidOperationException(
+                    $"El {cfe} no se envió a la DGI: se envía a la DGI antes que al receptor (no hace falta esperar su resultado).");
+        }
+
+        var lista = cfes.ToList();
+        var id = await _store.ReservarIdEnvioAsync(cancellationToken);
+        var fecha = _reloj.GetUtcNow();
+        return new SobreReceptor
+        {
+            RutReceptor = rut,
+            IdEmisor = id,
+            Fecha = fecha,
+            Xml = CfeSobre.GenerarParaReceptor(rut, _config.Emisor.Rut, id, fecha, _certificado.RawData, [.. lista.Select(c => (c.Xml, c.Documento.Adenda))]),
+            NombreArchivo = CfeSobre.NombreArchivo(_config.Emisor.Rut, fecha, id),
+            Comprobantes = lista,
+        };
+    }
+
+    /// <inheritdoc />
+    public AcuseSobre LeerAcuseReceptor(string xml)
+    {
+        ThrowIfDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(xml);
+        return Intercambio.LeerAcuseSobre(xml, _config.Emisor.Rut);
+    }
+
+    /// <inheritdoc />
+    public EstadoEnvio LeerRespuestaReceptor(string xml)
+    {
+        ThrowIfDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(xml);
+        return Intercambio.LeerRespuestaCfes(xml, _config.Emisor.Rut);
+    }
+
+    /// <inheritdoc />
+    public async Task<NotificacionAnulacion> GenerarNotificacionAnulacionAsync(
+        IReadOnlyCollection<CfeEmitido> cfes, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(cfes);
+        if (cfes.Count is < 1 or > CfeSobre.MaxCfePorSobre)
+            throw new UruFacturaException($"La comunicación debe incluir entre 1 y {CfeSobre.MaxCfePorSobre} CFE (recibidos: {cfes.Count}).");
+        if (cfes.FirstOrDefault(c => !c.AnuladoPorRechazo) is { } vigente)
+            throw new InvalidOperationException($"El {vigente} no está anulado por un rechazo de la DGI.");
+
+        var rut = RutReceptor(cfes);
+        var lista = cfes.ToList();
+        var id = await _store.ReservarIdEnvioAsync(cancellationToken);
+        var (xml, _) = FirmaDigital.Firmar(
+            Intercambio.NotificacionAnulacion(_config.Emisor.Rut, rut, id, lista, _reloj.GetUtcNow()), _certificado, _config.AlgoritmoFirma);
+        return new NotificacionAnulacion
+        {
+            RutReceptor = rut,
+            IdComunicacion = id,
+            Xml = xml,
+            NombreArchivo = $"Rech_{_config.Emisor.Rut}_{id.ToString(System.Globalization.CultureInfo.InvariantCulture)}.xml",
+            Comprobantes = lista,
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task<SobreRecibido> RecibirSobreAsync(string xml, string? nombreArchivo = null, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(xml);
+
+        var recibido = _reloj.GetUtcNow();
+        var sobre = Intercambio.LeerSobre(xml, _config.Emisor.Rut);
+        // El número de la respuesta es también el que se le asigna al sobre (IDReceptor).
+        var id = await _store.ReservarIdEnvioAsync(cancellationToken);
+        var (acuse, _) = FirmaDigital.Firmar(
+            Intercambio.AcuseSobre(_config.Emisor.Rut, sobre, id, id, nombreArchivo, recibido, _reloj.GetUtcNow()), _certificado, _config.AlgoritmoFirma);
+
+        var fechaSobre = sobre.Fecha ?? recibido;
+        return new SobreRecibido
+        {
+            RutEmisor = sobre.RutEmisor,
+            IdEmisor = sobre.IdEmisor,
+            IdReceptor = id,
+            FechaSobre = fechaSobre,
+            FechaRecepcion = recibido,
+            NombreArchivo = nombreArchivo,
+            Estado = sobre.Motivos.Count == 0 ? EstadoSobre.Recibido : EstadoSobre.Rechazado,
+            Motivos = sobre.Motivos,
+            Comprobantes = sobre.Comprobantes,
+            XmlAcuse = acuse,
+            NombreArchivoAcuse = Intercambio.NombreRespuesta("M", id, sobre.RutEmisor, fechaSobre, sobre.IdEmisor),
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task<RespuestaCfes> ResponderCfesAsync(
+        SobreRecibido sobre, IReadOnlyDictionary<int, IReadOnlyList<MotivoRechazo>>? rechazos = null, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(sobre);
+        if (!sobre.Recibido || sobre.Comprobantes.Count == 0)
+            throw new InvalidOperationException(
+                "Un sobre rechazado no se responde por comprobante: el emisor recibe el rechazo en el acuse del sobre.");
+
+        rechazos ??= new Dictionary<int, IReadOnlyList<MotivoRechazo>>();
+        foreach (var (ordinal, motivos) in rechazos)
+        {
+            if (sobre.Comprobantes.All(c => c.NroOrdinal != ordinal))
+                throw new ArgumentException($"El sobre no tiene un comprobante {ordinal}.", nameof(rechazos));
+            if (motivos.FirstOrDefault(m => !Intercambio.EsMotivoDeReceptor(m.Codigo) || string.IsNullOrWhiteSpace(m.Glosa)) is { } motivo)
+                throw new ArgumentException(
+                    $"{motivo.Codigo} no es un motivo de rechazo de un receptor: E02 a E07, E10 a E12 o E20 a E60, con su glosa.", nameof(rechazos));
+        }
+
+        var resultados = sobre.Comprobantes
+            .Select(c => (Cfe: c, Motivos: (IReadOnlyList<MotivoRechazo>)[.. c.Motivos, .. rechazos.GetValueOrDefault(c.NroOrdinal) ?? []]))
+            .ToList();
+        var id = await _store.ReservarIdEnvioAsync(cancellationToken);
+        var (xml, _) = FirmaDigital.Firmar(
+            Intercambio.RespuestaCfes(_config.Emisor.Rut, sobre, id, resultados, _reloj.GetUtcNow()), _certificado, _config.AlgoritmoFirma);
+        return new RespuestaCfes
+        {
+            Xml = xml,
+            NombreArchivo = Intercambio.NombreRespuesta("ME", id, sobre.RutEmisor, sobre.FechaSobre, sobre.IdEmisor),
+            Comprobantes =
+            [
+                .. resultados.Select(r => new EstadoComprobante
+                {
+                    NroOrdinal = r.Cfe.NroOrdinal,
+                    TipoCfe = r.Cfe.Tipo is { } tipo ? (int)tipo : null,
+                    Serie = r.Cfe.Serie,
+                    Numero = r.Cfe.Numero,
+                    Estado = r.Motivos.Count == 0 ? EstadoCfe.Aceptado : EstadoCfe.Rechazado,
+                    Motivos = [.. r.Motivos.Select(m => m.ToString())],
+                }),
+            ],
+        };
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<CfeAnulado> LeerNotificacionAnulacion(string xml)
+    {
+        ThrowIfDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(xml);
+        return Intercambio.LeerNotificacionAnulacion(xml, _config.Emisor.Rut);
+    }
+
+    /// <inheritdoc />
+    public Task<RespuestaIntercambio> EnviarIntercambioAsync(
+        string url, OperacionIntercambio operacion, string xml, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        return _dgi.EnviarIntercambioAsync(url, operacion, xml, cancellationToken);
+    }
+
+    /// <summary>El RUT del receptor de los CFE: todos deben ser del mismo receptor, identificado con un RUT uruguayo.</summary>
+    private static string RutReceptor(IReadOnlyCollection<CfeEmitido> cfes)
+    {
+        var ruts = cfes.Select(c => c.Documento.Receptor is { TipoDocumento: TipoDocumentoReceptor.Rut } r && Rut.EsValido(r.Documento)
+                && (string.IsNullOrWhiteSpace(r.CodigoPais) || r.CodigoPais.Equals("UY", StringComparison.OrdinalIgnoreCase))
+                    ? r.Documento
+                    : null)
+            .Distinct()
+            .ToList();
+        return ruts is [{ } rut]
+            ? rut
+            : throw new UruFacturaException(
+                "Los CFE deben ser de un mismo receptor identificado con su RUT: el intercambio es con un receptor electrónico por vez.");
     }
 
     // -----------------------------------------------------------------------

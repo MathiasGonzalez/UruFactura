@@ -63,9 +63,9 @@ public interface IUruFacturaStore
     ValueTask<IReadOnlyList<CfeEmitido>> BuscarCfesAsync(string nroInterno, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Devuelve, de a uno, los CFE emitidos en la fecha indicada (el reporte diario los resume sin
-    /// cargarlos todos en memoria).
+    /// Devuelve, de a uno, los CFE firmados en la fecha indicada (<see cref="CfeEmitido.FechaReporte"/>: la
+    /// fecha de Uruguay de la firma, que el reporte diario resume sin cargarlos todos en memoria).
     /// </summary>
     /// <exception cref="UruFacturaException">Si el almacenamiento no tiene completos los CFE de esa fecha.</exception>
-    IAsyncEnumerable<CfeEmitido> ListarCfesAsync(DateOnly fechaEmision, CancellationToken cancellationToken = default);
+    IAsyncEnumerable<CfeEmitido> ListarCfesAsync(DateOnly fechaReporte, CancellationToken cancellationToken = default);
 }

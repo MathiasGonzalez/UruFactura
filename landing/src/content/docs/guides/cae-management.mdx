@@ -27,6 +27,7 @@ await client.RegistrarCaeAsync(new Cae
 - Los datos se validan al registrar (`CaeException` si algo está mal), así que un CAE incorrecto no llega a un comprobante. Tampoco se admite un CAE con números en común con otro del mismo tipo y serie (por ejemplo, por un error de tipeo en el rango): se emitirían números repetidos.
 - Un CAE registrado por error que todavía no numeró ningún CFE se quita con `client.EliminarCaeAsync(cae)`.
 - Para varios tipos de CFE, un CAE por tipo. Con más de un CAE vigente para un tipo, se numera con el de vencimiento más lejano y, a igual vencimiento, con el que tenga más números libres; cuando uno se agota se pasa al siguiente.
+- Si la DGI lo entregó como **CAE especial**, indicalo en `Especial`: `CaeEspecial.Exonerado` (con su `CausalEspecial`), `IvaMinimo`, `Monotributo` o `MonotributoSocialMides`. Los CFE lo informan (`CAEEspecial`) y al emitir se validan sus reglas: el exonerado no admite líneas gravadas, y los de IVA mínimo y Monotributo usan el indicador `IvaMinimoMonotributo`, informan `MntBruto` 3 y no se usan para ventas por cuenta ajena.
 
 ---
 

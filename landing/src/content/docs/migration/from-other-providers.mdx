@@ -120,9 +120,9 @@ Si estás migrando desde un módulo de facturación electrónica de un ERP (Bisc
            NombreItem     = linea.DescripcionProducto,
            Cantidad       = linea.Cantidad,
            PrecioUnitario = linea.PrecioUnitario,
-           IndFactIva     = linea.EsExento ? TipoIva.Exento
-                          : linea.IvaMinimo ? TipoIva.Minimo
-                          : TipoIva.Basico,
+           IndFact        = linea.EsExento ? IndicadorFacturacion.Exento
+                          : linea.IvaMinimo ? IndicadorFacturacion.TasaMinima
+                          : IndicadorFacturacion.TasaBasica,
        };
    ```
 

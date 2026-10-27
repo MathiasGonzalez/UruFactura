@@ -19,7 +19,7 @@ public class CfeModelTests
     public void CalcularTotales_MitadDeCentesimo_RedondeaHaciaArriba()
     {
         // IVA mínimo de 1.25 = 0.125: el redondeo al par daría 0.12; el comercial (y el F2 del XML), 0.13.
-        var t = Cfe(TestData.Linea(1, 1.25m, TipoIva.Minimo)).CalcularTotales();
+        var t = Cfe(TestData.Linea(1, 1.25m, IndicadorFacturacion.TasaMinima)).CalcularTotales();
 
         Assert.Equal(0.13m, t.IvaMinimo);
         Assert.Equal(1.38m, t.MontoTotal);
@@ -46,7 +46,7 @@ public class CfeModelTests
     [Fact]
     public void CalcularTotales_IvaMinimo()
     {
-        var t = Cfe(TestData.Linea(1, 1000m, TipoIva.Minimo)).CalcularTotales();
+        var t = Cfe(TestData.Linea(1, 1000m, IndicadorFacturacion.TasaMinima)).CalcularTotales();
 
         Assert.Equal(1000m, t.MontoNetoMinimo);
         Assert.Equal(100m, t.IvaMinimo);
@@ -56,9 +56,9 @@ public class CfeModelTests
     [Fact]
     public void CalcularTotales_Exento_NoAplicaIva()
     {
-        var t = Cfe(TestData.Linea(iva: TipoIva.Exento)).CalcularTotales();
+        var t = Cfe(TestData.Linea(iva: IndicadorFacturacion.Exento)).CalcularTotales();
 
-        Assert.Equal(200m, t.MontoNetoExento);
+        Assert.Equal(200m, t.MontoNoGravado);
         Assert.Equal(0m, t.IvaBasico);
         Assert.Equal(200m, t.MontoTotal);
     }
@@ -66,9 +66,9 @@ public class CfeModelTests
     [Fact]
     public void CalcularTotales_ExentoYSuspendido_SonCamposSeparados()
     {
-        var t = Cfe(TestData.Linea(1, 300m, TipoIva.Exento), TestData.Linea(1, 200m, TipoIva.Suspendido)).CalcularTotales();
+        var t = Cfe(TestData.Linea(1, 300m, IndicadorFacturacion.Exento), TestData.Linea(1, 200m, IndicadorFacturacion.IvaEnSuspenso)).CalcularTotales();
 
-        Assert.Equal(300m, t.MontoNetoExento);
+        Assert.Equal(300m, t.MontoNoGravado);
         Assert.Equal(200m, t.MontoNetoSuspendido);
         Assert.Equal(500m, t.MontoTotal);
         Assert.Equal(500m, t.MontoNeto);
@@ -77,10 +77,10 @@ public class CfeModelTests
     [Fact]
     public void CalcularTotales_MixtoIvas()
     {
-        var t = Cfe(TestData.Linea(), TestData.Linea(1, 50m, TipoIva.Exento)).CalcularTotales();
+        var t = Cfe(TestData.Linea(), TestData.Linea(1, 50m, IndicadorFacturacion.Exento)).CalcularTotales();
 
         Assert.Equal(200m, t.MontoNetoBasico);
-        Assert.Equal(50m, t.MontoNetoExento);
+        Assert.Equal(50m, t.MontoNoGravado);
         Assert.Equal(294m, t.MontoTotal);
     }
 
@@ -146,8 +146,8 @@ public class CfeModelTests
         Assert.Equal(["Tipo"], TestData.Campos(TestData.CfeValido() with { Tipo = (TipoCfe)999 }));
 
     [Fact]
-    public void Validar_MonedaFueraDelEnum() =>
-        Assert.Contains("Moneda", TestData.Campos(TestData.CfeValido() with { Moneda = (Moneda)1 }));
+    public void Validar_MonedaFueraDeLaTabla() =>
+        Assert.Contains("Moneda", TestData.Campos(TestData.CfeValido() with { Moneda = new Moneda("XYZ") }));
 
     [Fact]
     public void Validar_MonedaExtranjeraSinTipoDeCambio() =>
@@ -162,8 +162,12 @@ public class CfeModelTests
         Assert.Contains("FechaVencimiento", TestData.Campos(TestData.CfeValido() with { FechaVencimiento = TestData.Dia.AddDays(-1) }));
 
     [Fact]
-    public void Validar_FechaDeEmisionFutura() =>
-        Assert.Contains("FechaEmision", TestData.Campos(TestData.CfeValido() with { FechaEmision = TestData.Dia.AddDays(1) }));
+    public void Validar_FechaDeEmisionMasDe60DiasPosterior() =>
+        Assert.Contains("FechaEmision", TestData.Campos(TestData.CfeValido() with { FechaEmision = TestData.Dia.AddDays(61) }));
+
+    [Fact]
+    public void Validar_FechaDeEmisionHasta60DiasPosterior_EsValida() =>
+        Assert.Empty(TestData.Validar(TestData.CfeValido() with { FechaEmision = TestData.Dia.AddDays(60) }));
 
     [Fact]
     public void Validar_FechaDeEmisionAnteriorAlFormatoCfe() =>
@@ -193,12 +197,50 @@ public class CfeModelTests
         [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "a", NroCfe = 1, FechaCfe = TestData.Dia }, "Referencias[0].Serie"],
         [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 0, FechaCfe = TestData.Dia }, "Referencias[0].NroCfe"],
         [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 10_000_000, FechaCfe = TestData.Dia }, "Referencias[0].NroCfe"],
-        [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 1 }, "Referencias[0].FechaCfe"],
-        [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 1, FechaCfe = TestData.Dia.AddDays(1) }, "Referencias[0].FechaCfe"],
+        [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 1, FechaCfe = new DateOnly(2010, 1, 1) }, "Referencias[0].FechaCfe"],
+        [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "A" }, "Referencias[0].NroCfe"],
+        [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 1, FechaCfe = TestData.Dia.AddDays(61) }, "Referencias[0].FechaCfe"],
         [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 1, FechaCfe = TestData.Dia, Razon = new string('x', 91) }, "Referencias[0].Razon"],
         [new RefCfe { Serie = "A", NroCfe = 1, FechaCfe = TestData.Dia }, "Referencias[0].TipoCfe"],
         [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 1, FechaCfe = TestData.Dia, MontoCfeRef = -1m }, "Referencias[0].MontoCfeRef"],
+        // F-C10: el tipo de cambio es obligatorio si el comprobante referenciado no es en pesos.
+        [new RefCfe { TipoCfe = TipoCfe.ETicket, Serie = "A", NroCfe = 1, MontoCfeRef = 10m, MonedaCfeRef = Moneda.DolarAmericano }, "Referencias[0].TipoCambioCfeRef"],
+        // Referencia global: exige el motivo y no admite los datos del comprobante.
+        [new RefCfe { Global = true }, "Referencias[0].Razon"],
+        [new RefCfe { Global = true, Razon = "Liquidación", TipoCfe = TipoCfe.ETicket }, "Referencias[0]"],
+        [new RefCfe { Global = true, Razon = "Liquidación", MontoCfeRef = 1m }, "Referencias[0]"],
     ];
+
+    [Fact]
+    public void Validar_ReferenciasRepetidas_AlMismoComprobante()
+    {
+        var referencia = TestData.CfeValido(TipoCfe.NotaCreditoETicket).Referencias[0];
+
+        var campos = TestData.Campos(TestData.CfeValido(TipoCfe.NotaCreditoETicket) with { Referencias = [referencia, referencia with { Razon = "Otra" }] });
+
+        Assert.Equal(["Referencias[1]"], campos);
+    }
+
+    [Fact]
+    public void Validar_NotaConReferenciaGlobal_NoExigeMontoNiMoneda() =>
+        Assert.Empty(TestData.Validar(TestData.CfeValido(TipoCfe.NotaCreditoETicket) with
+        {
+            Referencias = [new RefCfe { Global = true, Razon = "Descuento por volumen de mayo" }],
+        }));
+
+    [Fact]
+    public void Validar_NotaSinFechaDelComprobanteReferenciado_EsValida() =>
+        Assert.Empty(TestData.Validar(TestData.CfeValido(TipoCfe.NotaCreditoEFactura) with
+        {
+            Referencias = [TestData.CfeValido(TipoCfe.NotaCreditoEFactura).Referencias[0] with { FechaCfe = null }],
+        }));
+
+    [Fact]
+    public void Validar_ERemitoConMontoDelComprobanteReferenciado_TieneError() =>
+        Assert.Equal(["Referencias[0]"], TestData.Campos(TestData.CfeValido(TipoCfe.ERemito) with
+        {
+            Referencias = [new RefCfe { TipoCfe = TipoCfe.ERemito, Serie = "A", NroCfe = 3, MontoCfeRef = 10m, MonedaCfeRef = Moneda.PesoUruguayo }],
+        }));
 
     [Theory]
     [MemberData(nameof(ReferenciasInvalidas))]
@@ -230,7 +272,7 @@ public class CfeModelTests
     public void Validar_EFacturaConReceptorNoRut() =>
         Assert.Contains("Receptor.TipoDocumento", TestData.Campos(TestData.CfeValido(TipoCfe.EFactura) with
         {
-            Receptor = new Receptor { Documento = "12345678", TipoDocumento = TipoDocumentoReceptor.CedulaIdentidad },
+            Receptor = new Receptor { Documento = "12345672", TipoDocumento = TipoDocumentoReceptor.CedulaIdentidad },
         }));
 
     [Fact]
@@ -293,7 +335,7 @@ public class CfeModelTests
         Assert.Empty(TestData.Validar(cfe, tope: 1000m));
         Assert.Empty(TestData.Validar(cfe with
         {
-            Receptor = new Receptor { Documento = "12345678", TipoDocumento = TipoDocumentoReceptor.CedulaIdentidad },
+            Receptor = new Receptor { Documento = "12345672", TipoDocumento = TipoDocumentoReceptor.CedulaIdentidad },
         }, tope: 150m));
     }
 
@@ -366,4 +408,128 @@ public class CfeModelTests
 
         Assert.Equal(["NroInterno", "Detalle[0].NombreItem", "Detalle[1].Cantidad"], TestData.Campos(cfe));
     }
+
+    // --- Indicadores de facturación, descuentos en porcentaje y CAE especial ---
+
+    [Fact]
+    public void Totales_IndicadoresNoFacturables_VanAlMontoNoFacturableYAlTotalAPagar()
+    {
+        var t = (TestData.CfeValido() with
+        {
+            Detalle = [TestData.Linea(), TestData.Linea(1, 30m, IndicadorFacturacion.NoFacturable), TestData.Linea(1, 10m, IndicadorFacturacion.NoFacturableNegativo)],
+            DescuentosRecargos = [new DescuentoRecargoGlobal { Glosa = "Bonificación", Monto = 5m, IndFact = IndicadorFacturacion.NoFacturable }],
+        }).CalcularTotales();
+
+        Assert.Equal(244m, t.MontoTotal);
+        Assert.Equal(15m, t.MontoNoFacturable); // 30 − 5 − 10
+        Assert.Equal(259m, t.MontoPagar);
+    }
+
+    [Fact]
+    public void Totales_IvaMinimoMonotributo_EsNoGravado()
+    {
+        var t = (TestData.CfeValido() with { Detalle = [TestData.Linea(iva: IndicadorFacturacion.IvaMinimoMonotributo)] }).CalcularTotales();
+
+        Assert.Equal((200m, 0m, 200m), (t.MontoNoGravado, t.IvaBasico, t.MontoTotal));
+    }
+
+    [Fact]
+    public void Validar_EntregaGratuitaConPrecio_TieneError() =>
+        Assert.Contains("Detalle[0].PrecioUnitario", TestData.Campos(TestData.CfeValido() with
+        {
+            Detalle = [TestData.Linea(1, 10m, IndicadorFacturacion.EntregaGratuita)],
+        }));
+
+    [Fact]
+    public void Validar_OtraTasa_ExigeElIvaInformado_YElIvaExigeLasLineas()
+    {
+        Assert.Contains("IvaOtraTasa", TestData.Campos(TestData.CfeValido() with { Detalle = [TestData.Linea(iva: IndicadorFacturacion.OtraTasa)] }));
+        Assert.Contains("IvaOtraTasa", TestData.Campos(TestData.CfeValido() with { IvaOtraTasa = 10m }));
+        Assert.Empty(TestData.Validar(TestData.CfeValido() with { Detalle = [TestData.Linea(iva: IndicadorFacturacion.OtraTasa)], IvaOtraTasa = 10m }));
+        Assert.Contains("IvaOtraTasa", TestData.Campos(TestData.CfeValido(TipoCfe.EFacturaExportacion) with { IvaOtraTasa = 10m }));
+    }
+
+    [Fact]
+    public void Validar_IvaMinimoMonotributoJuntoConLineasGravadas_TieneError() =>
+        Assert.Equal(["Detalle[1].IndFact"], TestData.Campos(TestData.CfeValido() with
+        {
+            Detalle = [TestData.Linea(iva: IndicadorFacturacion.IvaMinimoMonotributo), TestData.Linea()],
+        }));
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(100.5)]
+    public void Validar_DescuentoGlobalConPorcentajeFueraDeRango_TieneError(decimal porcentaje) =>
+        Assert.Contains("DescuentosRecargos[0].Porcentaje", TestData.Campos(TestData.CfeValido() with
+        {
+            DescuentosRecargos = [new DescuentoRecargoGlobal { Glosa = "x", Porcentaje = porcentaje }],
+        }));
+
+    [Fact]
+    public void Validar_DescuentoGlobalSinMontoNiPorcentaje_TieneError() =>
+        Assert.Contains("DescuentosRecargos[0].Monto", TestData.Campos(TestData.CfeValido() with
+        {
+            DescuentosRecargos = [new DescuentoRecargoGlobal { Glosa = "x" }],
+        }));
+
+    [Fact]
+    public void Validar_PorcentajeSobreUnIndicadorSinLineas_TieneError() =>
+        Assert.Contains("DescuentosRecargos[0].Porcentaje", TestData.Campos(TestData.CfeValido() with
+        {
+            DescuentosRecargos = [new DescuentoRecargoGlobal { Glosa = "x", Porcentaje = 10m, IndFact = IndicadorFacturacion.Exento }],
+        }));
+
+    [Fact]
+    public void Validar_DescuentoGlobalSobreEntregaGratuita_TieneError() =>
+        Assert.Contains("DescuentosRecargos[0].IndFact", TestData.Campos(TestData.CfeValido() with
+        {
+            DescuentosRecargos = [new DescuentoRecargoGlobal { Glosa = "x", Monto = 1m, IndFact = IndicadorFacturacion.EntregaGratuita }],
+        }));
+
+    [Fact]
+    public void Validar_MandanteQueEsElPropioEmisor_TieneError() =>
+        Assert.Contains("Mandante.Documento", TestData.Campos(TestData.CfeValido(TipoCfe.ETicketCuentaAjena) with
+        {
+            Emisor = TestData.Emisor(),
+            Mandante = new Mandante { Documento = "219999820013", Nombre = "Yo mismo" },
+        }));
+
+    [Fact]
+    public void Validar_ETicketCuentaAjenaSobreElTope_ExigeElReceptor() =>
+        Assert.Contains("Receptor.Documento", TestData.Campos(TestData.CfeValido(TipoCfe.ETicketCuentaAjena), tope: 100m));
+
+    [Fact]
+    public void ValidarConCae_Exonerado_NoAdmiteLineasGravadas()
+    {
+        var cae = TestData.Cae() with { Especial = CaeEspecial.Exonerado, CausalEspecial = 1 };
+
+        Assert.Equal(["Detalle[0].IndFact"], TestData.CfeValido().ValidarConCae(cae).Select(e => e.Campo));
+        Assert.Empty((TestData.CfeValido() with { Detalle = [TestData.Linea(iva: IndicadorFacturacion.Exento)] }).ValidarConCae(cae));
+    }
+
+    [Fact]
+    public void ValidarConCae_IvaMinimo_SoloAdmiteSusIndicadores()
+    {
+        var cae = TestData.Cae() with { Especial = CaeEspecial.IvaMinimo };
+
+        Assert.Equal(["Detalle[0].IndFact"], TestData.CfeValido().ValidarConCae(cae).Select(e => e.Campo));
+        Assert.Empty((TestData.CfeValido() with { Detalle = [TestData.Linea(iva: IndicadorFacturacion.IvaMinimoMonotributo)] }).ValidarConCae(cae));
+    }
+
+    [Fact]
+    public void ValidarConCae_IndicadorIvaMinimoConCaeComun_SoloEnCuentaAjena()
+    {
+        var lineas = new[] { TestData.Linea(iva: IndicadorFacturacion.IvaMinimoMonotributo) };
+
+        Assert.Equal(["Detalle[0].IndFact"], (TestData.CfeValido() with { Detalle = lineas }).ValidarConCae(TestData.Cae()).Select(e => e.Campo));
+        Assert.Empty((TestData.CfeValido(TipoCfe.ETicketCuentaAjena) with { Detalle = lineas }).ValidarConCae(TestData.Cae(TipoCfe.ETicketCuentaAjena)));
+    }
+
+    [Fact]
+    public void ValidarConCae_MonotributoConEmisorSinIvaAlDia_TieneError() =>
+        Assert.Contains("Emisor.IvaAlDia", (TestData.CfeValido() with
+        {
+            Emisor = TestData.Emisor() with { IvaAlDia = false },
+            Detalle = [TestData.Linea(iva: IndicadorFacturacion.IvaMinimoMonotributo)],
+        }).ValidarConCae(TestData.Cae() with { Especial = CaeEspecial.Monotributo }).Select(e => e.Campo));
 }

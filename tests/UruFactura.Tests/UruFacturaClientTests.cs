@@ -68,7 +68,7 @@ public class UruFacturaClientTests
     }
 
     private static UruFacturaConfig Produccion() =>
-        TestData.Config() with { Ambiente = Ambiente.Produccion, UrlEnvio = "https://e", UrlConsultas = "https://c" };
+        TestData.Config() with { Ambiente = Ambiente.Produccion, UrlEnvio = "https://e", UrlConsultas = "https://c", UnidadIndexada = new Dictionary<int, decimal> { [2025] = 6.4m } };
 
     [Fact]
     public void Constructor_ProduccionSinAlmacenamiento_LanzaUruFacturaException()
@@ -375,14 +375,14 @@ public class UruFacturaClientTests
     public void Validar_FechaDeEmisionFutura_TieneError()
     {
         using var client = new DgiStub().Cliente();
-        Assert.Contains(client.Validar(TestData.CfeValido() with { FechaEmision = TestData.Dia.AddDays(1) }),
+        Assert.Contains(client.Validar(TestData.CfeValido() with { FechaEmision = TestData.Dia.AddDays(61) }),
             e => e.Campo == "FechaEmision");
     }
 
     [Fact]
-    public void Validar_ConValorUnidadIndexada_AplicaElTopeDe5000UI()
+    public void Validar_ConUnidadIndexada_AplicaElTopeDe5000UI()
     {
-        using var client = new DgiStub().Cliente(config: TestData.Config() with { ValorUnidadIndexada = 0.01m }); // tope: 50 pesos
+        using var client = new DgiStub().Cliente(config: TestData.Config() with { UnidadIndexada = new Dictionary<int, decimal> { [2025] = 0.01m } }); // tope: 50 pesos
 
         Assert.Contains(client.Validar(TestData.CfeValido()), e => e.Mensaje.Contains("tope"));
     }
@@ -587,26 +587,99 @@ public class UruFacturaClientTests
     }
 
     // -----------------------------------------------------------------------
+    // CAE especial
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task Emitir_ConCaeDeIvaMinimo_InformaMntBruto3()
+    {
+        var dgi = new DgiStub();
+        using var client = dgi.Cliente();
+        await client.RegistrarCaeAsync(TestData.Cae() with { Especial = CaeEspecial.IvaMinimo });
+
+        var emitido = await client.EmitirAsync(TestData.CfeValido() with { Detalle = [TestData.Linea(iva: IndicadorFacturacion.IvaMinimoMonotributo)] });
+
+        Assert.Contains("<MntBruto>3</MntBruto>", emitido.Xml);
+        Assert.Contains("<CAEEspecial>2</CAEEspecial>", emitido.Xml);
+    }
+
+    [Fact]
+    public async Task Emitir_LineaGravadaConCaeDeIvaMinimo_LanzaCfeValidationExceptionSinConsumirNumero()
+    {
+        var dgi = new DgiStub();
+        using var client = dgi.Cliente();
+        await client.RegistrarCaeAsync(TestData.Cae() with { Especial = CaeEspecial.IvaMinimo });
+
+        var ex = await Assert.ThrowsAsync<CfeValidationException>(() => client.EmitirAsync(TestData.CfeValido()));
+
+        Assert.Equal("Detalle[0].IndFact", Assert.Single(ex.Errores).Campo);
+        Assert.Equal(0, Assert.Single(await client.ObtenerCaesAsync()).UltimoNroUsado);
+    }
+
+    [Fact]
+    public async Task RegistrarCae_IvaMinimoParaCuentaAjena_LanzaCaeException()
+    {
+        using var client = new DgiStub().Cliente();
+        await Assert.ThrowsAsync<CaeException>(() => client.RegistrarCaeAsync(TestData.Cae(TipoCfe.ETicketCuentaAjena) with { Especial = CaeEspecial.IvaMinimo }));
+    }
+
+    // -----------------------------------------------------------------------
     // Reporte diario
     // -----------------------------------------------------------------------
 
     [Fact]
-    public async Task ReporteDiario_ResumeLosCfeDelAlmacenamiento_FirmadoYValido()
+    public async Task ReporteDiario_ConUnidadIndexada_InformaLosETicketsSobreElTope()
+    {
+        var config = TestData.Config() with { UnidadIndexada = new Dictionary<int, decimal> { [2025] = 0.02m } }; // tope de 100 pesos
+        var (client, dgi, _) = await ClienteConCae(config: config);
+        using var _ = client;
+        await client.EmitirAsync(TestData.CfeValido() with
+        {
+            Receptor = new Receptor { Documento = "12345672", TipoDocumento = TipoDocumentoReceptor.CedulaIdentidad },
+        });
+        await client.EmitirAsync(TestData.CfeValido() with { Detalle = [TestData.Linea(1, 50m)] });
+
+        await client.EnviarReporteDiarioAsync(TestData.Dia);
+
+        Assert.Contains("<CantDocsMay_topeUI>1</CantDocsMay_topeUI>", dgi.UltimoReporte);
+    }
+
+    [Fact]
+    public async Task ReporteDiario_CfeRechazado_SeInformaAnulado()
+    {
+        var (client, dgi, _) = await ClienteConCae();
+        using var _ = client;
+        var emitido = await client.EmitirAsync(TestData.CfeValido());
+        var acuse = await client.EnviarAsync(emitido);
+        dgi.EstadoPorNumero[emitido.Numero] = EstadoCfe.Rechazado;
+        await client.ConsultarEnvioAsync(acuse);
+
+        await client.EnviarReporteDiarioAsync(TestData.Dia);
+
+        Assert.Contains("<CantDocsAnulados>1</CantDocsAnulados><CantDocsEmi>0</CantDocsEmi>", dgi.UltimoReporte);
+        Assert.DoesNotContain("Montos", dgi.UltimoReporte);
+    }
+
+    [Fact]
+    public async Task ReporteDiario_ResumeLosCfeFirmadosEnLaFecha_FirmadoYValido()
     {
         var (client, dgi, _) = await ClienteConCae();
         using var _ = client;
         await client.EmitirAsync(TestData.CfeValido());
         await client.EmitirAsync(TestData.CfeValido());
+        // Firmado hoy con fecha de comprobante de ayer: va en el reporte de hoy, con sus montos bajo la fecha de ayer.
         await client.EmitirAsync(TestData.CfeValido() with { FechaEmision = TestData.Dia.AddDays(-1) });
 
         var acuse = await client.EnviarReporteDiarioAsync(TestData.Dia);
 
         Assert.True(acuse.Recibido);
-        Assert.Equal(2, acuse.CantidadCfe);
+        Assert.Equal(3, acuse.CantidadCfe);
         Assert.Equal(TestData.Dia, acuse.Fecha);
         TestData.AssertValidoContraXsd(dgi.UltimoReporte!);
         Assert.NotNull(FirmaDigital.VerificarFirma(dgi.UltimoReporte!));
-        Assert.Contains("<NroDesde>1</NroDesde><NroHasta>2</NroHasta>", dgi.UltimoReporte);
+        Assert.Contains("<NroDesde>1</NroDesde><NroHasta>3</NroHasta>", dgi.UltimoReporte);
+        Assert.Contains("<Fecha>2026-06-14</Fecha>", dgi.UltimoReporte);
+        Assert.Contains("<Fecha>2026-06-15</Fecha>", dgi.UltimoReporte);
     }
 
     [Fact]

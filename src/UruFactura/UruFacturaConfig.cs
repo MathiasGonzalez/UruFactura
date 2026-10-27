@@ -47,10 +47,14 @@ public sealed record UruFacturaConfig
     public bool OmitirValidacionSsl { get; init; }
 
     /// <summary>
-    /// Valor de la Unidad Indexada en pesos. Si se informa, los e-Tickets con monto neto superior a
-    /// 5.000 UI deben identificar al receptor (obligación del formato CFE).
+    /// Valor en pesos de la Unidad Indexada al cierre de cada año civil: la clave es el año y el valor, la UI del
+    /// 31/12 de ese año (por ejemplo, <c>[2025] = 6.4m</c> para los comprobantes de 2026). Fija el tope de 5.000 UI
+    /// de los e-Tickets, que se toma de la UI al cierre del año anterior a la fecha de cada comprobante: por encima
+    /// hay que identificar al receptor y enviarlos a la DGI uno a uno, y el reporte diario informa cuántos lo
+    /// superaron (<c>CantDocsMay_topeUI</c>). Obligatorio en Producción, donde falta el año que se necesita es un
+    /// error al emitir.
     /// </summary>
-    public decimal? ValorUnidadIndexada { get; init; }
+    public IReadOnlyDictionary<int, decimal> UnidadIndexada { get; init; } = new Dictionary<int, decimal>();
 
     internal const string UrlEnvioHomologacion = "https://efactura.dgi.gub.uy:6443/ePrueba/ws_eprueba";
     internal const string UrlConsultasHomologacion = "https://efactura.dgi.gub.uy:6460/ePrueba/ws_consultasPrueba";
@@ -83,9 +87,40 @@ public sealed record UruFacturaConfig
             errores.Add("OmitirValidacionSsl no se admite en Producción: la conexión con la DGI debe validar su certificado.");
         if (Timeout <= TimeSpan.Zero)
             errores.Add("Timeout debe ser mayor a cero.");
-        if (ValorUnidadIndexada is <= 0)
-            errores.Add("ValorUnidadIndexada debe ser mayor a cero.");
+        if (UnidadIndexada is null)
+            errores.Add("UnidadIndexada no puede ser null (puede estar vacía en Homologación).");
+        else
+        {
+            foreach (var (anio, ui) in UnidadIndexada)
+            {
+                if (anio is < 2011 or > 2050)
+                    errores.Add($"UnidadIndexada: el año {anio} está fuera del rango de los CFE (2011-2050).");
+                if (ui <= 0)
+                    errores.Add($"UnidadIndexada: el valor del {anio} debe ser mayor a cero.");
+            }
+            if (UnidadIndexada.Count == 0 && Ambiente == Ambiente.Produccion)
+                errores.Add("En Producción UnidadIndexada es obligatoria (la UI al cierre de cada año): fija el tope de los e-Tickets.");
+        }
 
         return errores;
+    }
+
+    /// <summary>
+    /// Tope en pesos (5.000 UI) para un comprobante de <paramref name="fechaComprobante"/>: con la UI al cierre del
+    /// año anterior. <c>null</c> si falta ese año en Homologación.
+    /// </summary>
+    /// <exception cref="UruFacturaException">Si falta ese año en Producción.</exception>
+    internal decimal? TopeMontoNeto(DateOnly fechaComprobante)
+    {
+        // Una fecha fuera del rango de los CFE es un error de validación del comprobante, no de la configuración.
+        if (fechaComprobante < Validacion.FechaMinima || fechaComprobante > Validacion.FechaMaxima)
+            return null;
+        var anio = fechaComprobante.Year - 1;
+        if (UnidadIndexada.TryGetValue(anio, out var ui))
+            return ui * 5000m;
+        if (Ambiente == Ambiente.Produccion)
+            throw new UruFacturaException(
+                $"Falta en UnidadIndexada el valor de la UI al 31/12/{anio}: fija el tope de 5.000 UI de los comprobantes de {anio + 1}.");
+        return null;
     }
 }

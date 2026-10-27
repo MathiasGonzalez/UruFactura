@@ -82,6 +82,25 @@ internal sealed class DgiStub : IDgiClient
             TipoCfe = (int)tipo, Serie = serie, Numero = numero, Estado = EstadoPorNumero.GetValueOrDefault(numero, EstadoCfe.Aceptado),
         });
 
+    /// <summary>Emisores del padrón simulado.</summary>
+    public ConcurrentBag<EmisorElectronico> Emisores { get; } = [];
+
+    /// <summary>Mensajes enviados a servicios de intercambio de otros emisores.</summary>
+    public ConcurrentQueue<(string Url, OperacionIntercambio Operacion, string Xml)> Intercambios { get; } = [];
+
+    /// <summary>Respuesta del servicio de intercambio del otro emisor.</summary>
+    public RespuestaIntercambio RespuestaIntercambio { get; set; } = new(1000, "Sobre Recibido.", null);
+
+    public Task<IReadOnlyList<EmisorElectronico>> ConsultarEmisoresAsync(string filtroRut, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<EmisorElectronico>>([.. Emisores.Where(e => e.Rut.Contains(filtroRut, StringComparison.Ordinal))]);
+
+    public Task<RespuestaIntercambio> EnviarIntercambioAsync(
+        string url, OperacionIntercambio operacion, string xml, CancellationToken cancellationToken = default)
+    {
+        Intercambios.Enqueue((url, operacion, xml));
+        return Task.FromResult(RespuestaIntercambio);
+    }
+
     public Task<AcuseReporte> EnviarReporteAsync(string reporteFirmadoXml, CancellationToken cancellationToken = default)
     {
         Reportes.Enqueue(reporteFirmadoXml);

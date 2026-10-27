@@ -10,13 +10,17 @@ namespace UruFactura.Soap;
 /// <summary>
 /// Cliente SOAP 1.1 de los servicios web de la DGI: <c>ws_efactura</c> (<c>EFACRECEPCIONSOBRE</c>,
 /// <c>EFACRECEPCIONREPORTE</c>, <c>EFACCONSULTARESTADOENVIO</c>) y <c>ws_consultas</c>
-/// (<c>EFACCONSULTARESTADOCFE</c>). Cada mensaje se firma con WS-Security. Operaciones, namespaces y
-/// SOAPAction provienen de los WSDL oficiales (<c>ws_eprueba?wsdl</c> y <c>ws_consultasPrueba?wsdl</c>).
+/// (<c>EFACCONSULTARESTADOCFE</c> y la consulta del padrón de emisores), y del servicio de intercambio de
+/// otros emisores (<c>ws_efactura_intercambio</c>). Cada mensaje se firma con WS-Security. Operaciones,
+/// namespaces y SOAPAction provienen de los WSDL oficiales (<c>ws_eprueba?wsdl</c>,
+/// <c>ws_consultasPrueba?wsdl</c> y <c>wsdl_aws_efactura_intercambio.xml</c>).
 /// </summary>
 internal sealed class DgiSoapClient : IDgiClient, IDisposable
 {
     private const string ActionEnvio = "http://dgi.gub.uyaction/AWS_EFACTURA.";
     private const string ActionConsultas = "http://dgi.gub.uyaction/AWS_EFACTURA_CONSULTAS.";
+    private const string ActionIntercambio = "http://dgi.gub.uyaction/AWS_EFACTURA_INTERCAMBIO.";
+    private const string ConsultaEmisores = "EFACCONSULTARRUCEMISORESTRANSICIONCOMPRIMIDOPROV";
 
     private readonly UruFacturaConfig _config;
     private readonly X509Certificate2 _certificado;
@@ -85,6 +89,48 @@ internal sealed class DgiSoapClient : IDgiClient, IDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reporteFirmadoXml);
         return InvocarEfacturaAsync("EFACRECEPCIONREPORTE", reporteFirmadoXml, DgiRespuestaParser.ProcesarReporte, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<EmisorElectronico>> ConsultarEmisoresAsync(string filtroRut, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(filtroRut);
+        return InvocarAsync(
+            _config.UrlConsultasEfectiva, ActionConsultas + ConsultaEmisores, ConsultaEmisores,
+            doc =>
+            {
+                var op = doc.CreateElement("dgi", "WS_eFactura_Consultas." + ConsultaEmisores, WsSecurity.DgiNs);
+                var consulta = Agregar(op, "Consultarucemisores");
+                Agregar(consulta, "Filtro_eFacDocNro", filtroRut);
+                Agregar(consulta, "Filtro_eFacDenominacion", "");
+                // Obligatorio: los emisores que existen o cambiaron desde esa fecha (todos, desde el comienzo del régimen).
+                Agregar(consulta, "Filtro_eFacRUCEmisorAudFchHora", "2000-01-01T00:00:00Z");
+                return op;
+            },
+            DgiRespuestaParser.ProcesarEmisores, cancellationToken);
+    }
+
+    public Task<RespuestaIntercambio> EnviarIntercambioAsync(
+        string url, OperacionIntercambio operacion, string xml, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(url);
+        ArgumentException.ThrowIfNullOrWhiteSpace(xml);
+        var nombre = operacion switch
+        {
+            OperacionIntercambio.Sobre => "SOBRE",
+            OperacionIntercambio.RespuestaSobre => "RESPUESTASOBRE",
+            OperacionIntercambio.RespuestaCfes => "RESPUESTACFES",
+            OperacionIntercambio.NotificacionAnulacion => "NOTIFICACIONANULACIONCFE",
+            _ => throw new ArgumentOutOfRangeException(nameof(operacion), operacion, "Operación de intercambio no válida."),
+        };
+        return InvocarAsync(
+            url, ActionIntercambio + nombre, nombre,
+            doc =>
+            {
+                var op = doc.CreateElement("dgi", "WS_eFactura_Intercambio." + nombre, WsSecurity.DgiNs);
+                Agregar(Agregar(op, "Datain"), "xmlData").AppendChild(doc.CreateCDataSection(xml));
+                return op;
+            },
+            respuesta => DgiRespuestaParser.ProcesarIntercambio(respuesta, nombre), cancellationToken);
     }
 
     // -------------------------------------------------------------------------

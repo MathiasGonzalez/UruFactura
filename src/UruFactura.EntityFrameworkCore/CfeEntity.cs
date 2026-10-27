@@ -15,6 +15,10 @@ public class CfeEntity
     public string Serie { get; set; } = string.Empty;
     public long Numero { get; set; }
     public DateOnly FechaEmision { get; set; }
+
+    /// <summary>Fecha del reporte diario que lo informa: la de Uruguay de la firma (<see cref="CfeEmitido.FechaReporte"/>).</summary>
+    public DateOnly FechaReporte { get; set; }
+
     public int CodigoSucursal { get; set; }
 
     /// <summary>Número interno del emisor (p. ej. el id del pedido o del pago), para búsquedas e idempotencia.</summary>
@@ -77,6 +81,7 @@ public class CfeEntity
             Serie = cfe.Serie,
             Numero = cfe.Numero,
             FechaEmision = cfe.FechaEmision,
+            FechaReporte = cfe.FechaReporte,
             CodigoSucursal = cfe.Emisor.CodigoSucursal,
             NroInterno = cfe.Documento.NroInterno,
             ReceptorDocumento = cfe.Documento.Receptor?.Documento,

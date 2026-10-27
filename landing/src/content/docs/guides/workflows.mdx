@@ -118,14 +118,15 @@ flowchart TD
     G --> H[5. Emitir y enviar CFEs de prueba\nEmitirAsync · EnviarAsync]
     H --> I[6. Enviar Reporte Diario de prueba\nEnviarReporteDiarioAsync]
     I --> J[7. Consultar estado de cada CFE\nConsultarEnvioAsync]
-    J --> K{Todo OK?}
+    J --> J2[8. CFE con adenda e intercambio\nGenerarSobreReceptorAsync · RecibirSobreAsync\nResponderCfesAsync]
+    J2 --> K{Todo OK?}
     K -- No --> L[Corregir errores\nrevisando respuesta.Mensaje]
     L --> H
-    K -- Sí --> M[8. Notificar finalización\na DGI vía portal]
+    K -- Sí --> M[9. Notificar finalización\na DGI vía portal]
     M --> N{DGI aprueba?}
     N -- No --> O[Atender observaciones DGI]
     O --> H
-    N -- Sí --> P[9. Cambiar a Producción\nAmbiente.Produccion]
+    N -- Sí --> P[10. Cambiar a Producción\nAmbiente.Produccion\ny UnidadIndexada]
     P --> Q([✅ Habilitado para emitir en producción])
 `}</pre>
 
@@ -133,15 +134,15 @@ flowchart TD
 
 ## Flujo del Reporte Diario
 
-DGI exige enviar un resumen de todos los CFE emitidos cada día.
+DGI exige enviar un resumen de todos los CFE firmados cada día (formato v13.2): montos en pesos por fecha de comprobante y sucursal (aparte los pagos por cuenta de terceros), lo retenido o percibido, cantidades y rangos de números utilizados, anulados por rechazo de la DGI y emitidos, y cuántos e-Tickets superaron el tope de 5.000 UI.
 
 <pre class="mermaid">{String.raw`
 flowchart TD
     A([Fin de la jornada]) --> B{¿Se emitió\nalgún CFE hoy?}
     B -- No --> C[No es obligatorio\npero recomendable enviar\nreporte vacío]
-    B -- Sí --> D[El almacenamiento tiene\nlos CFE emitidos del día]
+    B -- Sí --> D[El almacenamiento tiene\nlos CFE firmados en el día]
     D --> F[EnviarReporteDiarioAsync\nfecha]
-    F --> E[SDK resume por tipo de CFE\nmontos · cantidades · rangos]
+    F --> E[SDK resume por tipo de CFE\nmontos en pesos · utilizados · anulados · rangos]
     E --> G[Arma ReporteDiarioCFE y lo firma\nno incluye los XML de los CFE]
     G --> H[POST SOAP EFACRECEPCIONREPORTE]
     H --> I{Respuesta DGI}
@@ -153,8 +154,29 @@ flowchart TD
 `}</pre>
 
 <Aside type="caution">
-  El Reporte Diario es **obligatorio** incluso si solo emitiste un CFE. No enviarlo puede generar infracciones ante DGI.
+  El Reporte Diario es **obligatorio** incluso si solo emitiste un CFE. No enviarlo puede generar infracciones ante DGI. Si después de enviarlo la DGI rechaza un CFE del día, reenvialo corregido con `secEnvio` + 1: el CFE pasa a informarse como anulado.
 </Aside>
+
+---
+
+## Intercambio con otros emisores electrónicos
+
+Todo emisor electrónico es también receptor. Las e-Facturas, e-Remitos y e-Resguardos a un cliente que es emisor electrónico se le envían después de enviarlos a la DGI, y él acusa recibo del sobre y responde cada comprobante.
+
+<pre class="mermaid">{String.raw`
+sequenceDiagram
+    participant E as Emisor (UruFactura)
+    participant D as DGI
+    participant R as Receptor electrónico
+    E->>D: EnviarAsync(cfe) · sobre EnvioCFE
+    E->>E: ConsultarEmisorElectronicoAsync(rut) · correo y servicio web
+    E->>R: GenerarSobreReceptorAsync([cfe]) · EnvioCFE_entreEmpresas con adenda (correo o EnviarIntercambioAsync)
+    R->>R: RecibirSobreAsync(xml) · controles S01-S07, firma y CAE de cada CFE
+    R-->>E: ACKSobre firmado (AS/BS) · LeerAcuseReceptor
+    R-->>E: ACKCFE firmado (AE/BE por CFE, motivos comerciales E20-E60) · ResponderCfesAsync / LeerRespuestaReceptor
+    D-->>E: ConsultarEnvioAsync · si la DGI rechaza un CFE ya enviado...
+    E->>R: GenerarNotificacionAnulacionAsync · CFEs_Anulados_x_RechazoDGI
+`}</pre>
 
 ---
 
@@ -176,6 +198,12 @@ classDiagram
         +ConsultarEnvioAsync(acuse) EstadoEnvio
         +ConsultarCfeAsync(cfe) EstadoComprobante
         +EnviarReporteDiarioAsync(fecha) AcuseReporte
+        +ConsultarEmisorElectronicoAsync(rut) EmisorElectronico
+        +GenerarSobreReceptorAsync(cfes) SobreReceptor
+        +RecibirSobreAsync(xml) SobreRecibido
+        +ResponderCfesAsync(sobre, rechazos) RespuestaCfes
+        +GenerarNotificacionAnulacionAsync(cfes) NotificacionAnulacion
+        +EnviarIntercambioAsync(url, operacion, xml) RespuestaIntercambio
     }
 
     class IUruFacturaStore {
@@ -196,6 +224,8 @@ classDiagram
         +ConsultarEnvioAsync(id, token) EstadoEnvio
         +ConsultarCfeAsync(tipo, serie, nro) EstadoComprobante
         +EnviarReporteAsync(xml) AcuseReporte
+        +ConsultarEmisoresAsync(rut) EmisorElectronico
+        +EnviarIntercambioAsync(url, operacion, xml) RespuestaIntercambio
     }
 
     class CfePdf {

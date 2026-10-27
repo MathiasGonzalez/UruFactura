@@ -65,11 +65,81 @@ internal sealed class Validacion
             Error(campo, "Debe estar entre 0,001 y 9999,999.");
     }
 
-    /// <summary>Código de país (<c>CodPaisType</c>): uno de los códigos ISO 3166-1 alfa-2 que admite la DGI.</summary>
-    internal void CodigoPais(string campo, string? valor)
+    /// <summary>
+    /// Código de país (<c>CodPaisType</c>): uno de los códigos ISO 3166-1 alfa-2 que admite la DGI, o "99" (país que
+    /// no está en la tabla) si <paramref name="admiteSinTabla"/>.
+    /// </summary>
+    internal void CodigoPais(string campo, string? valor, bool admiteSinTabla = false)
     {
-        if (valor is null || !CodigosPais.Contains(valor))
-            Error(campo, "Debe ser un código de país ISO 3166-1 de 2 letras admitido por la DGI (ej: \"UY\", \"US\").");
+        if (valor is null || !CodigosPais.Contains(valor) && !(admiteSinTabla && valor == "99"))
+            Error(campo, admiteSinTabla
+                ? "Debe ser un código de país ISO 3166-1 de 2 letras admitido por la DGI (ej: \"US\"), o \"99\" si el país no está en la tabla."
+                : "Debe ser un código de país ISO 3166-1 de 2 letras admitido por la DGI (ej: \"UY\", \"US\").");
+    }
+
+    /// <summary>País de un documento: el indicado, en mayúsculas, o "UY" si se omite.</summary>
+    internal static string PaisDocumento(string? codigoPais) =>
+        string.IsNullOrWhiteSpace(codigoPais) ? "UY" : codigoPais.Trim().ToUpperInvariant();
+
+    /// <summary>Documentos uruguayos (NIE, RUT y C.I.): van en <c>DocRecep</c> (no en <c>DocRecepExt</c>) y son del país UY.</summary>
+    internal static bool EsDocumentoUruguayo(TipoDocumentoReceptor tipo) =>
+        tipo is TipoDocumentoReceptor.Nie or TipoDocumentoReceptor.Rut or TipoDocumentoReceptor.CedulaIdentidad;
+
+    /// <summary>
+    /// Documento de identificación del receptor, del mandante o del propietario de la mercadería (A-C60 a A-C62.1,
+    /// K-C2 a K-C4): los uruguayos son del país UY, de hasta 12 caracteres y, el RUT y la C.I., con su dígito
+    /// verificador (el del NIE lo controla la DGI: el algoritmo no está publicado); el DNI es de AR, BR, CL o PY; el
+    /// resto, de cualquier país de la tabla (o "99") y de hasta 20 caracteres.
+    /// </summary>
+    /// <param name="prefijo">Ruta del objeto (<c>Receptor</c>, <c>Mandante</c>, <c>Propietario</c>).</param>
+    internal void Documento(string prefijo, TipoDocumentoReceptor tipo, string? codigoPais, string? documento)
+    {
+        if (!Enum.IsDefined(tipo))
+        {
+            Error($"{prefijo}.TipoDocumento", "No es válido.");
+            return;
+        }
+
+        var pais = PaisDocumento(codigoPais);
+        var campo = $"{prefijo}.Documento";
+        if (EsDocumentoUruguayo(tipo))
+        {
+            if (pais != "UY")
+                Error($"{prefijo}.CodigoPais", "Los documentos uruguayos (NIE, RUT y C.I.) son del país \"UY\".");
+            if (string.IsNullOrWhiteSpace(documento))
+                Error(campo, "Es obligatorio.");
+            else if (tipo == TipoDocumentoReceptor.Rut && !UruFactura.Rut.EsValido(documento))
+                Error(campo, "El RUT debe tener 12 dígitos y un dígito verificador válido.");
+            else if (tipo == TipoDocumentoReceptor.CedulaIdentidad && !Ci.EsValida(documento))
+                Error(campo, "La C.I. debe tener de 6 a 8 dígitos, sin puntos ni guión, y un dígito verificador válido.");
+            else if (tipo == TipoDocumentoReceptor.Nie && !(documento.Length <= 12 && documento.All(char.IsAsciiDigit)))
+                Error(campo, "El NIE debe tener hasta 12 dígitos, sin puntos ni guión.");
+            return;
+        }
+
+        if (tipo == TipoDocumentoReceptor.Dni)
+        {
+            if (pais is not ("AR" or "BR" or "CL" or "PY"))
+                Error($"{prefijo}.CodigoPais", "El DNI es de Argentina, Brasil, Chile o Paraguay (\"AR\", \"BR\", \"CL\" o \"PY\").");
+        }
+        else
+            CodigoPais($"{prefijo}.CodigoPais", pais, admiteSinTabla: true);
+        Texto(campo, documento, 20, obligatorio: true);
+    }
+
+    /// <summary>
+    /// Código GTIN (<c>GTIN8</c>, <c>GTIN12</c>, <c>GTIN13</c> o <c>GTIN14</c>): los dígitos de su largo y el dígito
+    /// verificador del estándar GS1 (módulo 10, ponderando 3 y 1 desde la derecha).
+    /// </summary>
+    internal static bool EsGtin(string tipo, string codigo)
+    {
+        var largo = tipo switch { "GTIN8" => 8, "GTIN12" => 12, "GTIN13" => 13, "GTIN14" => 14, _ => 0 };
+        if (codigo.Length != largo || !codigo.All(char.IsAsciiDigit))
+            return false;
+        var suma = 0;
+        for (var i = largo - 2; i >= 0; i--)
+            suma += (codigo[i] - '0') * ((largo - 2 - i) % 2 == 0 ? 3 : 1);
+        return (10 - suma % 10) % 10 == codigo[^1] - '0';
     }
 
     /// <summary>Serie (<c>SerieType</c>): una letra, dos letras o un dígito 1-9 y una letra ("A", "AB", "1A").</summary>

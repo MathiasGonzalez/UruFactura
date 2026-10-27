@@ -74,10 +74,43 @@ un reinicio, cuando ya no se tiene el acuse del sobre.
 ## Reintentos
 
 - **Sobre rechazado (`BS`/`BA`)**: la DGI no procesó los CFE; se reenvía el mismo `CfeEmitido`.
-- **Comprobante rechazado (`BE`)**: no se reenvía; se corrige y se emite uno nuevo (con otro número).
+- **Comprobante rechazado (`BE`)**: no se reenvía; se corrige y se emite uno nuevo (con otro número). El
+  rechazado queda anulado (`cfe.AnuladoPorRechazo`): el reporte diario lo informa así y, si ya se había enviado al
+  receptor electrónico, se le comunica con `GenerarNotificacionAnulacionAsync`. No se anula el rechazado por `E02`
+  (ya existe en los registros de la DGI: era un reenvío) ni por `E09` (no corresponde al CAE).
 - **Error de comunicación al enviar** (timeout, red): no se sabe si la DGI recibió el sobre. Consultá el
   comprobante con `ConsultarCfeAsync` y reenviálo solo si la DGI no lo tiene; un reenvío de algo ya
   recibido la DGI lo trata como duplicado.
 - `EnviarAsync` no reenvía un CFE que ya fue recibido o tiene resultado (`InvalidOperationException`).
 - **Reporte diario**: el primer envío de una fecha usa `secEnvio` 1; para corregir uno ya recibido se
   reenvía completo con la secuencia anterior + 1.
+
+---
+
+## Motivos de rechazo en el intercambio entre emisores
+
+El receptor electrónico usa los mismos mensajes (`ACKSobre` y `ACKCFE`) y estos motivos (formato del mensaje de
+respuesta v19). `RecibirSobreAsync` aplica los controles automáticos y `ResponderCfesAsync` agrega los comerciales.
+
+| Código | Motivo | Control en `RecibirSobreAsync` |
+|--------|--------|--------------------------------|
+| `S01` | Formato del archivo no es el indicado | No es un `EnvioCFE_entreEmpresas` |
+| `S02` | No coincide RUC de Sobre, Certificado, envío o CFE | El sobre o un CFE no es para este RUT, o un CFE es de otro emisor |
+| `S03` | Certificado electrónico no es válido | El certificado de la carátula no se lee o no estaba vigente en la fecha del sobre |
+| `S04` | No cumple validaciones según Formato de sobre | Versión, fecha o cantidad de CFE inválidas |
+| `S05` | No coinciden cantidad CFE de carátula y contenido | `CantCFE` distinta de los CFE del sobre |
+| `S06` | No coinciden certificado de sobre y comprobantes | Un CFE firmado con otro certificado |
+| `S07` | Sobre enviado supera el tamaño máximo admitido | Más de 2 MB |
+| `S20` | Sobre enviado ya existe en los registros del receptor | Lo detecta la aplicación (RUT emisor e `IdEmisor` ya recibidos) |
+| `E02` | Tipo y Nº de CFE ya existe en los registros | Repetido en el sobre (los ya recibidos antes, la aplicación) |
+| `E03` | Tipo y Nº de CFE no se corresponden con el CAE | Número fuera del rango del CAE |
+| `E04` | Firma electrónica no es válida | Firma del CFE |
+| `E05` | No cumple validaciones de Formato comprobantes | Faltan tipo, serie, número o fechas |
+| `E07` | Fecha Firma de CFE no se corresponde con fecha CAE | Firmado después del vencimiento del CAE |
+| `E06`, `E10`-`E12` | (ver formato) | — (los puede indicar la aplicación) |
+| `E20`-`E26` | Orden de compra vencida, mercadería en mal estado, proveedor inhabilitado, contraprestación no recibida, diferencia de precios, error de cálculos, diferencia de plazos | Comerciales: `MotivoRechazo.OrdenDeCompraVencida()`… |
+| `E27`-`E60` | A definir entre las partes | `new MotivoRechazo("E30", "…")` |
+
+La respuesta del servicio web de intercambio del otro emisor (`EnviarIntercambioAsync`) es un código: `1000`,
+`2000`, `3000` o `4000` recibido (sobre, acuse, respuesta o anulación), `x001` rechazado y `x002` error al recibir
+(reintentar más tarde).

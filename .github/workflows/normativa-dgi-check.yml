@@ -32,10 +32,10 @@ jobs:
       - name: Obtener versión CFE implementada
         id: version
         run: |
-          # Primer WriteAttributeString("version", "X.Y") del XML builder.
-          VERSION=$(grep -m1 -oP 'WriteAttributeString\("version",\s*"\K[^"]+' \
-            src/UruFactura/Xml/CfeXmlBuilder.cs || true)
-          echo "cfe_version=${VERSION:-desconocida}" >> "$GITHUB_OUTPUT"
+          # Formato CFE (documento de la DGI) que declara el runbook y paquete de XSD con que se validan los tests.
+          FORMATO=$(grep -m1 -oP 'documento de formato \*\*\Kv[0-9.]+' docs/NORMATIVA_DGI_UPDATE.md || true)
+          XSD=$(grep -m1 -oP 'version:\s*\K[0-9.]+' tests/UruFactura.Tests/Schemas/dgi/version.txt || true)
+          echo "cfe_version=formato ${FORMATO:-desconocido}, XSD ${XSD:-desconocido}" >> "$GITHUB_OUTPUT"
 
       - name: Crear issue de recordatorio
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0

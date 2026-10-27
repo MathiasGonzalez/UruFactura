@@ -163,7 +163,38 @@ var estado = await client.ConsultarEnvioAsync(acuse);   // o client.ConsultarCfe
 Console.WriteLine(eticket.AceptadoPorDgi ? "✅ Aceptado (AE)" : $"❌ {eticket.EstadoDgi}: {eticket.MensajeDgi}");
 ```
 
-4. **Notificar a DGI** que finalizaste las pruebas de homologación mediante el portal DGI en línea o vía el representante técnico asignado.
+4. **Prueba de envío de CFE con adenda.** La adenda (`Cfe.Adenda`) no se envía a la DGI: viaja en el sobre al
+   receptor electrónico (`EnvioCFE_entreEmpresas`), fuera de la firma, y se imprime en la representación impresa.
+
+```csharp
+var factura = await client.EmitirAsync(new Cfe(TipoCfe.EFactura)
+{
+    Receptor = new Receptor { Documento = "214844360018", RazonSocial = "Cliente S.A." },
+    Detalle  = [new LineaDetalle { NombreItem = "Servicio de prueba", Cantidad = 1, PrecioUnitario = 100m }],
+    Adenda   = "Orden de compra: OC-123",
+});
+await client.EnviarAsync(factura);                                    // primero a la DGI
+var sobre = await client.GenerarSobreReceptorAsync([factura]);        // luego al receptor, con la adenda
+await File.WriteAllTextAsync(sobre.NombreArchivo, sobre.Xml);         // Sob_RUC_AAAAMMDD_Id.xml
+```
+
+5. **Pruebas de intercambio de información.** Todo emisor electrónico es también receptor: tiene que poder
+   recibir sobres de otros emisores, responderlos y leer sus respuestas. Como mínimo por correo (archivos
+   adjuntos con el nombre que indica la DGI); los proveedores habilitados, por el servicio web de intercambio.
+
+```csharp
+// Recibir un sobre de un proveedor: controles del sobre (S01-S07) y de cada CFE (firma, CAE, formato)
+var recibido = await client.RecibirSobreAsync(xmlSobre, nombreAdjunto);
+// recibido.XmlAcuse (ACKSobre firmado) se devuelve con el nombre recibido.NombreArchivoAcuse (M_…)
+var respuesta = await client.ResponderCfesAsync(recibido);       // ACKCFE firmado (ME_…), AE/BE por CFE
+
+// Del lado emisor: leer el acuse y la respuesta del receptor, y comunicar los CFE anulados por la DGI
+var acuseReceptor = client.LeerAcuseReceptor(xmlAckSobre);
+var estado = client.LeerRespuestaReceptor(xmlAckCfe);
+var aviso = await client.GenerarNotificacionAnulacionAsync([cfeRechazadoPorLaDgi]);   // Rech_RUC_Id.xml
+```
+
+6. **Notificar a DGI** que finalizaste las pruebas de homologación mediante el portal DGI en línea o vía el representante técnico asignado.
 
 > 📖 Instructivo oficial de homologación (accesible desde el portal de DGI en línea → Gestión CFE → Homologación).
 
@@ -182,6 +213,9 @@ Ambiente = Ambiente.Produccion
 En Producción UruFactura **no** usa URL por defecto: configurá `UrlEnvio` y `UrlConsultas` con las URL de los servicios `ws_efactura` y `ws_consultas` que entrega la DGI al habilitar el ambiente.
 
 2. Verificar que el certificado digital **de producción** esté configurado (puede ser el mismo que el de homologación si es un certificado real de empresa).
+   Configurar también `UnidadIndexada` (la UI al 31/12 de cada año, obligatoria en Producción): la del año
+   anterior a cada comprobante fija el tope de 5.000 UI de los e-Tickets. Si falta el año que se necesita, la
+   emisión falla en lugar de aplicar un tope viejo.
 
 3. Solicitar un CAE de producción para cada tipo de CFE que se vaya a emitir.
 
@@ -208,6 +242,7 @@ var config = new UruFacturaConfig
     UrlConsultas        = "https://…/ws_consultas",   // las entrega la DGI
     RutaCertificado     = "/ruta/certificado.p12",
     PasswordCertificado = Environment.GetEnvironmentVariable("CERT_PASSWORD"),
+    UnidadIndexada      = new Dictionary<int, decimal> { [2025] = 6.3m },   // UI al 31/12 de cada año (una por año)
 };
 
 using var client = new UruFacturaClient(config, store: miStoreDurable);
@@ -229,7 +264,8 @@ var eticket = await client.EmitirAsync(new Cfe(TipoCfe.ETicket)
     Detalle = [new LineaDetalle { NombreItem = "Servicio de consultoría", Cantidad = 1, PrecioUnitario = 5000m }],
 });
 
-// 4. Enviar: acuse del sobre (AS / BS)
+// 4. Enviar: acuse del sobre (AS / BS). Los e-Tickets de hasta 5.000 UI no es obligatorio enviarlos uno a uno
+//    (se informan en el reporte diario); este, de 5.000 pesos netos, sí se envía si supera el tope.
 var acuse = await client.EnviarAsync(eticket);
 if (!acuse.Recibido)
     throw new Exception($"DGI rechazó el sobre: {acuse.Mensaje}");
@@ -249,7 +285,10 @@ await File.WriteAllBytesAsync("eticket_001.pdf", CfePdf.GenerarA4(eticket));
 
 | Obligación | Detalle |
 |---|---|
-| **Reporte Diario** | Enviar a DGI el reporte con todos los CFE del día, incluso si fue un solo comprobante. |
+| **Reporte Diario** | Enviar a DGI el reporte con todos los CFE firmados en el día (también los anulados por rechazo), con los montos en pesos. Si después la DGI rechaza un CFE, reenviarlo corregido con `secEnvio` + 1. |
+| **Envío al receptor electrónico** | Enviar las e-Facturas, e-Remitos y e-Resguardos a los clientes que son emisores electrónicos (`ConsultarEmisorElectronicoAsync`), después de enviarlos a la DGI, y comunicarles los que la DGI rechace. La e-Boleta de entrada no se envía al vendedor. |
+| **Respuesta a proveedores** | Acusar recibo de los sobres recibidos (`ACKSobre`) y responder cada comprobante (`ACKCFE`). |
+| **Unidad Indexada** | Agregar a `UnidadIndexada`, antes del 1° de enero, la UI al 31/12 del año que termina. |
 | **Resguardo de XML** | Conservar los XML firmados por el plazo legal (mínimo 5 años). |
 | **Renovar CAE** | Solicitar nuevo CAE antes del vencimiento o agotamiento del rango. |
 | **Renovar certificado** | Los certificados digitales vencen (generalmente cada 1-3 años). |

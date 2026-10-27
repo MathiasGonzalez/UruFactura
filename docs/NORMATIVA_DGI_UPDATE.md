@@ -9,6 +9,7 @@ Guía estructurada para que agentes (Copilot, CI, desarrolladores) evalúen si h
 | Fuente | Qué buscar |
 |--------|-----------|
 | [DGI — Factura Electrónica](https://www.dgi.gub.uy/wdgi/page?2,factura-electronica,index,O,es,0,) | Nueva versión del formato CFE, XSDs, instructivos técnicos |
+| [e-Factura — Documentos de interés](https://www.efactura.dgi.gub.uy/principal/ampliacion_de_contenido/documentos-de-interes?es) | Versiones vigentes (Publicado/Sustituido) del formato CFE, XSD, reporte, mensajes de respuesta, sobre, WSDL e intercambio |
 | [Resoluciones DGI](https://www.dgi.gub.uy/wdgi/page?2,principal,ampliacion-normativa-resoluciones) | Cambios en obligados, plazos, nuevos tipos de CFE |
 | [gosocket.net — Centro de recursos](https://gosocket.net/centro-de-recursos/) | Resúmenes y análisis de cambios técnicos DGI |
 | [datalogic.com.uy](https://datalogic.com.uy/) | Análisis de cambios de formato CFE |
@@ -29,6 +30,7 @@ Al ejecutar este runbook, el agente debe responder cada punto y actuar si es nec
 ### 2.1 Versión del formato CFE
 
 - [ ] ¿La DGI publicó una nueva versión del esquema CFE? (actualmente implementada: documento de formato **v25.2**, paquete XSD **1.44.2**; el atributo `version` del XML es `1.0`)
+- [ ] ¿Cambió alguno de los otros formatos? Implementados: formato del reporte **v13.2**, formato de los mensajes de respuesta **v19** (motivos S01-S20, E01-E60), formato del sobre **v05** (2 MB, 250 CFE) y estándar de intercambio por servicios web **v1.3**.
   - Si sí: actualizar `version="xx.xx"` en `src/UruFactura/Xml/CfeXml.cs` (línea con `WriteAttributeString("version", ...)`)
   - Actualizar el comentario del `summary` de la clase `CfeXml`
 
@@ -58,6 +60,11 @@ Para cada cambio de campo en el nuevo formato, evaluar:
 | Nuevo campo obligatorio de config | `src/UruFactura/UruFacturaConfig.cs` (método `Validar`) |
 | Cambio en el reporte diario | `src/UruFactura/Xml/ReporteDiario.cs` |
 | Cambio en la representación impresa | `src/UruFactura.Pdf/CfePdf.cs` y `CfeEmitido.UrlQr` (QR) |
+| Nuevo indicador de facturación | `src/UruFactura/Enums/IndicadorFacturacion.cs`, `Cfe.CalcularTotales`/`IndicadorInformado`/`IndicadorEscrito`/`IndicadorAdmitido`/`Validar`, `Totales` y los totales de `CfeXml` y `ReporteDiario` |
+| Nueva moneda | La tabla de `TipMonType` en `src/UruFactura/Enums/Moneda.cs` |
+| Nuevo tipo de CAE especial | `src/UruFactura/Enums/CaeEspecial.cs`, `Cae.Validar`, `Cfe.ValidarConCae` y `CfePdf.LeyendaEmisor` |
+| Cambio en el sobre, los acuses o el intercambio | `src/UruFactura/Xml/CfeSobre.cs` y `src/UruFactura/Xml/Intercambio.cs` (motivos de rechazo, controles del receptor, `ACKSobre`, `ACKCFE`, anulación) |
+| Nuevo servicio o consulta de la DGI | `src/UruFactura/Soap/DgiSoapClient.cs`, `DgiRespuestaParser.cs` e `IDgiClient` |
 
 ### 2.3 Nuevos tipos de CFE
 
@@ -105,13 +112,15 @@ Cuando se detecta un cambio que requiere actualización:
 
 Los tests validan el XML generado contra los XSD oficiales (`tests/UruFactura.Tests/Schemas/dgi`). Al publicarse una versión nueva:
 
-1. Descargá el paquete `xsds_fe_<versión>` y los WSDL (`…/ePrueba/ws_eprueba?wsdl`, `…/ws_consultasPrueba?wsdl`) desde [Documentos de interés](https://www.efactura.dgi.gub.uy/principal/ampliacion_de_contenido/documentos-de-interes?es).
-2. Reemplazá los archivos de esa carpeta y corré `dotnet test`: las diferencias aparecen como errores de validación.
+1. Descargá el paquete `xsds_fe_<versión>` y los WSDL (`…/ePrueba/ws_eprueba?wsdl`, `…/ws_consultasPrueba?wsdl` y el de intercambio, `wsdl_aws_efactura_intercambio.xml`) desde [Documentos de interés](https://www.efactura.dgi.gub.uy/principal/ampliacion_de_contenido/documentos-de-interes?es).
+2. Reemplazá los archivos de esa carpeta y corré `dotnet test`: las diferencias aparecen como errores de validación. Además de los del envío a la DGI (`EnvioCFE`, `ReporteDiarioCFE`, `ACK*`), los tests usan los del intercambio: `EnvioCFE_entreEmpresas.xsd` (con `CFE_Empresas_Type.xsd`), `ACKCFE_Partes.xsd` y `CFEs_Anulados_x_RechazoDGI.xsd` (estos dos se validan por separado: redefinen tipos de los otros).
 
 ## 4. Registro de actualizaciones de normativa
 
 | Fecha | Versión CFE | Cambios implementados |
 |-------|-------------|----------------------|
+| 2026-10-26 | v25.2 / XSD 1.44.2 | Cobertura completa del formato: e-Boleta de entrada (151-153, 251-253: indicadores 13, 14, 15 y 17, `MntBruto` 2, compra de moneda extranjera `IndCompraMEReventa`, complemento fiscal, zonas `Rsmn_Bol*` del reporte); indicadores 8 (rebaja de e-Remito, resta en el de exportación) y 9 (anulación de e-Resguardo, resta por código); retenciones y percepciones en e-Tickets, e-Facturas y e-Boletas (`IndAgenteResp`, `MntTotRetenido`, `MntTotCredFisc`, `MntPagar` A-C130, `TotMntRetenido` en el reporte); `MntBruto` 1 (IVA incluido, A-C116/A-C117); `SecProf`, `IndPagCta3ros` (grupo propio en el reporte, B-C11.1), `IndCobPropia`, `PeriodoDesde`/`PeriodoHasta`, `FchValor`; bienes de terceros (`IndPropiedad` y propietario, A-C6.1 a A-C6.6); `SubTotInfo`; `RecargoPct`, `SubDescuento`/`SubRecargo`, `NCM`; cantidad negativa; `ModVenta` 80/90 en e-Tickets y e-Facturas y la validación por tipo (A-C14); vía de transporte 8; monedas de `TipMonType`; NIE y país de cada documento (A-C61, K-C3), C.I. con dígito verificador, país "99"; receptor obligatorio según el tipo (A-C60 a A-C66.1) y por retenciones en el e-Ticket; precio mayor a cero (B-C11); códigos de retención numéricos (B-C20); GTIN (B-C3); fecha hasta +60 días (A-C5, F-C7); hasta 200 líneas fuera del e-Ticket; UI por año (`UnidadIndexada`); sin `MntBruto` 3 en cuenta ajena (K-C1). Pendientes: el dígito verificador del NIE (el algoritmo no está publicado) y el redondeo de `MntBruto` 1 se confirman en homologación |
+| 2026-10-25 | v25.2 / XSD 1.44.2 | Reporte diario según el formato v13.2 (CFE por fecha de firma, montos en pesos agrupados por fecha de comprobante, anulados por rechazo de la DGI salvo E02/E09, `CantDocsEmi`, `CantDocsAnulados`, `CantDocsMay_topeUI`); referencias v25 (tipo de cambio obligatorio si no es en pesos, sin repetidas, sin monto en el e-Remito, referencia global, fecha opcional); todos los indicadores de facturación de e-Ticket/e-Factura/exportación (4, 5, 6, 7, 10, 11, 12, 16) con `MontoNF`/`MntPagar` y el QR por `MntPagar`; CAE especiales (`CAEEspecial`, `CausalCAEEsp`, `MntBruto` 3); `IVAalDia`; créditos fiscales del e-Resguardo (`MntTotCredFisc`); descuentos globales en porcentaje; sobre de hasta 2 MB con el certificado de los CFE; adenda; intercambio entre emisores (sobre `EnvioCFE_entreEmpresas`, controles y acuses del receptor `ACKSobre`/`ACKCFE`, anulación, servicio web de intercambio) y consulta del padrón de emisores; representación impresa con forma de pago, "CONSUMO FINAL"/"RUC COMPRADOR", leyendas de CAE especial, constancia de IVA al día, recuadro del vencimiento y adenda; `ValorUnidadIndexada` obligatorio en Producción |
 | 2026-10-13 | XSD 1.44.2 | Soporte de e-Resguardo (retenciones), venta por cuenta ajena, contingencia, descuentos/recargos globales en monto, medios de pago, datos adicionales; QR y pie de la representación impresa según el formato; validación del RUT (dígito verificador), tope de 5.000 UI para e-Tickets y límites de longitud del XSD; carga de CAE desde el repositorio |
 | 2026-10-12 | XSD 1.44.2 | Alineación con los XSD y WSDL oficiales de la DGI: `version="1.0"`, estructura `eTck`/`eFact`/..., `CAEData`, `TmstFirma`, sobre `EnvioCFE`, SOAP `Datain/xmlData` con WS-Security, reporte diario agregado; corrección de códigos de tipo (182 = e-Resguardo, 124 = e-Remito de exportación) |
 | 2026-06-08 | v25.2 | Versión XML 25.01→25.2 tras revisión normativa DGI de junio 2026 |

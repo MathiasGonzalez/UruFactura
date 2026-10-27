@@ -55,6 +55,13 @@ public sealed class CfeEmitido
     /// <summary>Fecha de emisión.</summary>
     public DateOnly FechaEmision => Documento.FechaEmision!.Value;
 
+    /// <summary>
+    /// Fecha del reporte diario que informa el CFE: la de Uruguay de su firma (<c>TmstFirma</c>), que puede
+    /// diferir de <see cref="FechaEmision"/>. Es la fecha por la que un almacenamiento devuelve los CFE en
+    /// <see cref="IUruFacturaStore.ListarCfesAsync"/>.
+    /// </summary>
+    public DateOnly FechaReporte => DateOnly.FromDateTime(FechaFirma.ToOffset(HoraUruguay.Offset).DateTime);
+
     /// <summary>Emisor informado en el comprobante.</summary>
     public Emisor Emisor => Documento.Emisor!;
 
@@ -86,12 +93,16 @@ public sealed class CfeEmitido
         FechaFirma.ToOffset(HoraUruguay.Offset).ToString("dd/MM/yyyy", CultureInfo.InvariantCulture),
         Uri.EscapeDataString(CodigoSeguridad));
 
-    /// <summary>Monto del QR: e-Remito 0, e-Resguardo el total retenido, el resto el total.</summary>
+    /// <summary>
+    /// Monto del QR: e-Remito 0, e-Resguardo el total retenido (<c>MntTotRetenido</c>), e-Remito de
+    /// exportación el total (<c>MntTotal</c>) y el resto el total a pagar (<c>MntPagar</c>).
+    /// </summary>
     private decimal MontoQr => Tipo.Familia() switch
     {
         FamiliaCfe.Remito => 0m,
         FamiliaCfe.Resguardo => Totales.MontoRetenido,
-        _ => Totales.MontoTotal,
+        FamiliaCfe.RemitoExportacion => Totales.MontoTotal,
+        _ => Totales.MontoPagar,
     };
 
     internal const string UrlConsultaQr = "https://www.efactura.dgi.gub.uy/consultaQR/cfe";
@@ -123,6 +134,29 @@ public sealed class CfeEmitido
     /// <summary>Indica si ya se envió en un sobre recibido por la DGI.</summary>
     public bool Enviado => !string.IsNullOrEmpty(IdReceptorDgi);
 
+    /// <summary>
+    /// Indica si la DGI lo rechazó y por lo tanto su número quedó anulado: así lo informa el reporte diario y
+    /// se debe comunicar al receptor electrónico. No se anula el rechazado por E02 (ya existe en los registros
+    /// de la DGI: un reenvío de un CFE recibido) ni por E09 (no corresponde al CAE).
+    /// </summary>
+    public bool AnuladoPorRechazo => SituacionEnReporte == SituacionReporte.Anulado;
+
+    /// <summary>Cómo lo informa el reporte diario según su estado ante la DGI.</summary>
+    internal SituacionReporte SituacionEnReporte => EstadoDgi switch
+    {
+        // E09: el CFE no corresponde al CAE, así que su número no es uno utilizado de ese CAE.
+        EstadoCfe.Rechazado when TieneMotivo("E09") => SituacionReporte.Excluido,
+        EstadoCfe.Rechazado when TieneMotivo("E02") => SituacionReporte.Emitido,
+        EstadoCfe.Rechazado => SituacionReporte.Anulado,
+        EstadoCfe.Observado => SituacionReporte.Observado,
+        _ => SituacionReporte.Emitido,
+    };
+
+    /// <summary>Si alguno de los motivos del último estado (<c>"E02 glosa; E05 glosa"</c>) tiene el código indicado.</summary>
+    private bool TieneMotivo(string codigo) =>
+        (MensajeDgi ?? "").Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Any(m => m == codigo || m.StartsWith(codigo + " ", StringComparison.Ordinal));
+
     /// <summary>Registra el acuse del sobre en que se envió.</summary>
     internal void RegistrarEnvio(AcuseSobre acuse)
     {
@@ -145,4 +179,20 @@ public sealed class CfeEmitido
 
     /// <inheritdoc />
     public override string ToString() => $"{Tipo} {Serie}-{Numero}";
+}
+
+/// <summary>Cómo informa el reporte diario un CFE según su estado ante la DGI.</summary>
+internal enum SituacionReporte
+{
+    /// <summary>Emitido (sin resultado, aceptado, reliquidado o rechazado por E02): suma montos.</summary>
+    Emitido,
+
+    /// <summary>Rechazado por la DGI: su número se informa como utilizado y anulado, sin montos.</summary>
+    Anulado,
+
+    /// <summary>CFC observado por la DGI: no se informa hasta que se corrija.</summary>
+    Observado,
+
+    /// <summary>Rechazado por E09 (no corresponde al CAE): no se informa.</summary>
+    Excluido,
 }

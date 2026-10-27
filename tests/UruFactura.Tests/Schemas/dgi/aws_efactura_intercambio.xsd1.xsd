@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<schema xmlns="http://www.w3.org/2001/XMLSchema" xmlns:SOAP-ENC="http://schemas.xmlsoap.org/soap/encoding/" xmlns:wsdlns="http://dgi.gub.uy" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:tns="http://dgi.gub.uy" targetNamespace="http://dgi.gub.uy" elementFormDefault="qualified">
+			
+<complexType name="Data">
+				
+<all>
+					
+<element name="xmlData" type="xsd:string">
+					</element>
+				</all>
+			</complexType>
+			
+<element name="WS_eFactura_Intercambio.SOBRE">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Datain" type="tns:Data"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Intercambio.SOBREResponse">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Dataout" type="tns:Data"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Intercambio.RESPUESTASOBRE">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Datain" type="tns:Data"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Intercambio.RESPUESTASOBREResponse">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Dataout" type="tns:Data"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Intercambio.RESPUESTACFES">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Datain" type="tns:Data"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Intercambio.RESPUESTACFESResponse">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Dataout" type="tns:Data"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Intercambio.NOTIFICACIONANULACIONCFE">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Datain" type="tns:Data"/>
+					</sequence>
+				</complexType>
+			</element>
+			
+<element name="WS_eFactura_Intercambio.NOTIFICACIONANULACIONCFEResponse">
+				
+<complexType>
+					
+<sequence>
+						
+<element minOccurs="1" maxOccurs="1" name="Dataout" type="tns:Data"/>
+					</sequence>
+				</complexType>
+			</element>
+		</schema>

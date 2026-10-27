@@ -5,7 +5,7 @@ description: Cómo generar representaciones impresas de CFEs en A4 y formato té
 
 import { Aside } from '@astrojs/starlight/components';
 
-El paquete **`UruFactura.Pdf`** genera la representación impresa de un `CfeEmitido` según la normativa de la DGI: datos del emisor y del receptor, detalle, totales, código QR y el pie con el código de seguridad, el CAE, el rango y el vencimiento.
+El paquete **`UruFactura.Pdf`** genera la representación impresa de un `CfeEmitido` según el formato de la DGI: la identificación del emisor (nombre, nombre comercial y domicilio fiscal) y del comprobante (RUC, tipo, serie y número, forma de pago), las leyendas de los CAE especiales y las del comprobante ("Bienes de Terceros", "Pagos por cuenta de terceros", "Cobranza", fecha valor), el recuadro "CONSUMO FINAL", "RUC COMPRADOR" o, en la e-Boleta de entrada, "RUC VENDEDOR" con los datos del receptor, el detalle (con el signo en los ítems a rebajar o anular y en los no facturables negativos, y el NCM en exportación), los totales con las retenciones y percepciones por código, los subtotales informativos, la adenda y el pie con el código QR, el código de seguridad, la fecha del emisor, la constancia de IVA al día, el CAE, el rango y el recuadro del vencimiento.
 
 ```bash
 dotnet add package UruFactura.Pdf
@@ -37,7 +37,7 @@ await File.WriteAllBytesAsync($"tickets/{emitido.Numero:D8}_80mm.pdf", ticket);
 
 Son métodos estáticos y puros: no necesitan el cliente ni configuración, así que se puede reimprimir un CFE recuperado del almacenamiento (por ejemplo, `entidad.ToCfeEmitido()` con EF Core). Si la DGI ya lo aceptó (`emitido.AceptadoPorDgi`), el A4 lo indica.
 
-Las leyendas opcionales del pie salen del emisor: `Emisor.FechaIncorporacion` ("Fecha emisor") y `Emisor.UrlVerificacion` (sitio de verificación de los e-Tickets; por defecto el de la DGI).
+Las leyendas del emisor salen de `Emisor`: `FechaIncorporacion` ("Fecha emisor"), `UrlVerificacion` (sitio de verificación de los e-Tickets; por defecto el de la DGI), `IvaAlDia` (la constancia de IVA al día, que no llevan los contribuyentes Monotributo) y `NormaExoneracion` (junto a "Contribuyente Exonerado" con un CAE exonerado). Con un CAE de IVA mínimo o Monotributo el PDF lleva la leyenda "Contribuyente IVA MINIMO", "MONOTRIBUTO" o "MONOTRIBUTO SOCIAL MIDES" y no menciona el IVA.
 
 El contenido se adapta al tipo de comprobante:
 

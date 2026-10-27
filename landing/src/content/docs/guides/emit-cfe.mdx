@@ -24,8 +24,8 @@ var eticket = await client.EmitirAsync(new Cfe(TipoCfe.ETicket)
 {
     Detalle =
     [
-        new LineaDetalle { NombreItem = "Servicio de consultoría", Cantidad = 2, PrecioUnitario = 3500m, IndFactIva = TipoIva.Basico }, // 22 %
-        new LineaDetalle { NombreItem = "Viáticos", Cantidad = 1, PrecioUnitario = 1000m, IndFactIva = TipoIva.Exento },
+        new LineaDetalle { NombreItem = "Servicio de consultoría", Cantidad = 2, PrecioUnitario = 3500m, IndFact = IndicadorFacturacion.TasaBasica }, // 22 %
+        new LineaDetalle { NombreItem = "Viáticos", Cantidad = 1, PrecioUnitario = 1000m, IndFact = IndicadorFacturacion.Exento },
     ],
 });
 ```
@@ -114,16 +114,32 @@ La regla es por tipo de comprobante (una nota de crédito puede llevar el mismo 
 
 ---
 
-## Tipos de IVA
+## Indicadores de facturación
 
-| Valor | Tasa | Uso común |
-|-------|------|-----------|
-| `TipoIva.Basico` | 22% | Servicios y bienes generales (default) |
-| `TipoIva.Minimo` | 10% | Alimentos de primera necesidad, medicamentos |
-| `TipoIva.Exento` | 0% | Bienes y servicios exonerados |
-| `TipoIva.Suspendido` | — | IVA en suspenso (se informa en `MntIVaenSusp`) |
+| Valor | Código | Uso común |
+|-------|--------|-----------|
+| `IndicadorFacturacion.TasaBasica` | 3 | 22 %: servicios y bienes generales (default) |
+| `IndicadorFacturacion.TasaMinima` | 2 | 10 %: alimentos de primera necesidad, medicamentos |
+| `IndicadorFacturacion.Exento` | 1 | Bienes y servicios exentos |
+| `IndicadorFacturacion.IvaEnSuspenso` | 12 | IVA en suspenso (se informa en `MntIVaenSusp`) |
+| `IndicadorFacturacion.OtraTasa` | 4 | Otra tasa o IVA sobre fictos (autos usados, oro): el IVA va en `Cfe.IvaOtraTasa` |
+| `IndicadorFacturacion.EntregaGratuita` | 5 | Ítem sin cargo (precio cero), p. ej. la docena de trece |
+| `IndicadorFacturacion.NoFacturable` / `NoFacturableNegativo` | 6 / 7 | Conceptos que no se facturan (suman o restan del total a pagar) |
+| `IndicadorFacturacion.ExportacionYAsimiladas` | 10 | Exportación y asimiladas (en los tipos de exportación, todas las líneas) |
+| `IndicadorFacturacion.ImpuestoPercibido` | 11 | Impuesto percibido |
+| `IndicadorFacturacion.IvaMinimoMonotributo` | 16 | Ventas de contribuyentes IVA mínimo o Monotributo (con su CAE especial), sin IVA |
+| `IndicadorFacturacion.RebajaRemito` | 8 | e-Remitos: ítem a rebajar de otro remito (con la referencia al remito) |
+| `IndicadorFacturacion.AnulacionResguardo` | 9 | e-Resguardo: ítem a anular de otro resguardo (con la referencia) |
+| `IndicadorFacturacion.VendedorNoContribuyente` / `VendedorIvaMinimo` / `VendedorImeba` | 13 / 14 / 15 | e-Boleta de entrada: quién vende (14 y 15 con RUT) |
+| `IndicadorFacturacion.CompraMonedaExtranjera` | 17 | e-Boleta de entrada: compra de moneda extranjera para reventa |
 
-Los precios son **sin IVA**: el SDK calcula el impuesto y los totales con la misma precisión que el XML.
+Los precios son **sin IVA**, salvo con `MontosBrutos = MontosBrutos.IvaIncluido`: el SDK calcula el impuesto y los
+totales con la misma precisión que el XML. Los descuentos y recargos globales se aplican a la base de un indicador,
+en monto o en `Porcentaje`. Los precios son mayores a cero, salvo en las entregas gratuitas.
+
+Las líneas de e-Tickets, e-Facturas y e-Boletas de entrada pueden documentar retenciones o percepciones (código
+numérico de la DGI) con su `AgenteResponsable`: suman al total a pagar (salvo los créditos fiscales, formulario
+2181) y en el e-Ticket obligan a identificar al receptor.
 
 ---
 
@@ -145,6 +161,8 @@ foreach (var cfe in acuse.Comprobantes)
 ```
 
 Tras un reinicio (cuando ya no tenés el acuse), `client.ConsultarCfeAsync(emitido)` consulta un comprobante suelto. Las consultas actualizan el estado en el almacenamiento.
+
+Se envían a la DGI las e-Facturas, e-Remitos, e-Resguardos, e-Boletas de entrada y sus notas, y los e-Tickets con monto neto mayor a 5.000 UI o con retenciones o percepciones; los demás e-Tickets se informan en el reporte diario (enviarlos igual es posible). Un sobre admite hasta 250 CFE y 2 MB. Un CFE que la DGI rechaza queda anulado (`emitido.AnuladoPorRechazo`): se emite otro y, si ya se le había enviado al receptor electrónico, se le comunica con `GenerarNotificacionAnulacionAsync` (ver [Flujos](../workflows/)).
 
 Un CFE que la DGI ya recibió o procesó no se reenvía: `EnviarAsync` lanza `InvalidOperationException`, porque la DGI lo trataría como duplicado (y el estado aceptado quedaría tapado por el rechazo del duplicado). Si el **sobre** fue rechazado (`BS`), sí se reenvía el mismo `CfeEmitido`.
 

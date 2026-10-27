@@ -33,11 +33,13 @@ public static class UruFacturaModelBuilderExtensions
             e.Property(c => c.Id).HasValueGenerator((_, _) => new GuidOrdenadoValueGenerator());
             // Respaldo en la base: un mismo número de CFE no puede registrarse dos veces.
             e.HasIndex(c => new { c.TipoCfe, c.Serie, c.Numero }).IsUnique();
-            e.HasIndex(c => c.FechaEmision);
+            e.HasIndex(c => c.FechaReporte);
             e.HasIndex(c => c.NroInterno);
             e.Property(c => c.Serie).HasMaxLength(2).IsRequired();
             e.Property(c => c.NroInterno).HasMaxLength(50);
             e.Property(c => c.ReceptorDocumento).HasMaxLength(20);
+            // La moneda se guarda como su código ISO 4217 ("UYU", "USD", ...).
+            e.Property(c => c.Moneda).HasConversion(m => m.Codigo, codigo => new Moneda(codigo)).HasMaxLength(3);
             e.Property(c => c.MontoTotal).HasPrecision(18, 2);
             e.Property(c => c.CodigoSeguridad).HasMaxLength(100).IsRequired();
             e.Property(c => c.Xml).IsRequired();

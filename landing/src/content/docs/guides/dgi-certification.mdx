@@ -128,7 +128,7 @@ var config = new UruFacturaConfig
 2. **Enviar el Reporte Diario de prueba**:
 
    ```csharp
-   // Resume los CFE emitidos en la fecha (de Uruguay, no la del servidor)
+   // Resume los CFE firmados en la fecha (de Uruguay, no la del servidor)
    var reporte = await client.EnviarReporteDiarioAsync(HoraUruguay.Hoy());
    ```
 
@@ -139,7 +139,29 @@ var config = new UruFacturaConfig
    Console.WriteLine($"Estado DGI: {eticket.EstadoDgi} {eticket.MensajeDgi}");
    ```
 
-4. **Notificar a DGI** la finalización de las pruebas vía portal DGI en línea.
+4. **Enviar un CFE con adenda.** La adenda no va a la DGI: viaja en el sobre al receptor electrónico, fuera de la firma.
+
+   ```csharp
+   var factura = await client.EmitirAsync(new Cfe(TipoCfe.EFactura)
+   {
+       Receptor = new Receptor { Documento = "214844360018", RazonSocial = "Cliente S.A.", Direccion = "Av. Italia 1234", Ciudad = "Montevideo" },
+       Detalle  = [new LineaDetalle { NombreItem = "Servicio de prueba", Cantidad = 1, PrecioUnitario = 100m }],
+       Adenda   = "Orden de compra: OC-123",
+   });
+   await client.EnviarAsync(factura);                                // primero a la DGI
+   var sobre = await client.GenerarSobreReceptorAsync([factura]);    // luego al receptor (sobre.NombreArchivo)
+   ```
+
+5. **Pruebas de intercambio**: recibir sobres de otros emisores, devolver sus acuses y leer los del receptor.
+
+   ```csharp
+   var recibido = await client.RecibirSobreAsync(xmlSobre, nombreAdjunto);   // ACKSobre en recibido.XmlAcuse
+   var respuesta = await client.ResponderCfesAsync(recibido);                // ACKCFE en respuesta.Xml
+   var acuseReceptor = client.LeerAcuseReceptor(xmlAckSobre);
+   var estado = client.LeerRespuestaReceptor(xmlAckCfe);
+   ```
+
+6. **Notificar a DGI** la finalización de las pruebas vía portal DGI en línea.
 
 </Steps>
 
@@ -157,6 +179,7 @@ var config = new UruFacturaConfig
     // En Producción no hay URL por defecto: usá las que entrega la DGI al habilitar el ambiente
     UrlEnvio     = "https://…/ws_efactura",
     UrlConsultas = "https://…/ws_consultas",
+    UnidadIndexada = new Dictionary<int, decimal> { [2025] = 6.3m },   // UI al 31/12 de cada año: obligatoria en Producción
 };
 ```
 
@@ -170,7 +193,10 @@ var config = new UruFacturaConfig
 
 | Obligación | Periodicidad |
 |-----------|-------------|
-| **Reporte Diario** | Diario (obligatorio aunque sea 1 CFE) |
+| **Reporte Diario** | Diario (obligatorio aunque sea 1 CFE); reenviarlo corregido si la DGI rechaza después un CFE del día |
+| **Envío al receptor electrónico** | Con cada e-Factura, e-Remito o e-Resguardo a un cliente emisor electrónico, después de enviarlo a la DGI (la e-Boleta de entrada no se envía al vendedor) |
+| **Respuesta a proveedores** | Con cada sobre recibido: acuse del sobre y respuesta a cada comprobante |
+| **Unidad Indexada** | Cada año, antes del 1° de enero, agregar a `UnidadIndexada` la UI al 31/12 del año que termina |
 | **Resguardo de XML** | Conservar 5+ años |
 | **Renovar CAE** | Antes del vencimiento o agotamiento |
 | **Renovar certificado** | Cada 1-3 años (según proveedor) |

@@ -41,13 +41,19 @@ internal static class TestData
         UltimoNroUsado = ultimo,
     };
 
-    internal static LineaDetalle Linea(decimal cantidad = 2, decimal precio = 100m, TipoIva iva = TipoIva.Basico) => new()
+    internal static LineaDetalle Linea(decimal cantidad = 2, decimal precio = 100m, IndicadorFacturacion iva = IndicadorFacturacion.TasaBasica) => new()
     {
         NombreItem = "Servicio de consultoría",
         UnidadMedida = "UN",
         Cantidad = cantidad,
         PrecioUnitario = precio,
-        IndFactIva = iva,
+        IndFact = iva,
+    };
+
+    /// <summary>Un receptor contribuyente, con RUT, nombre y domicilio (lo que exigen e-Factura, e-Remito y e-Boleta).</summary>
+    internal static Receptor ReceptorRut(string razonSocial = "Cliente S.A.") => new()
+    {
+        Documento = "214844360018", RazonSocial = razonSocial, Direccion = "Av. Italia 1234", Ciudad = "Montevideo",
     };
 
     /// <summary>Un CFE válido del tipo indicado (con receptor, datos de exportación, remito, mandante o referencias si aplica).</summary>
@@ -56,8 +62,8 @@ internal static class TestData
         var cfe = new Cfe(tipo) { FechaEmision = Dia, Detalle = [Linea()] };
         var familia = tipo.Familia();
 
-        if (familia == FamiliaCfe.Factura)
-            cfe = cfe with { Receptor = new Receptor { Documento = "214844360018", RazonSocial = "Cliente S.A." } };
+        if (familia is FamiliaCfe.Factura or FamiliaCfe.Remito)
+            cfe = cfe with { Receptor = ReceptorRut() };
 
         if (tipo.EsExportacion())
             cfe = cfe with
@@ -65,10 +71,11 @@ internal static class TestData
                 Receptor = new Receptor
                 {
                     Documento = "X1234567", TipoDocumento = TipoDocumentoReceptor.Pasaporte,
-                    RazonSocial = "Importer Inc.", CodigoPais = "US", Pais = "Estados Unidos",
+                    RazonSocial = "Importer Inc.", CodigoPais = "US", Direccion = "5th Avenue 100", Ciudad = "New York",
+                    Departamento = "NY", Pais = "Estados Unidos",
                 },
                 ClausulaVenta = familia == FamiliaCfe.RemitoExportacion ? null : "FOB",
-                ModalidadVenta = 1,
+                ModalidadVenta = tipo.EsNotaCorreccion() ? null : 1,
                 ViaTransporte = 1,
                 Moneda = Moneda.DolarAmericano,
                 TipoCambio = 40.5m,
@@ -87,11 +94,19 @@ internal static class TestData
                     {
                         Retenciones =
                         [
-                            new RetencionPercepcion { Codigo = "R1", Tasa = 12m, MontoSujeto = 1000m, Valor = 120m },
-                            new RetencionPercepcion { Codigo = "R2", MontoSujeto = 500m, Valor = 25m, InfoAdicional = "detalle" },
+                            new RetencionPercepcion { Codigo = "1146171", Tasa = 12m, MontoSujeto = 1000m, Valor = 120m },
+                            new RetencionPercepcion { Codigo = "2183212", MontoSujeto = 500m, Valor = 25m, InfoAdicional = "detalle" },
                         ],
                     },
                 ],
+            };
+
+        // e-Boleta de entrada: el receptor es el vendedor, un contribuyente IMEBA con RUT.
+        if (familia == FamiliaCfe.Boleta)
+            cfe = cfe with
+            {
+                Receptor = ReceptorRut("Productor Rural"),
+                Detalle = [Linea(iva: IndicadorFacturacion.VendedorImeba)],
             };
 
         if (tipo.EsCuentaAjena())
@@ -108,6 +123,7 @@ internal static class TestData
                         {
                             FamiliaCfe.Factura => TipoCfe.EFactura,
                             FamiliaCfe.FacturaExportacion => TipoCfe.EFacturaExportacion,
+                            FamiliaCfe.Boleta => TipoCfe.EBoleta,
                             _ => TipoCfe.ETicket,
                         },
                         Serie = "A",
@@ -144,6 +160,8 @@ internal static class TestData
             throw new CfeValidationException(errores);
 
         var reservado = (cae ?? Cae(cfe.Tipo)) with { UltimoNroUsado = numero };
+        if (documento.ValidarConCae(reservado) is { Count: > 0 } erroresCae)
+            throw new CfeValidationException(erroresCae);
         var totales = documento.CalcularTotales();
         var tmst = firma ?? new DateTimeOffset(2026, 6, 15, 12, 0, 0, HoraUruguay.Offset);
         var (xml, digest) = FirmaDigital.Firmar(CfeXml.Generar(documento, reservado, numero, totales, tmst), Certificado, AlgoritmoFirma.Sha256);
@@ -159,7 +177,8 @@ internal static class TestData
     {
         using var rsa = RSA.Create(2048);
         var request = new CertificateRequest("CN=UruFacturaTest", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-        using var cert = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(1));
+        // Vigente en la fecha de los tests (TestData.Dia) y hoy: el receptor de un sobre controla la vigencia en la fecha del sobre.
+        using var cert = request.CreateSelfSigned(new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero), DateTimeOffset.UtcNow.AddYears(1));
 
         // Exportar e importar para que HasPrivateKey sea true en todos los runtimes (macOS no admite EphemeralKeySet).
         return X509CertificateLoader.LoadPkcs12(
@@ -169,7 +188,12 @@ internal static class TestData
                 : X509KeyStorageFlags.EphemeralKeySet | X509KeyStorageFlags.Exportable);
     }
 
-    private static readonly Lazy<XmlSchemaSet> Schemas = new(() => CargarSchemas("EnvioCFE.xsd", "ReporteDiarioCFE.xsd", "ACKSobre.xsd", "ACKCFE_DGI.xsd", "ACKRepDiario.xsd"));
+    private static readonly Lazy<XmlSchemaSet> Schemas = new(() => CargarSchemas(
+        "EnvioCFE.xsd", "EnvioCFE_entreEmpresas.xsd", "ReporteDiarioCFE.xsd", "ACKSobre.xsd", "ACKCFE_DGI.xsd", "ACKRepDiario.xsd"));
+
+    // ACKCFE_Partes.xsd redefine ACKCFE (de ACKCFE_DGI.xsd) y comparte EstadoType con la anulación: cada uno va aparte.
+    private static readonly Lazy<XmlSchemaSet> SchemaRespuestaPartes = new(() => CargarSchemas("ACKCFE_Partes.xsd"));
+    private static readonly Lazy<XmlSchemaSet> SchemaAnulacion = new(() => CargarSchemas("CFEs_Anulados_x_RechazoDGI.xsd"));
 
     private static XmlSchemaSet CargarSchemas(params string[] archivos)
     {
@@ -189,14 +213,23 @@ internal static class TestData
         return set;
     }
 
-    /// <summary>Valida <paramref name="xml"/> contra los XSD oficiales de la DGI (v1.44.2). Devuelve los errores.</summary>
+    /// <summary>
+    /// Valida <paramref name="xml"/> contra los XSD oficiales de la DGI (v1.44.2), según su elemento raíz (el
+    /// <c>ACKCFE</c> que se valida es el de un receptor, <c>ACKCFE_Partes.xsd</c>). Devuelve los errores.
+    /// </summary>
     internal static List<string> ValidarContraXsd(string xml)
     {
+        var raiz = XDocumentRaiz(xml);
         var errores = new List<string>();
         var settings = new XmlReaderSettings
         {
             ValidationType = ValidationType.Schema,
-            Schemas = Schemas.Value,
+            Schemas = raiz switch
+            {
+                "ACKCFE" => SchemaRespuestaPartes.Value,
+                "CFEs_Anulados_x_RechazoDGI" => SchemaAnulacion.Value,
+                _ => Schemas.Value,
+            },
             DtdProcessing = DtdProcessing.Prohibit,
         };
         settings.ValidationEventHandler += (_, e) => errores.Add($"{e.Severity}: {e.Message}");
@@ -204,6 +237,13 @@ internal static class TestData
         using var reader = XmlReader.Create(new StringReader(xml), settings);
         while (reader.Read()) { }
         return errores;
+    }
+
+    private static string XDocumentRaiz(string xml)
+    {
+        using var reader = XmlReader.Create(new StringReader(xml), new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit });
+        reader.MoveToContent();
+        return reader.LocalName;
     }
 
     internal static void AssertValidoContraXsd(string xml)

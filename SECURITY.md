@@ -62,6 +62,8 @@ PasswordCertificado = "mi_password_en_texto_plano"
 - Los archivos XML firmados deben conservarse según el Código Tributario (mínimo 5 años). Asegurate de que el almacenamiento tenga controles de acceso adecuados.
 - Las respuestas de la DGI y los XML de terceros se cargan sin procesar DTD (sin entidades externas ni expansión de entidades).
 - `FirmaDigital.VerificarFirma(xml)` verifica la firma de un CFE recibido y devuelve el certificado con que se firmó. Una firma válida solo prueba que el documento no cambió desde que lo firmó el titular de ese certificado, que viene en el propio XML: comprobá que pertenece al emisor del CFE (su RUT) y, si corresponde, su cadena de confianza.
+- En el intercambio con otros emisores, `RecibirSobreAsync` carga el sobre sin DTD, verifica la firma de cada CFE (rechazo `E04`), controla que el sobre y sus CFE sean para el propio RUT y del emisor de la carátula (`S02`) y que el certificado de la carátula sea legible, esté vigente en la fecha del sobre (`S03`) y sea el de las firmas (`S06`). No valida la cadena del certificado contra la PKI Uruguay: si lo necesitás, hacelo con el certificado de `CfeRecibido.Xml`. `LeerAcuseReceptor`, `LeerRespuestaReceptor` y `LeerNotificacionAnulacion` rechazan los mensajes con firma inválida o dirigidos a otro RUT.
+- La adenda no forma parte de la firma del CFE (va fuera, en el sobre al receptor): no la uses para datos que deban estar firmados.
 
 ### 🌐 Comunicación con la DGI
 

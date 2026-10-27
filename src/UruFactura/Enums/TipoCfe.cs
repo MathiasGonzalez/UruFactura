@@ -42,6 +42,17 @@ public enum TipoCfe
     /// <summary>Nota de débito de e-Factura venta por cuenta ajena (143).</summary>
     NotaDebitoEFacturaCuentaAjena = 143,
 
+    /// <summary>
+    /// e-Boleta de entrada (151): la emite quien compra a un vendedor que no factura electrónicamente (no
+    /// contribuyente, contribuyente IVA mínimo o Monotributo, o contribuyente IMEBA). El <see cref="Cfe.Receptor"/>
+    /// es el vendedor.
+    /// </summary>
+    EBoleta = 151,
+    /// <summary>Nota de crédito de e-Boleta de entrada (152).</summary>
+    NotaCreditoEBoleta = 152,
+    /// <summary>Nota de débito de e-Boleta de entrada (153).</summary>
+    NotaDebitoEBoleta = 153,
+
     // --- Comprobantes de contingencia (CFC): misma estructura que el CFE que sustituyen ---
 
     /// <summary>e-Ticket de contingencia (201).</summary>
@@ -76,6 +87,12 @@ public enum TipoCfe
     NotaCreditoEFacturaCuentaAjenaContingencia = 242,
     /// <summary>Nota de débito de e-Factura cuenta ajena de contingencia (243).</summary>
     NotaDebitoEFacturaCuentaAjenaContingencia = 243,
+    /// <summary>e-Boleta de entrada de contingencia (251).</summary>
+    EBoletaContingencia = 251,
+    /// <summary>Nota de crédito de e-Boleta de entrada de contingencia (252).</summary>
+    NotaCreditoEBoletaContingencia = 252,
+    /// <summary>Nota de débito de e-Boleta de entrada de contingencia (253).</summary>
+    NotaDebitoEBoletaContingencia = 253,
     /// <summary>e-Remito de contingencia (281).</summary>
     ERemitoContingencia = 281,
     /// <summary>e-Resguardo de contingencia (282).</summary>

@@ -215,11 +215,11 @@ public sealed class EfUruFacturaStore<TContext>(IDbContextFactory<TContext> cont
 
     /// <inheritdoc />
     public async IAsyncEnumerable<CfeEmitido> ListarCfesAsync(
-        DateOnly fechaEmision, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        DateOnly fechaReporte, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var filas = db.Set<CfeEntity>().AsNoTracking()
-            .Where(e => e.FechaEmision == fechaEmision)
+            .Where(e => e.FechaReporte == fechaReporte)
             .OrderBy(e => e.TipoCfe).ThenBy(e => e.Serie).ThenBy(e => e.Numero)
             .AsAsyncEnumerable()
             .WithCancellation(cancellationToken);
@@ -259,5 +259,7 @@ public sealed class EfUruFacturaStore<TContext>(IDbContextFactory<TContext> cont
         Del(caes, cae).ExecuteUpdateAsync(s => s
             .SetProperty(c => c.NumeroAutorizacion, cae.NumeroAutorizacion)
             .SetProperty(c => c.RangoHasta, cae.RangoHasta)
-            .SetProperty(c => c.FechaVencimiento, cae.FechaVencimiento), cancellationToken);
+            .SetProperty(c => c.FechaVencimiento, cae.FechaVencimiento)
+            .SetProperty(c => c.Especial, cae.Especial)
+            .SetProperty(c => c.CausalEspecial, cae.CausalEspecial), cancellationToken);
 }

@@ -50,10 +50,10 @@ public class CfeXmlTests
         {
             Detalle =
             [
-                new LineaDetalle { NombreItem = "Exento", Cantidad = 1.5m, PrecioUnitario = 10.123456m, IndFactIva = TipoIva.Exento, UnidadMedida = "KG" },
-                new LineaDetalle { NombreItem = "Minimo", Cantidad = 3, PrecioUnitario = 50m, IndFactIva = TipoIva.Minimo, DescuentoMonto = 5m },
-                new LineaDetalle { NombreItem = "Basico", Cantidad = 1, PrecioUnitario = 200m, IndFactIva = TipoIva.Basico, RecargoMonto = 10m },
-                new LineaDetalle { NombreItem = "Suspenso", Cantidad = 1, PrecioUnitario = 100m, IndFactIva = TipoIva.Suspendido },
+                new LineaDetalle { NombreItem = "Exento", Cantidad = 1.5m, PrecioUnitario = 10.123456m, IndFact = IndicadorFacturacion.Exento, UnidadMedida = "KG" },
+                new LineaDetalle { NombreItem = "Minimo", Cantidad = 3, PrecioUnitario = 50m, IndFact = IndicadorFacturacion.TasaMinima, DescuentoMonto = 5m },
+                new LineaDetalle { NombreItem = "Basico", Cantidad = 1, PrecioUnitario = 200m, IndFact = IndicadorFacturacion.TasaBasica, RecargoMonto = 10m },
+                new LineaDetalle { NombreItem = "Suspenso", Cantidad = 1, PrecioUnitario = 100m, IndFact = IndicadorFacturacion.IvaEnSuspenso },
             ],
         };
 
@@ -145,11 +145,11 @@ public class CfeXmlTests
     }
 
     [Theory]
-    [InlineData(TipoIva.Exento, "1")]
-    [InlineData(TipoIva.Minimo, "2")]
-    [InlineData(TipoIva.Basico, "3")]
-    [InlineData(TipoIva.Suspendido, "12")]
-    public void IndFactSegunTipoDeIva(TipoIva iva, string indFact) =>
+    [InlineData(IndicadorFacturacion.Exento, "1")]
+    [InlineData(IndicadorFacturacion.TasaMinima, "2")]
+    [InlineData(IndicadorFacturacion.TasaBasica, "3")]
+    [InlineData(IndicadorFacturacion.IvaEnSuspenso, "12")]
+    public void IndFactSegunTipoDeIva(IndicadorFacturacion iva, string indFact) =>
         Assert.Equal(indFact, Texto(XmlDe(TestData.CfeValido() with { Detalle = [TestData.Linea(iva: iva)] }), "//c:Item/c:IndFact"));
 
     [Fact]
@@ -157,7 +157,7 @@ public class CfeXmlTests
     {
         var doc = XmlDe(TestData.CfeValido() with
         {
-            Detalle = [TestData.Linea(), TestData.Linea(1, 30m, TipoIva.Exento), TestData.Linea(1, 70m, TipoIva.Suspendido)],
+            Detalle = [TestData.Linea(), TestData.Linea(1, 30m, IndicadorFacturacion.Exento), TestData.Linea(1, 70m, IndicadorFacturacion.IvaEnSuspenso)],
         });
 
         Assert.Equal("30.00", Texto(doc, "//c:Totales/c:MntNoGrv"));
@@ -187,20 +187,28 @@ public class CfeXmlTests
     }
 
     [Theory]
-    [InlineData(TipoDocumentoReceptor.Rut, "2")]
-    [InlineData(TipoDocumentoReceptor.CedulaIdentidad, "3")]
-    [InlineData(TipoDocumentoReceptor.Otro, "4")]
-    [InlineData(TipoDocumentoReceptor.Pasaporte, "5")]
-    [InlineData(TipoDocumentoReceptor.Dni, "6")]
-    [InlineData(TipoDocumentoReceptor.Nife, "7")]
-    public void TipoDocumentoReceptor_UsaLosCodigosDeLaDgi(TipoDocumentoReceptor tipo, string codigo)
+    [InlineData(TipoDocumentoReceptor.Nie, "1", "UY", "DocRecep")]
+    [InlineData(TipoDocumentoReceptor.Rut, "2", "UY", "DocRecep")]
+    [InlineData(TipoDocumentoReceptor.CedulaIdentidad, "3", "UY", "DocRecep")]
+    [InlineData(TipoDocumentoReceptor.Otro, "4", "UY", "DocRecepExt")]
+    [InlineData(TipoDocumentoReceptor.Pasaporte, "5", "99", "DocRecepExt")]
+    [InlineData(TipoDocumentoReceptor.Dni, "6", "AR", "DocRecepExt")]
+    [InlineData(TipoDocumentoReceptor.Nife, "7", "US", "DocRecepExt")]
+    public void TipoDocumentoReceptor_UsaLosCodigosDeLaDgi(TipoDocumentoReceptor tipo, string codigo, string pais, string elemento)
     {
-        var cfe = TestData.CfeValido() with
+        var documento = tipo switch
         {
-            Receptor = new Receptor { Documento = tipo == TipoDocumentoReceptor.Rut ? "214844360018" : "1234567", TipoDocumento = tipo },
+            TipoDocumentoReceptor.Rut => "214844360018",
+            TipoDocumentoReceptor.CedulaIdentidad => "12345672",
+            _ => "90123456",
         };
+        var cfe = TestData.CfeValido() with { Receptor = new Receptor { Documento = documento, TipoDocumento = tipo, CodigoPais = pais } };
 
-        Assert.Equal(codigo, Texto(XmlDe(cfe), "//c:Receptor/c:TipoDocRecep"));
+        var doc = XmlDe(cfe);
+
+        Assert.Equal(codigo, Texto(doc, "//c:Receptor/c:TipoDocRecep"));
+        Assert.Equal(pais, Texto(doc, "//c:Receptor/c:CodPaisRecep"));
+        Assert.Equal(documento, Texto(doc, $"//c:Receptor/c:{elemento}"));
     }
 
     [Fact]
@@ -282,5 +290,177 @@ public class CfeXmlTests
 
         Assert.Equal("3", Texto(doc, "//c:Emisor/c:CdgDGISucur"));
         Assert.Equal("Pocitos", Texto(doc, "//c:Emisor/c:EmiSucursal"));
+    }
+
+    // --- Indicadores de facturación, CAE especial e IVA al día ---
+
+    private static XmlDocument XmlDe(Cfe cfe, Cae cae)
+    {
+        var emitido = TestData.Emitido(cfe, cae: cae);
+        TestData.AssertValidoContraXsd(TestData.Sobre(emitido));
+        var doc = new XmlDocument();
+        doc.LoadXml(emitido.Xml);
+        return doc;
+    }
+
+    private static bool Existe(XmlDocument doc, string xpath)
+    {
+        var nsm = new XmlNamespaceManager(doc.NameTable);
+        nsm.AddNamespace("c", Ns);
+        return doc.SelectSingleNode(xpath, nsm) is not null;
+    }
+
+    [Fact]
+    public void Totales_ConTodosLosIndicadores_VanEnSusCampos_YElTotalAPagarSumaElNoFacturable()
+    {
+        var cfe = TestData.CfeValido() with
+        {
+            Detalle =
+            [
+                TestData.Linea(1, 100m, IndicadorFacturacion.Exento),
+                TestData.Linea(1, 200m, IndicadorFacturacion.ExportacionYAsimiladas),
+                TestData.Linea(1, 30m, IndicadorFacturacion.ImpuestoPercibido),
+                TestData.Linea(1, 50m, IndicadorFacturacion.IvaEnSuspenso),
+                TestData.Linea(1, 1000m, IndicadorFacturacion.OtraTasa),
+                TestData.Linea(1, 0m, IndicadorFacturacion.EntregaGratuita),
+                TestData.Linea(1, 20m, IndicadorFacturacion.NoFacturable),
+                TestData.Linea(1, 5m, IndicadorFacturacion.NoFacturableNegativo),
+            ],
+            IvaOtraTasa = 44m,
+        };
+
+        var doc = XmlDe(cfe, TestData.Cae());
+
+        Assert.Equal("100.00", Texto(doc, "//c:Totales/c:MntNoGrv"));
+        Assert.Equal("200.00", Texto(doc, "//c:Totales/c:MntExpoyAsim"));
+        Assert.Equal("30.00", Texto(doc, "//c:Totales/c:MntImpuestoPerc"));
+        Assert.Equal("50.00", Texto(doc, "//c:Totales/c:MntIVaenSusp"));
+        Assert.Equal("1000.00", Texto(doc, "//c:Totales/c:MntNetoIVAOtra"));
+        Assert.Equal("44.00", Texto(doc, "//c:Totales/c:MntIVAOtra"));
+        Assert.Equal("1424.00", Texto(doc, "//c:Totales/c:MntTotal"));
+        Assert.Equal("15.00", Texto(doc, "//c:Totales/c:MontoNF"));
+        Assert.Equal("1439.00", Texto(doc, "//c:Totales/c:MntPagar"));
+        Assert.Equal("0.00", Texto(doc, "//c:Item[c:IndFact='5']/c:MontoItem"));
+    }
+
+    [Fact]
+    public void IvaMinimo_InformaMntBruto3_ElCaeEspecial_YLasLineasNoGravadas()
+    {
+        var cae = TestData.Cae() with { Especial = CaeEspecial.IvaMinimo };
+        var cfe = TestData.CfeValido() with { Detalle = [TestData.Linea(iva: IndicadorFacturacion.IvaMinimoMonotributo)] };
+
+        var doc = XmlDe(cfe, cae);
+
+        Assert.Equal("3", Texto(doc, "//c:IdDoc/c:MntBruto"));
+        Assert.Equal("16", Texto(doc, "//c:Item/c:IndFact"));
+        Assert.Equal("200.00", Texto(doc, "//c:Totales/c:MntNoGrv"));
+        Assert.Equal("200.00", Texto(doc, "//c:Totales/c:MntTotal"));
+        Assert.Equal("2", Texto(doc, "//c:CAEData/c:CAEEspecial"));
+        Assert.False(Existe(doc, "//c:CAEData/c:CausalCAEEsp"));
+    }
+
+    [Fact]
+    public void CaeExonerado_InformaElTipoYLaCausal()
+    {
+        var cae = TestData.Cae() with { Especial = CaeEspecial.Exonerado, CausalEspecial = 12 };
+        var cfe = TestData.CfeValido() with { Detalle = [TestData.Linea(iva: IndicadorFacturacion.Exento)] };
+
+        var doc = XmlDe(cfe, cae);
+
+        Assert.Equal("1", Texto(doc, "//c:CAEData/c:CAEEspecial"));
+        Assert.Equal("12", Texto(doc, "//c:CAEData/c:CausalCAEEsp"));
+        Assert.False(Existe(doc, "//c:IdDoc/c:MntBruto"));
+    }
+
+    [Fact]
+    public void CuentaAjenaDeMandanteIvaMinimo_UsaElIndicador16SinMntBruto3()
+    {
+        // K-C1 (formato v25): la DGI rechaza una venta por cuenta ajena con MntBruto 3.
+        var cfe = TestData.CfeValido(TipoCfe.ETicketCuentaAjena) with { Detalle = [TestData.Linea(iva: IndicadorFacturacion.IvaMinimoMonotributo)] };
+
+        var doc = XmlDe(cfe, TestData.Cae(TipoCfe.ETicketCuentaAjena));
+
+        Assert.Equal("16", Texto(doc, "//c:Item/c:IndFact"));
+        Assert.False(Existe(doc, "//c:IdDoc/c:MntBruto"));
+        Assert.False(Existe(doc, "//c:CAEData/c:CAEEspecial"));
+    }
+
+    [Theory]
+    [InlineData(false, true, "1")]
+    [InlineData(true, false, "2")]
+    [InlineData(false, false, "3")]
+    public void IvaAlDia_SeInformaSoloSiFaltaLaConstancia(bool emisorAlDia, bool mandanteAlDia, string esperado)
+    {
+        var cfe = TestData.CfeValido(TipoCfe.EFacturaCuentaAjena) with
+        {
+            Emisor = TestData.Emisor() with { IvaAlDia = emisorAlDia },
+            Mandante = new Mandante { Documento = "214844360018", Nombre = "Mandante S.A.", IvaAlDia = mandanteAlDia },
+        };
+
+        Assert.Equal(esperado, Texto(XmlDe(cfe, TestData.Cae(TipoCfe.EFacturaCuentaAjena)), "//c:IdDoc/c:IVAalDia"));
+        Assert.False(Existe(XmlDe(TestData.CfeValido(), TestData.Cae()), "//c:IdDoc/c:IVAalDia"));
+    }
+
+    [Fact]
+    public void Monotributo_NoInformaIvaAlDia()
+    {
+        var cae = TestData.Cae() with { Especial = CaeEspecial.Monotributo };
+        var cfe = TestData.CfeValido() with { Detalle = [TestData.Linea(iva: IndicadorFacturacion.IvaMinimoMonotributo)] };
+
+        Assert.False(Existe(XmlDe(cfe, cae), "//c:IdDoc/c:IVAalDia"));
+    }
+
+    [Fact]
+    public void ReferenciaGlobal_InformaIndGlobalYLaRazonSinDatosDelComprobante()
+    {
+        var cfe = TestData.CfeValido(TipoCfe.NotaCreditoEFactura) with
+        {
+            Referencias = [new RefCfe { Global = true, Razon = "Descuento por volumen de mayo" }],
+        };
+
+        var doc = XmlDe(cfe, TestData.Cae(TipoCfe.NotaCreditoEFactura));
+
+        Assert.Equal("1", Texto(doc, "//c:Referencia/c:Referencia/c:IndGlobal"));
+        Assert.Equal("Descuento por volumen de mayo", Texto(doc, "//c:Referencia/c:Referencia/c:RazonRef"));
+        Assert.False(Existe(doc, "//c:Referencia/c:Referencia/c:TpoDocRef"));
+        Assert.False(Existe(doc, "//c:Referencia/c:Referencia/c:MntCFEref"));
+    }
+
+    [Fact]
+    public void DescuentoGlobalEnPorcentaje_SeInformaComoMontoSobreLaBaseDeSuIndicador()
+    {
+        var cfe = TestData.CfeValido() with
+        {
+            Detalle = [TestData.Linea(), TestData.Linea(1, 300m, IndicadorFacturacion.Exento)],
+            DescuentosRecargos = [new DescuentoRecargoGlobal { Glosa = "Pago contado", Porcentaje = 12.5m, IndFact = IndicadorFacturacion.TasaBasica }],
+        };
+
+        var doc = XmlDe(cfe, TestData.Cae());
+
+        Assert.Equal("1", Texto(doc, "//c:DRG_Item/c:TpoDR"));
+        Assert.Equal("25.00", Texto(doc, "//c:DRG_Item/c:ValorDR")); // 12,5 % de 200
+        Assert.Equal("175.00", Texto(doc, "//c:Totales/c:MntNetoIVATasaBasica"));
+    }
+
+    [Fact]
+    public void Resguardo_LosCreditosFiscalesVanAparteDelTotalRetenido()
+    {
+        var cfe = TestData.CfeValido(TipoCfe.EResguardo) with
+        {
+            Detalle = [new LineaDetalle { Retenciones = [new RetencionPercepcion { Codigo = "1146100", MontoSujeto = 1000m, Valor = 70m }, new RetencionPercepcion { Codigo = "2181103", MontoSujeto = 1000m, Valor = 30m }] }],
+        };
+
+        var doc = XmlDe(cfe, TestData.Cae(TipoCfe.EResguardo));
+
+        Assert.Equal("70.00", Texto(doc, "//c:Totales/c:MntTotRetenido"));
+        Assert.Equal("30.00", Texto(doc, "//c:Totales/c:MntTotCredFisc"));
+    }
+
+    [Fact]
+    public void Qr_UsaElTotalAPagar_QueIncluyeElNoFacturable()
+    {
+        var emitido = TestData.Emitido(TestData.CfeValido() with { Detalle = [TestData.Linea(), TestData.Linea(1, 30m, IndicadorFacturacion.NoFacturable)] });
+
+        Assert.Contains(",274.00,", emitido.UrlQr); // MntPagar = 244 + 30
     }
 }

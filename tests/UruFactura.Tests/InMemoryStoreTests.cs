@@ -6,9 +6,11 @@ public class InMemoryStoreTests
 
     private static InMemoryStore Store(TimeProvider? reloj = null) => new(reloj ?? TestData.Reloj);
 
-    /// <summary>Un CFE numerado con el CAE de prueba, listo para registrar.</summary>
+    /// <summary>Un CFE numerado con el CAE de prueba y firmado en <paramref name="fecha"/>, listo para registrar.</summary>
     private static CfeEmitido Emitido(long numero, Cae? cae = null, DateOnly? fecha = null, string? nroInterno = null) =>
-        TestData.Emitido(TestData.CfeValido() with { FechaEmision = fecha ?? Hoy, NroInterno = nroInterno }, numero, cae);
+        TestData.Emitido(
+            TestData.CfeValido() with { FechaEmision = fecha ?? Hoy, NroInterno = nroInterno }, numero, cae,
+            firma: new DateTimeOffset((fecha ?? Hoy).ToDateTime(new TimeOnly(12, 0)), HoraUruguay.Offset));
 
     private static async Task<List<CfeEmitido>> Listar(InMemoryStore store, DateOnly fecha) =>
         await store.ListarCfesAsync(fecha).ToListAsync();
@@ -121,6 +123,16 @@ public class InMemoryStoreTests
 
         Assert.Equal([1L, 2L], (await Listar(store, Hoy)).Select(c => c.Numero));
         Assert.Equal([3L], (await Listar(store, Hoy.AddDays(-1))).Select(c => c.Numero));
+    }
+
+    [Fact]
+    public async Task ListarCfes_PorFechaDeFirma_NoDeEmision()
+    {
+        var store = Store();
+        // Firmado hoy (al mediodía de Uruguay) con fecha de comprobante de anteayer.
+        await store.GuardarCfesAsync([TestData.Emitido(TestData.CfeValido() with { FechaEmision = Hoy.AddDays(-2) }, 7)]);
+
+        Assert.Equal([7L], (await Listar(store, Hoy)).Select(c => c.Numero));
     }
 
     [Fact]

@@ -15,6 +15,8 @@ public enum FamiliaCfe
     RemitoExportacion,
     /// <summary><c>eResg</c>: e-Resguardo.</summary>
     Resguardo,
+    /// <summary><c>eBoleta</c>: e-Boleta de entrada y sus notas.</summary>
+    Boleta,
 }
 
 /// <summary>Clasificación de los tipos de CFE (familia, notas, contingencia, cuenta ajena).</summary>
@@ -29,13 +31,14 @@ public static class TipoCfeExtensions
         181 or 281 => FamiliaCfe.Remito,
         124 or 224 => FamiliaCfe.RemitoExportacion,
         182 or 282 => FamiliaCfe.Resguardo,
+        151 or 152 or 153 or 251 or 252 or 253 => FamiliaCfe.Boleta,
         _ => throw new ArgumentOutOfRangeException(nameof(tipo), tipo, $"Tipo de CFE no soportado: {tipo}."),
     };
 
     /// <summary>Nota de crédito o de débito (requiere referencias).</summary>
     public static bool EsNotaCorreccion(this TipoCfe tipo) => (int)tipo is
-        102 or 103 or 112 or 113 or 122 or 123 or 132 or 133 or 142 or 143
-        or 202 or 203 or 212 or 213 or 222 or 223 or 232 or 233 or 242 or 243;
+        102 or 103 or 112 or 113 or 122 or 123 or 132 or 133 or 142 or 143 or 152 or 153
+        or 202 or 203 or 212 or 213 or 222 or 223 or 232 or 233 or 242 or 243 or 252 or 253;
 
     /// <summary>Nota de crédito (la referencia suele ser un CFE emitido antes).</summary>
     public static bool EsNotaCredito(this TipoCfe tipo) => (int)tipo % 10 == 2 && tipo != TipoCfe.EResguardo
@@ -56,7 +59,11 @@ public static class TipoCfeExtensions
     public static bool EsRemito(this TipoCfe tipo) =>
         tipo.Familia() is FamiliaCfe.Remito or FamiliaCfe.RemitoExportacion;
 
-    /// <summary>e-Factura, e-Factura de exportación y e-Resguardo: el receptor es obligatorio.</summary>
-    public static bool RequiereReceptor(this TipoCfe tipo) =>
-        tipo.Familia() is FamiliaCfe.Factura or FamiliaCfe.FacturaExportacion or FamiliaCfe.Resguardo;
+    /// <summary>
+    /// Tipos que identifican siempre al receptor: e-Factura, exportación, e-Remito, e-Resguardo y e-Boleta de
+    /// entrada (en esta, salvo la compra de moneda extranjera para reventa a un vendedor sin RUT por debajo del
+    /// tope). En el e-Ticket es obligatorio por encima del tope de UI o si documenta retenciones. Ninguno lo exige
+    /// si la operación está amparada por el secreto profesional (<see cref="Cfe.SecretoProfesional"/>).
+    /// </summary>
+    public static bool RequiereReceptor(this TipoCfe tipo) => tipo.Familia() != FamiliaCfe.Ticket;
 }
