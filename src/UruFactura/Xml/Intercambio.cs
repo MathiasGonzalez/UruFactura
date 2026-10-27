@@ -37,7 +37,7 @@ internal static class Intercambio
         ["E02"] = "Tipo y Nº de CFE ya existe en los registros",
         ["E03"] = "Tipo y Nº de CFE no se corresponden con el CAE",
         ["E04"] = "Firma electrónica no es válida",
-        ["E05"] = "No cumple validaciones (*) de Formato comprobantes",
+        ["E05"] = "No cumple validaciones de Formato comprobantes",
         ["E06"] = "Importe informado en el CFE excede montos habituales",
         ["E07"] = "Fecha Firma de CFE no se corresponde con fecha CAE",
         ["E10"] = "Tipo de cambio no válido",
