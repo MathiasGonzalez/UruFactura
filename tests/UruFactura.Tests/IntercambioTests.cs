@@ -261,6 +261,23 @@ public class IntercambioTests
     }
 
     [Fact]
+    public async Task RecibirSobre_CfeConFirmaSinCertificado_SeVerificaConElDeLaCaratula()
+    {
+        var (emisor, sobre) = await SobreParaElReceptor();
+        using var _ = emisor;
+        using var receptor = Receptor();
+        // El certificado de la firma del CFE (el segundo) se quita: queda X509IssuerSerial, como en el ejemplo de la DGI.
+        var certificado = $"<X509Certificate>{Convert.ToBase64String(TestData.Certificado.RawData)}</X509Certificate>";
+        var sinCertificado = sobre.Xml.Remove(sobre.Xml.LastIndexOf(certificado, StringComparison.Ordinal), certificado.Length);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(sinCertificado, "<X509Certificate>"));
+
+        var recibido = await receptor.RecibirSobreAsync(sinCertificado);
+
+        Assert.True(recibido.Recibido, string.Join("; ", recibido.Motivos));
+        Assert.Equal(EstadoCfe.Aceptado, Assert.Single(recibido.Comprobantes).Estado);
+    }
+
+    [Fact]
     public async Task RecibirSobre_DelFormatoParaLaDgi_LoRechazaConS01()
     {
         using var receptor = Receptor();

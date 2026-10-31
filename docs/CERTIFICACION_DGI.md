@@ -130,6 +130,10 @@ Consultas (ws_consultas): https://efactura.dgi.gub.uy:6460/ePrueba/ws_consultasP
 ```
 (los WSDL están publicados en esas URL con el sufijo `?wsdl`). Para otros ambientes configurá `UrlEnvio` y `UrlConsultas`.
 
+### Antes de ir a la DGI: dgi-simulador
+
+[dgi-simulador](https://github.com/MathiasGonzalez/dgi-simulador) responde como los servicios de prueba de la DGI, sin certificado ni CAE reales: da el certificado de prueba y los CAE, y permite provocar rechazos, demoras y caídas. Con `UrlEnvio = "http://localhost:8080/ePrueba/ws_eprueba"` y `UrlConsultas = "http://localhost:8080/ePrueba/ws_consultasPrueba"` se prueba toda la integración antes de mandar el primer comprobante a `ePrueba`. No reemplaza la homologación. Su [FIDELIDAD.md](https://github.com/MathiasGonzalez/dgi-simulador/blob/main/FIDELIDAD.md) dice cuánto se parece a la DGI cada servicio y qué falta confirmar.
+
 ### Pasos de homologación
 
 1. **Emitir los CFE de prueba requeridos** por la DGI (tipos y cantidades definidos en el instructivo oficial de homologación).

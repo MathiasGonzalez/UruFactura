@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Numerics;
 using System.Security.Cryptography.X509Certificates;
 using System.Security.Cryptography.Xml;
 using System.Xml;
@@ -7,7 +9,8 @@ namespace UruFactura;
 /// <summary>
 /// Firma XML (XML Signature <i>enveloped</i>) de los documentos de la DGI: un <c>ds:Signature</c>
 /// como último hijo de la raíz que referencia el documento completo (<c>URI=""</c>) con las
-/// transformadas enveloped-signature y C14N, e incluye el certificado en <c>KeyInfo</c>.
+/// transformadas enveloped-signature y C14N, e incluye en <c>KeyInfo</c> el emisor y el número de serie
+/// del certificado (<c>X509IssuerSerial</c>, zona I del formato del CFE) y el certificado.
 /// </summary>
 public static class FirmaDigital
 {
@@ -17,12 +20,18 @@ public static class FirmaDigital
     /// firma, hija directa de la raíz, que referencie el documento completo, que incluya el certificado
     /// y que sea criptográficamente válida con él.
     /// </summary>
+    /// <param name="xmlFirmado">El documento firmado.</param>
+    /// <param name="certificadoDelSobre">
+    /// El certificado de la carátula del sobre, para las firmas que no incluyen el certificado sino solo su
+    /// emisor y número de serie (<c>X509IssuerSerial</c>), como los CFE del sobre de ejemplo de la DGI. Se
+    /// usa solo si el número de serie que indica la firma es el suyo. Se devuelve una copia.
+    /// </param>
     /// <remarks>
     /// Una firma válida solo prueba que el documento no cambió desde que lo firmó el titular del
     /// certificado devuelto, que viene en el propio XML: compruebe que pertenece al emisor (por ejemplo,
     /// que su sujeto contenga el RUT del <c>RUCEmisor</c>) y, si corresponde, su cadena de confianza.
     /// </remarks>
-    public static X509Certificate2? VerificarFirma(string xmlFirmado)
+    public static X509Certificate2? VerificarFirma(string xmlFirmado, X509Certificate2? certificadoDelSobre = null)
     {
         try
         {
@@ -39,9 +48,11 @@ public static class FirmaDigital
                 return null;
 
             // El firmante es el certificado de KeyInfo (puede venir con su cadena) cuya clave verifica la firma.
-            var certificados = signedXml.KeyInfo.OfType<KeyInfoX509Data>()
-                .SelectMany(d => d.Certificates?.OfType<X509Certificate2>() ?? [])
-                .ToList();
+            var datos = signedXml.KeyInfo.OfType<KeyInfoX509Data>().ToList();
+            var certificados = datos.SelectMany(d => d.Certificates?.OfType<X509Certificate2>() ?? []).ToList();
+            if (certificados.Count == 0 && certificadoDelSobre is not null
+                && datos.SelectMany(d => d.IssuerSerials?.OfType<X509IssuerSerial>() ?? []).Any(s => MismoSerial(s.SerialNumber, certificadoDelSobre)))
+                certificados.Add(X509CertificateLoader.LoadCertificate(certificadoDelSobre.RawData));
             var firmante = certificados.FirstOrDefault(c => signedXml.CheckSignature(c, verifySignatureOnly: true));
             foreach (var otro in certificados.Where(c => c != firmante))
                 otro.Dispose();
@@ -52,6 +63,11 @@ public static class FirmaDigital
             return null;
         }
     }
+
+    /// <summary>Si el número de serie decimal de <c>X509IssuerSerial</c> es el del certificado.</summary>
+    internal static bool MismoSerial(string? serialDecimal, X509Certificate2 certificado) =>
+        BigInteger.TryParse(serialDecimal, NumberStyles.None, CultureInfo.InvariantCulture, out var serial)
+        && serial == new BigInteger(certificado.SerialNumberBytes.Span, isUnsigned: true, isBigEndian: true);
 
     /// <summary>Firma el XML y devuelve el documento firmado y el <c>DigestValue</c> (base64) de la referencia.</summary>
     /// <exception cref="FirmaDigitalException">Si la firma falla.</exception>
@@ -79,8 +95,12 @@ public static class FirmaDigital
             reference.AddTransform(new XmlDsigC14NTransform());
             signedXml.AddReference(reference);
 
+            // X509IssuerSerial lleva el número de serie en decimal: AddIssuerSerial lo convierte desde el hexadecimal
+            // del certificado, que se toma sin signo.
+            var x509 = new KeyInfoX509Data(certificado);
+            x509.AddIssuerSerial(certificado.Issuer, "0" + certificado.SerialNumber);
             var keyInfo = new KeyInfo();
-            keyInfo.AddClause(new KeyInfoX509Data(certificado));
+            keyInfo.AddClause(x509);
             signedXml.KeyInfo = keyInfo;
 
             signedXml.ComputeSignature();
