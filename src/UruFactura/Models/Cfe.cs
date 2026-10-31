@@ -205,7 +205,9 @@ public sealed record Cfe(TipoCfe Tipo)
             var exportacion = Base(IndicadorFacturacion.ExportacionYAsimiladas);
             return new Totales
             {
-                MontoExportacion = exportacion, MontoTotal = exportacion, MontoNoFacturable = noFacturable,
+                MontoExportacion = exportacion,
+                MontoTotal = exportacion,
+                MontoNoFacturable = noFacturable,
                 MontoPagar = exportacion + noFacturable,
             };
         }

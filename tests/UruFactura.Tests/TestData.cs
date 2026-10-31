@@ -31,15 +31,15 @@ internal static class TestData
     internal static Cae Cae(
         TipoCfe tipo = TipoCfe.ETicket, string serie = "A", long desde = 1, long hasta = 100,
         DateOnly? vence = null, long ultimo = 0) => new()
-    {
-        NumeroAutorizacion = "90110001945",
-        TipoCfe = tipo,
-        Serie = serie,
-        RangoDesde = desde,
-        RangoHasta = hasta,
-        FechaVencimiento = vence ?? new DateOnly(2040, 12, 31),
-        UltimoNroUsado = ultimo,
-    };
+        {
+            NumeroAutorizacion = "90110001945",
+            TipoCfe = tipo,
+            Serie = serie,
+            RangoDesde = desde,
+            RangoHasta = hasta,
+            FechaVencimiento = vence ?? new DateOnly(2040, 12, 31),
+            UltimoNroUsado = ultimo,
+        };
 
     internal static LineaDetalle Linea(decimal cantidad = 2, decimal precio = 100m, IndicadorFacturacion iva = IndicadorFacturacion.TasaBasica) => new()
     {
@@ -53,7 +53,10 @@ internal static class TestData
     /// <summary>Un receptor contribuyente, con RUT, nombre y domicilio (lo que exigen e-Factura, e-Remito y e-Boleta).</summary>
     internal static Receptor ReceptorRut(string razonSocial = "Cliente S.A.") => new()
     {
-        Documento = "214844360018", RazonSocial = razonSocial, Direccion = "Av. Italia 1234", Ciudad = "Montevideo",
+        Documento = "214844360018",
+        RazonSocial = razonSocial,
+        Direccion = "Av. Italia 1234",
+        Ciudad = "Montevideo",
     };
 
     /// <summary>Un CFE válido del tipo indicado (con receptor, datos de exportación, remito, mandante o referencias si aplica).</summary>
@@ -70,9 +73,14 @@ internal static class TestData
             {
                 Receptor = new Receptor
                 {
-                    Documento = "X1234567", TipoDocumento = TipoDocumentoReceptor.Pasaporte,
-                    RazonSocial = "Importer Inc.", CodigoPais = "US", Direccion = "5th Avenue 100", Ciudad = "New York",
-                    Departamento = "NY", Pais = "Estados Unidos",
+                    Documento = "X1234567",
+                    TipoDocumento = TipoDocumentoReceptor.Pasaporte,
+                    RazonSocial = "Importer Inc.",
+                    CodigoPais = "US",
+                    Direccion = "5th Avenue 100",
+                    Ciudad = "New York",
+                    Departamento = "NY",
+                    Pais = "Estados Unidos",
                 },
                 ClausulaVenta = familia == FamiliaCfe.RemitoExportacion ? null : "FOB",
                 ModalidadVenta = tipo.EsNotaCorreccion() ? null : 1,
@@ -205,7 +213,8 @@ internal static class TestData
             // por separado (todos incluyen DGITypes.xsd) y se compilan juntos.
             using var reader = XmlReader.Create(Path.Combine(dir, archivo), new XmlReaderSettings
             {
-                DtdProcessing = DtdProcessing.Ignore, XmlResolver = new XmlUrlResolver(),
+                DtdProcessing = DtdProcessing.Ignore,
+                XmlResolver = new XmlUrlResolver(),
             });
             set.Add(null, reader);
         }
