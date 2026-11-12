@@ -34,7 +34,7 @@
     <PackageReference Include="SkiaSharp" Version="4.154.0" />
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.154.0" />
     <PackageReference Include="ZXing.Net" Version="0.16.11" />
-    <PackageReference Include="ZXing.Net.Bindings.SkiaSharp" Version="0.16.22" />
+    <PackageReference Include="ZXing.Net.Bindings.SkiaSharp" Version="0.16.25" />
   </ItemGroup>
 
   <ItemGroup>
