@@ -58,7 +58,11 @@ public sealed class SimuladorDgi : IAsyncLifetime
         {
             Emisor = new Emisor
             {
-                Rut = Rut, RazonSocial = "UruFactura CI S.A.", DomicilioFiscal = "Av. 18 de Julio 1234", Ciudad = "Montevideo", Departamento = "Montevideo",
+                Rut = Rut,
+                RazonSocial = "UruFactura CI S.A.",
+                DomicilioFiscal = "Av. 18 de Julio 1234",
+                Ciudad = "Montevideo",
+                Departamento = "Montevideo",
             },
             Ambiente = Ambiente.Homologacion,
             Certificado = certificado,
@@ -123,7 +127,10 @@ public sealed class SimuladorDgiCfeTests(SimuladorDgi sim) : IClassFixture<Simul
 {
     private static readonly Receptor Cliente = new()
     {
-        Documento = "214844360018", RazonSocial = "Cliente S.A.", Direccion = "Av. Italia 1234", Ciudad = "Montevideo",
+        Documento = "214844360018",
+        RazonSocial = "Cliente S.A.",
+        Direccion = "Av. Italia 1234",
+        Ciudad = "Montevideo",
     };
 
     private static LineaDetalle Linea(string nombre, decimal cantidad, decimal precio, IndicadorFacturacion indicador = IndicadorFacturacion.TasaBasica) =>
@@ -143,11 +150,16 @@ public sealed class SimuladorDgiCfeTests(SimuladorDgi sim) : IClassFixture<Simul
         ["e-Factura"] = new Cfe(TipoCfe.EFactura) { Receptor = Cliente, Detalle = [Linea("Licencia", 1, 5000m)] },
         ["e-Factura en dólares"] = new Cfe(TipoCfe.EFactura)
         {
-            Receptor = Cliente, Moneda = Moneda.DolarAmericano, TipoCambio = 40.5m, Detalle = [Linea("Servicio", 2, 150m)],
+            Receptor = Cliente,
+            Moneda = Moneda.DolarAmericano,
+            TipoCambio = 40.5m,
+            Detalle = [Linea("Servicio", 2, 150m)],
         },
         ["e-Factura con IVA incluido"] = new Cfe(TipoCfe.EFactura)
         {
-            Receptor = Cliente, MontosBrutos = MontosBrutos.IvaIncluido, Detalle = [Linea("Producto", 3, 122m), Linea("Otro", 7, 33.33m)],
+            Receptor = Cliente,
+            MontosBrutos = MontosBrutos.IvaIncluido,
+            Detalle = [Linea("Producto", 3, 122m), Linea("Otro", 7, 33.33m)],
         },
         ["e-Factura con percepción"] = new Cfe(TipoCfe.EFactura)
         {
@@ -163,15 +175,27 @@ public sealed class SimuladorDgiCfeTests(SimuladorDgi sim) : IClassFixture<Simul
         },
         ["e-Factura con secreto profesional"] = new Cfe(TipoCfe.EFactura)
         {
-            SecretoProfesional = true, Adenda = "Receptor reservado", Detalle = [Linea("Honorarios", 1, 3000m)],
+            SecretoProfesional = true,
+            Adenda = "Receptor reservado",
+            Detalle = [Linea("Honorarios", 1, 3000m)],
         },
         ["e-Factura de Exportación"] = new Cfe(TipoCfe.EFacturaExportacion)
         {
-            Moneda = Moneda.DolarAmericano, TipoCambio = 40.5m, ClausulaVenta = "FOB", ModalidadVenta = 1, ViaTransporte = 1,
+            Moneda = Moneda.DolarAmericano,
+            TipoCambio = 40.5m,
+            ClausulaVenta = "FOB",
+            ModalidadVenta = 1,
+            ViaTransporte = 1,
             Receptor = new Receptor
             {
-                Documento = "X1234567", TipoDocumento = TipoDocumentoReceptor.Pasaporte, CodigoPais = "US", RazonSocial = "Importer Inc.",
-                Direccion = "5th Avenue 100", Ciudad = "New York", Departamento = "NY", Pais = "Estados Unidos",
+                Documento = "X1234567",
+                TipoDocumento = TipoDocumentoReceptor.Pasaporte,
+                CodigoPais = "US",
+                RazonSocial = "Importer Inc.",
+                Direccion = "5th Avenue 100",
+                Ciudad = "New York",
+                Departamento = "NY",
+                Pais = "Estados Unidos",
             },
             Detalle =
             [

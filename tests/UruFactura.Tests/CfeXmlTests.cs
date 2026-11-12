@@ -69,8 +69,13 @@ public class CfeXmlTests
             TipoCambio = 40.123m,
             Receptor = new Receptor
             {
-                Documento = "AB123456", TipoDocumento = TipoDocumentoReceptor.Pasaporte, CodigoPais = "AR",
-                RazonSocial = "Turista", Direccion = "Calle 1", Ciudad = "Buenos Aires", Pais = "Argentina",
+                Documento = "AB123456",
+                TipoDocumento = TipoDocumentoReceptor.Pasaporte,
+                CodigoPais = "AR",
+                RazonSocial = "Turista",
+                Direccion = "Calle 1",
+                Ciudad = "Buenos Aires",
+                Pais = "Argentina",
             },
         };
 

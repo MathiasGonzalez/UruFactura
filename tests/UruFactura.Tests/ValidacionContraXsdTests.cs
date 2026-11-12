@@ -231,8 +231,15 @@ public class ValidacionContraXsdTests
                 && detalle[0] is { Cantidad: > 0.002m } original && original.IndFact is not (IndicadorFacturacion.RebajaRemito or IndicadorFacturacion.EntregaGratuita))
                 detalle.Add(original with
                 {
-                    Cantidad = -Math.Round(original.Cantidad / 2, 3), DescuentoMonto = 0, DescuentoPorcentaje = null, RecargoMonto = 0,
-                    RecargoPorcentaje = null, Subdescuentos = [], Subrecargos = [], Retenciones = [], AgenteResponsable = null,
+                    Cantidad = -Math.Round(original.Cantidad / 2, 3),
+                    DescuentoMonto = 0,
+                    DescuentoPorcentaje = null,
+                    RecargoMonto = 0,
+                    RecargoPorcentaje = null,
+                    Subdescuentos = [],
+                    Subrecargos = [],
+                    Retenciones = [],
+                    AgenteResponsable = null,
                 });
             var otraTasa = detalle.Any(l => l.IndFact == IndicadorFacturacion.OtraTasa) && !exportacion;
             var conRetenciones = detalle.Any(l => l.Retenciones.Count > 0);
@@ -377,8 +384,11 @@ public class ValidacionContraXsdTests
             var dolares = Uno(4);
             return new RefCfe
             {
-                TipoCfe = TipoCfe.ETicket, Serie = Raro() ? "a" : De("A", "AB", "1A"), NroCfe = Raro() ? 0 : rnd.Next(1, 9_999_999),
-                FechaCfe = Uno(3) ? null : Hoy.AddDays(Raro() ? 61 : -rnd.Next(3, 300)), Razon = Uno(2) ? Texto(90) : null,
+                TipoCfe = TipoCfe.ETicket,
+                Serie = Raro() ? "a" : De("A", "AB", "1A"),
+                NroCfe = Raro() ? 0 : rnd.Next(1, 9_999_999),
+                FechaCfe = Uno(3) ? null : Hoy.AddDays(Raro() ? 61 : -rnd.Next(3, 300)),
+                Razon = Uno(2) ? Texto(90) : null,
                 MontoCfeRef = eRemito && !Raro() || Raro() ? null : Monto(1000m),
                 MonedaCfeRef = eRemito && !Raro() || Raro() ? null : dolares ? Moneda.DolarAmericano : Moneda.PesoUruguayo,
                 TipoCambioCfeRef = dolares && !Raro() && !eRemito ? 0.001m + Monto(50m, 3) : null,

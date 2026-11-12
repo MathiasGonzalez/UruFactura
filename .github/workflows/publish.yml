@@ -8,10 +8,11 @@ on:
 jobs:
   publish:
     name: Build, Pack & Publish NuGet
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
+      id-token: write # Trusted Publishing de NuGet.org (OIDC)
 
     steps:
       - name: Checkout
@@ -76,10 +77,16 @@ jobs:
           path: ./nupkg/*.nupkg
           retention-days: 30
 
+      - name: NuGet login (Trusted Publishing)
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: mathiasgonzalez
+
       - name: Publish to NuGet.org
         run: >
           dotnet nuget push ./nupkg/*.nupkg
-          --api-key ${{ secrets.NUGET_API_KEY }}
+          --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
           --source https://api.nuget.org/v3/index.json
           --skip-duplicate
 
