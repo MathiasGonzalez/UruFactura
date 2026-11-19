@@ -62,7 +62,10 @@ public class UruFacturaConfigTests
     public void Produccion_SinValidarElCertificadoTls_TieneError() =>
         Assert.Contains((TestData.Config() with
         {
-            Ambiente = Ambiente.Produccion, UrlEnvio = "https://e", UrlConsultas = "https://c", OmitirValidacionSsl = true,
+            Ambiente = Ambiente.Produccion,
+            UrlEnvio = "https://e",
+            UrlConsultas = "https://c",
+            OmitirValidacionSsl = true,
         }).Validar(), e => e.Contains("OmitirValidacionSsl"));
 
     [Fact]
@@ -78,7 +81,10 @@ public class UruFacturaConfigTests
     public void Produccion_ConUrlsYUnidadIndexada_EsValida() =>
         Assert.Empty((TestData.Config() with
         {
-            Ambiente = Ambiente.Produccion, UrlEnvio = "https://e", UrlConsultas = "https://c", UnidadIndexada = new Dictionary<int, decimal> { [2025] = 6.4m },
+            Ambiente = Ambiente.Produccion,
+            UrlEnvio = "https://e",
+            UrlConsultas = "https://c",
+            UnidadIndexada = new Dictionary<int, decimal> { [2025] = 6.4m },
         }).Validar());
 
     [Fact]

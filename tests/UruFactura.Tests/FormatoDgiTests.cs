@@ -57,7 +57,9 @@ public class FormatoDgiTests
     {
         Assert.Contains("MontosBrutos", TestData.Campos(TestData.CfeValido() with
         {
-            MontosBrutos = MontosBrutos.IvaIncluido, Detalle = [TestData.Linea(iva: IndicadorFacturacion.OtraTasa)], IvaOtraTasa = 10m,
+            MontosBrutos = MontosBrutos.IvaIncluido,
+            Detalle = [TestData.Linea(iva: IndicadorFacturacion.OtraTasa)],
+            IvaOtraTasa = 10m,
         }));
         Assert.Contains("MontosBrutos", TestData.Campos(TestData.CfeValido(TipoCfe.EFacturaExportacion) with { MontosBrutos = MontosBrutos.IvaIncluido }));
         Assert.Contains("MontosBrutos", TestData.Campos(TestData.CfeValido() with { MontosBrutos = MontosBrutos.ImebaYAdicionalesIncluidos }));
@@ -122,7 +124,8 @@ public class FormatoDgiTests
         Assert.Contains("Receptor.Documento", TestData.Campos(TestData.CfeValido() with { Detalle = [linea], Receptor = new Receptor { RazonSocial = "x" } }));
         Assert.Empty(TestData.Validar(TestData.CfeValido() with
         {
-            Detalle = [linea], Receptor = new Receptor { Documento = "12345672", TipoDocumento = TipoDocumentoReceptor.CedulaIdentidad },
+            Detalle = [linea],
+            Receptor = new Receptor { Documento = "12345672", TipoDocumento = TipoDocumentoReceptor.CedulaIdentidad },
         }));
     }
 
@@ -267,15 +270,21 @@ public class FormatoDgiTests
         }));
         var sinRut = new Receptor
         {
-            Documento = "12345672", TipoDocumento = TipoDocumentoReceptor.CedulaIdentidad, RazonSocial = "Juan", Direccion = "Ruta 5 km 30", Ciudad = "Canelones",
+            Documento = "12345672",
+            TipoDocumento = TipoDocumentoReceptor.CedulaIdentidad,
+            RazonSocial = "Juan",
+            Direccion = "Ruta 5 km 30",
+            Ciudad = "Canelones",
         };
         Assert.Contains("Detalle[0].IndFact", TestData.Campos(TestData.CfeValido(TipoCfe.EBoleta) with
         {
-            Receptor = sinRut, Detalle = [TestData.Linea(iva: IndicadorFacturacion.VendedorIvaMinimo)],
+            Receptor = sinRut,
+            Detalle = [TestData.Linea(iva: IndicadorFacturacion.VendedorIvaMinimo)],
         }));
         Assert.Empty(TestData.Validar(TestData.CfeValido(TipoCfe.EBoleta) with
         {
-            Receptor = sinRut, Detalle = [TestData.Linea(iva: IndicadorFacturacion.VendedorNoContribuyente)],
+            Receptor = sinRut,
+            Detalle = [TestData.Linea(iva: IndicadorFacturacion.VendedorNoContribuyente)],
         }));
     }
 
@@ -334,7 +343,9 @@ public class FormatoDgiTests
         }));
         Assert.Contains("SecretoProfesional", TestData.Campos(compra with
         {
-            CompraMonedaExtranjera = CompraMonedaExtranjera.ReventaPorCuentaAjena, SecretoProfesional = true, Adenda = "x",
+            CompraMonedaExtranjera = CompraMonedaExtranjera.ReventaPorCuentaAjena,
+            SecretoProfesional = true,
+            Adenda = "x",
             Mandante = new Mandante { Documento = "214844360018", Nombre = "x" },
         }));
         Assert.Contains("CompraMonedaExtranjera", TestData.Campos(TestData.CfeValido() with { CompraMonedaExtranjera = CompraMonedaExtranjera.Reventa }));

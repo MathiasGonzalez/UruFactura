@@ -226,9 +226,16 @@ public class FuncionalidadesTests
             },
             Receptor = new Receptor
             {
-                Documento = "214844360018", RazonSocial = "Cliente S.A.", Direccion = "Calle 1", Ciudad = "Montevideo",
-                Departamento = "Montevideo", Pais = "Uruguay", CodigoPostal = "11200", InfoAdicional = "Rec info",
-                LugarDestinoEntrega = "Depósito", CompraId = "OC-1",
+                Documento = "214844360018",
+                RazonSocial = "Cliente S.A.",
+                Direccion = "Calle 1",
+                Ciudad = "Montevideo",
+                Departamento = "Montevideo",
+                Pais = "Uruguay",
+                CodigoPostal = "11200",
+                InfoAdicional = "Rec info",
+                LugarDestinoEntrega = "Depósito",
+                CompraId = "OC-1",
             },
             Detalle =
             [

@@ -19,7 +19,7 @@ concurrency:
 jobs:
   crear-issue-recordatorio:
     name: Crear issue de revisión normativa DGI
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read

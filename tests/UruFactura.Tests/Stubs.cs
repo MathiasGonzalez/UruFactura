@@ -79,7 +79,10 @@ internal sealed class DgiStub : IDgiClient
     public Task<EstadoComprobante> ConsultarCfeAsync(TipoCfe tipo, string serie, long numero, CancellationToken cancellationToken = default) =>
         Task.FromResult(new EstadoComprobante
         {
-            TipoCfe = (int)tipo, Serie = serie, Numero = numero, Estado = EstadoPorNumero.GetValueOrDefault(numero, EstadoCfe.Aceptado),
+            TipoCfe = (int)tipo,
+            Serie = serie,
+            Numero = numero,
+            Estado = EstadoPorNumero.GetValueOrDefault(numero, EstadoCfe.Aceptado),
         });
 
     /// <summary>Emisores del padrón simulado.</summary>
